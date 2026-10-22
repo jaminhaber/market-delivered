@@ -1,0 +1,29 @@
+{
+  "name": "@market/api",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./router": "./src/router.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "^1.7.12",
+    "@fastify/cors": "^11.0.0",
+    "@market/db": "*",
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "@trpc/server": "^11.0.0",
+    "@vercel/functions": "^3.10.2",
+    "better-auth": "^1.7.12",
+    "drizzle-orm": "^0.45.4",
+    "fastify": "^5.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0"
+  }
+}

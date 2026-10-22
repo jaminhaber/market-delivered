@@ -1,0 +1,150 @@
+import { createHash } from 'node:crypto';
+import { APIError } from 'better-auth/api';
+import { and, eq, gt, isNull } from 'drizzle-orm';
+import { invitations, customerProfiles, driverProfiles } from '@market/db';
+import { betterAuth } from 'better-auth';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter';
+import { webOrigins } from './origins.js';
+import {
+  account,
+  rateLimit,
+  session,
+  user,
+  verification,
+  type Database,
+} from '@market/db';
+export type AuthConfig = {
+  secret: string;
+  baseURL: string;
+  webOrigin: string;
+  resendKey?: string;
+  emailFrom?: string;
+  production?: boolean;
+};
+export function createAuth(db: Database, config: AuthConfig) {
+  async function sendEmail(to: string, subject: string, url: string) {
+    if (!config.resendKey) {
+      if (config.production)
+        throw new Error('Email delivery is not configured');
+      console.info(`[development email] ${subject} to ${to}: ${url}`);
+      return;
+    }
+    const result = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.resendKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: config.emailFrom,
+        to,
+        subject,
+        text: `${subject}\n\n${url}\n\nIf you did not request this, ignore this email.`,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!result.ok) throw new Error('Email delivery failed');
+  }
+  return betterAuth({
+    appName: 'Market Delivered',
+    secret: config.secret,
+    baseURL: config.baseURL,
+    trustedOrigins: webOrigins(config),
+    database: drizzleAdapter(db, {
+      provider: 'pg',
+      schema: { user, session, account, verification, rateLimit },
+    }),
+    databaseHooks: {
+      user: {
+        create: {
+          before: async (person, context) => {
+            const token = context?.headers?.get('x-invite-token') ?? '';
+            const [invite] = await db
+              .select()
+              .from(invitations)
+              .where(
+                and(
+                  eq(
+                    invitations.tokenHash,
+                    createHash('sha256').update(token).digest('hex'),
+                  ),
+                  eq(invitations.email, person.email.toLowerCase()),
+                  isNull(invitations.usedAt),
+                  isNull(invitations.revokedAt),
+                  gt(invitations.expiresAt, new Date()),
+                ),
+              );
+            if (!invite)
+              throw new APIError('FORBIDDEN', {
+                message: 'A valid invitation matching your email is required.',
+              });
+            return { data: person };
+          },
+          after: async (person, context) => {
+            const token = context?.headers?.get('x-invite-token') ?? '';
+            await db.transaction(async (tx) => {
+              const [invite] = await tx
+                .update(invitations)
+                .set({ usedAt: new Date(), usedBy: person.id })
+                .where(
+                  and(
+                    eq(
+                      invitations.tokenHash,
+                      createHash('sha256').update(token).digest('hex'),
+                    ),
+                    eq(invitations.email, person.email.toLowerCase()),
+                    isNull(invitations.usedAt),
+                    isNull(invitations.revokedAt),
+                    gt(invitations.expiresAt, new Date()),
+                  ),
+                )
+                .returning();
+              if (!invite)
+                throw new APIError('FORBIDDEN', {
+                  message: 'Invitation is no longer available.',
+                });
+              await tx.insert(customerProfiles).values({ userId: person.id });
+              if (invite.role === 'driver')
+                await tx.insert(driverProfiles).values({
+                  userId: person.id,
+                  phone: '',
+                  vehicle: '',
+                  status: 'approved',
+                });
+            });
+          },
+        },
+      },
+    },
+    emailAndPassword: {
+      enabled: true,
+      minPasswordLength: 12,
+      maxPasswordLength: 128,
+      requireEmailVerification: !!config.production,
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, url }) =>
+        sendEmail(user.email, 'Reset your Market Delivered password', url),
+    },
+    emailVerification: {
+      sendOnSignUp: !!config.production,
+      sendOnSignIn: !!config.production,
+      autoSignInAfterVerification: true,
+      sendVerificationEmail: async ({ user, url }) =>
+        sendEmail(user.email, 'Verify your Market Delivered email', url),
+    },
+    session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
+    rateLimit: {
+      enabled: process.env.NODE_ENV !== 'test',
+      storage: 'database',
+      window: 60,
+      max: 100,
+      customRules: {
+        '/sign-in/email': { window: 60, max: 10 },
+        '/sign-up/email': { window: 60, max: 10 },
+        '/request-password-reset': { window: 60, max: 5 },
+        '/send-verification-email': { window: 60, max: 5 },
+      },
+    },
+  });
+}
+export type Auth = ReturnType<typeof createAuth>;

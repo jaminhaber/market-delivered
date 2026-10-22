@@ -1,0 +1,52 @@
+{
+  "name": "market-delivered",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "dotenv -- concurrently -k -n api,web,jobs -c green,cyan,yellow \"npm run dev -w @market/api\" \"npm run dev -w @market/web\" \"tsx scripts/jobs-worker.ts\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:generate": "dotenv -- npm run generate -w @market/db",
+    "db:migrate": "dotenv -- npm run migrate -w @market/db",
+    "db:seed": "dotenv -- npm run seed -w @market/db",
+    "start:api": "dotenv -- npm run start -w @market/api",
+    "test:e2e": "playwright test",
+    "admin:grant": "dotenv -- tsx scripts/grant-admin.ts",
+    "invite:create": "dotenv -- tsx scripts/create-invite.ts",
+    "test:db": "docker compose --profile test up -d --wait postgres-e2e",
+    "typecheck:e2e": "tsc -p tests/tsconfig.json",
+    "jobs:run": "dotenv -- tsx scripts/run-jobs.ts",
+    "jobs:worker": "dotenv -- tsx scripts/jobs-worker.ts",
+    "dev:apps": "dotenv -- concurrently -k -n api,web -c green,cyan \"npm run dev -w @market/api\" \"npm run dev -w @market/web\"",
+    "db:reset:local": "npm run db:migrate && dotenv -- tsx scripts/reset-local-db.ts && npm run db:seed"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "concurrently": "^9.0.0",
+    "dotenv-cli": "^8.0.0",
+    "prettier": "^3.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.0",
+    "@playwright/test": "^1.58.0",
+    "node-cron": "^4.0.0"
+  },
+  "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "^0.25.12"
+    },
+    "tsup": {
+      "esbuild": "^0.28.1"
+    }
+  }
+}
