@@ -29,10 +29,12 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     });
   });
 }
-try {
-  await server.listen({ host: env.API_HOST, port: env.API_PORT });
-} catch (error) {
-  server.log.error(error);
-  await server.close();
-  process.exitCode = 1;
-}
+// Vercel starts the captured listener after importing this module. Awaiting
+// listen here would prevent that import from completing.
+void server
+  .listen({ host: env.API_HOST, port: env.API_PORT })
+  .catch(async (error: unknown) => {
+    server.log.error(error);
+    await server.close();
+    process.exitCode = 1;
+  });
