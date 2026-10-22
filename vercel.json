@@ -4,7 +4,7 @@
     "api": {
       "root": "apps/api",
       "framework": "fastify",
-      "entrypoint": "dist/index.mjs",
+      "entrypoint": "src/index.mts",
       "buildCommand": "npm run build"
     },
     "web": {

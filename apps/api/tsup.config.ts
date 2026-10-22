@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: ['src/index.mts'],
   format: ['esm'],
   // Preserve ESM semantics when deployed without this workspace's package.json.
   outExtension: () => ({ js: '.mjs' }),

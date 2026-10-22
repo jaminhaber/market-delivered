@@ -6,7 +6,7 @@
     "./router": "./src/router.ts"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/index.mts",
     "build": "tsup",
     "start": "node dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json"
