@@ -1,5 +1,0 @@
-{
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "fastify",
-  "crons": [{ "path": "/internal/jobs/market-runs", "schedule": "0 12 * * *" }]
-}

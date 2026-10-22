@@ -74,7 +74,7 @@ Better Auth manages password hashing, database-backed sessions, sign-in, sign-ou
 
 Local password-reset and verification links are printed to the API terminal instead of sending email. The reset UI is accessible from **Sign in → Forgot password?** Production requires `RESEND_API_KEY`, `EMAIL_FROM`, `BETTER_AUTH_SECRET`, and correct HTTPS `BETTER_AUTH_URL` / `WEB_ORIGIN`. Production signup requires email verification. Unverified sign-in attempts resend verification, and the sign-in/signup screen offers an explicit resend action (limited to five requests per IP per minute). Verification redirects back to the frontend, with secure HTTP-only sessions. Email requests time out after 10 seconds so provider outages cannot indefinitely hold an API request. Configure a verified Resend sender domain before inviting real users. No live email delivery has been configured in this checkout.
 
-`GOOGLE_MAPS_API_KEY` configures server-side Google Address Validation. Set it in the root `.env` locally and in the API project’s environment when deployed. The key is never sent to the frontend.
+`GOOGLE_MAPS_API_KEY` configures server-side Google Address Validation. Set it in the root `.env` locally and in the shared Vercel project environment when deployed. The key is never sent to the frontend.
 
 Auth rate limits use PostgreSQL so they work across API processes. The isolated E2E server runs with `NODE_ENV=test` and disables auth rate limiting so repeated test-account setup does not exhaust it. Do not run a deployed app in test mode.
 
@@ -130,7 +130,7 @@ The seed invokes the same job once to initialize demo dates. Tests disable the l
 
 ### Vercel Cron
 
-`apps/api/vercel.json` declares a daily `0 12 * * *` invocation of `GET /internal/jobs/market-runs` on the **API project**, with `apps/api` selected as its root directory. Configure the project to include workspace files outside that directory. Set a separate cryptographically random `CRON_SECRET` of at least 32 characters in the API environment. Vercel sends it as `Authorization: Bearer <CRON_SECRET>`; the endpoint rejects missing/invalid credentials, fails closed if unconfigured, and sends `Cache-Control: no-store`. It never trusts a cron user-agent or browser session.
+`vercel.json` at the repository root declares a daily `0 12 * * *` invocation of `GET /internal/jobs/market-runs` on the shared project domain. Its top-level rewrite routes that exact path to the `api` service; the word `internal` in the path does not make it private. Set a separate cryptographically random `CRON_SECRET` of at least 32 characters in the project environment. Vercel sends it as `Authorization: Bearer <CRON_SECRET>`; the endpoint rejects missing/invalid credentials, fails closed if unconfigured, and sends `Cache-Control: no-store`. It never trusts a cron user-agent or browser session.
 
 The daily cadence works with Vercel Hobby's once-daily cron limit; its scheduling precision is hourly, so the four-date buffer avoids depending on an exact invocation minute. Vercel cron runs on production deployments; `vercel dev` does not schedule it. See [Vercel cron security](https://vercel.com/docs/cron-jobs/manage-cron-jobs) and [cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing).
 
@@ -179,27 +179,27 @@ The API includes structured logging with credential redaction, connection poolin
 
 ### Vercel test deployment
 
-Use two projects from this workspace. In both projects enable access to workspace files outside the selected root directory, use Node 22, and install from the workspace lockfile. The frontend uses `apps/web/vercel.ts` to proxy auth and tRPC to the API; this keeps browser cookies on the frontend origin. Vercel supports [programmatic configuration](https://vercel.com/docs/project-configuration/vercel-ts) and [external rewrites](https://vercel.com/docs/routing/rewrites).
+Deploy one Vercel project with the repository root as its Root Directory, Node 22, and the workspace lockfile. The root `vercel.json` defines independently built `api` (Fastify, `apps/api`) and `web` (Vite, `apps/web`) services. Remove old dashboard build/output overrides that applied to a single app; build settings now belong to each service. See [Vercel Services](https://vercel.com/docs/services).
 
-| Project | Root       | Build           | Output                                     |
-| ------- | ---------- | --------------- | ------------------------------------------ |
-| API     | `apps/api` | `npm run build` | Fastify preset (no static output override) |
-| Web     | `apps/web` | `npm run build` | `dist`                                     |
+The top-level rewrites send `/api/:path*` (including Better Auth), `/trpc/:path*`, `/mcp`, `/health`, `/ready`, and the exact `/internal/jobs/market-runs` path to `api`. All remaining paths go to `web`. Request paths are preserved, matching the existing Fastify routes and browser clients; `/api` is not stripped. MCP still requires an administrator bearer token, and the cron endpoint still requires `CRON_SECRET`.
+
+There are no service bindings: the Vite app runs in the browser and calls the public API on the same origin. It has no server function that calls the API internally. Vercel bindings resolve only in runtime functions, so they cannot replace browser URLs or the old build-time `API_ORIGIN` proxy. PostgreSQL is an external managed database, not a Vercel service; the local Docker Compose services are development/test databases only. The scheduling worker is replaced by the existing daily Vercel cron rather than deployed as another service.
 
 Set environment variables in the relevant Vercel environment, then redeploy:
 
-| Variable                       | Project | Value                                                                             |
-| ------------------------------ | ------- | --------------------------------------------------------------------------------- |
-| `DATABASE_URL`                 | API     | Hosted **test** PostgreSQL database URL with the provider's verified TLS settings |
-| `BETTER_AUTH_SECRET`           | API     | Random secret, at least 32 characters                                             |
-| `CRON_SECRET`                  | API     | A different random secret, at least 32 characters                                 |
-| `WEB_ORIGIN`                   | API     | Exact public HTTPS frontend origin, such as `https://market-test.example.com`     |
-| `BETTER_AUTH_URL`              | API     | The same **frontend** origin; auth requests reach the API through the web proxy   |
-| `RESEND_API_KEY`, `EMAIL_FROM` | API     | Working Resend credentials and verified sender                                    |
-| `GOOGLE_MAPS_API_KEY`          | API     | Optional key with Places API (New) and Address Validation enabled                 |
-| `API_ORIGIN`                   | Web     | HTTPS origin of the API project, with no path, credentials, query or fragment     |
+| Variable                       | Value                                                                             |
+| ------------------------------ | --------------------------------------------------------------------------------- |
+| `DATABASE_URL`                 | Hosted **test** PostgreSQL database URL with the provider's verified TLS settings |
+| `BETTER_AUTH_SECRET`           | Random secret, at least 32 characters                                             |
+| `CRON_SECRET`                  | A different random secret, at least 32 characters                                 |
+| `WEB_ORIGIN`                   | Exact shared public HTTPS origin, such as `https://market-test.example.com`       |
+| `BETTER_AUTH_URL`              | The same shared public HTTPS origin                                               |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Working Resend credentials and verified sender                                    |
+| `GOOGLE_MAPS_API_KEY`          | Optional key with Places API (New) and Address Validation enabled                 |
 
-Leave `VITE_API_URL` and `VITE_AUTH_URL` unset for this setup. Production startup rejects missing HTTPS origins, example secrets and incomplete Vercel auth/cron settings. Use a stable frontend alias for testing; a different preview URL needs its own matching API origin configuration. The API deployment must accept proxy traffic: if Vercel Deployment Protection blocks it, configure access before testing the frontend. Do not share preview/staging databases or auth secrets with a real production service.
+Remove the old `API_ORIGIN` setting and leave `VITE_API_URL` and `VITE_AUTH_URL` unset for this setup. Production startup rejects missing HTTPS origins, example secrets and incomplete Vercel auth/cron settings. Use a stable alias for testing; a different preview URL needs matching origin configuration. Do not share preview/staging databases or auth secrets with a real production service.
+
+To test service routing locally, run `vercel dev` from the repository root (or `vercel dev -L` without cloud authentication). Start PostgreSQL first and supply the API's required environment variables. Set `WEB_ORIGIN` and `BETTER_AUTH_URL` to the local Vercel URL (typically `http://localhost:3000`), not Vite's underlying port. Do not run `npm run dev` simultaneously: Vercel starts both services itself. Cron is not scheduled locally; invoke the protected endpoint or `npm run jobs:run` manually.
 
 Apply migrations to the hosted test database before sending traffic. From the workspace root, with deployment variables exported in the shell:
 
@@ -214,7 +214,7 @@ npm run admin:grant -- you@example.com
 
 Shell-exported deployment variables take precedence over the local `.env`. Do not overwrite local development settings with production credentials or run database resets against a hosted database. Migrations are a deliberate release step; API startup never migrates automatically.
 
-Before inviting testers, verify `/ready` on the API and these flows through the **frontend URL**: invitation signup → delivered verification email → verified session → sign-out/sign-in; verification resend; password reset; profile save; checkout/cancellation; driver claim/shopping/delivery; and Operations driver reassignment. Confirm `/trpc/me` traffic goes through the frontend proxy and session cookies are Secure and HTTP-only. Verify Google autocomplete/validation with the deployed key if enabled. Run the scheduling job manually for preview tests: Vercel cron only schedules production deployments. For a dedicated test project deployed to its production environment, verify the daily cron in Vercel and Operations history.
+Before inviting testers, verify `/health` and `/ready` on the shared domain and these flows through the **shared URL**: invitation signup → delivered verification email → verified session → sign-out/sign-in; verification resend; password reset; profile save; checkout/cancellation; driver claim/shopping/delivery; and Operations driver reassignment. Confirm `/trpc/me` traffic reaches the API service on the shared origin and session cookies are Secure and HTTP-only. Verify Google autocomplete/validation with the deployed key if enabled. Run the scheduling job manually for preview tests: Vercel cron only schedules production deployments. For a dedicated test project deployed to its production environment, verify the daily cron in Vercel and Operations history.
 
 Local checks validate code and isolated database behavior; hosted email delivery, Vercel routing/protection, provider TLS and managed cron execution still require this deployment smoke check. No hosted project or credentials are provisioned by the repository.
 
