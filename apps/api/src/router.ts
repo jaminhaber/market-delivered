@@ -245,8 +245,8 @@ export const appRouter = t.router({
       ),
   }),
   produce: t.router({
-    categories: publicProcedure.query(() => s.produceCategory.enumValues),
-    list: publicProcedure
+    categories: authenticated.query(() => s.produceCategory.enumValues),
+    list: authenticated
       .input(
         z
           .object({
@@ -289,10 +289,10 @@ export const appRouter = t.router({
       }),
   }),
   markets: t.router({
-    list: publicProcedure.query(({ ctx }) =>
+    list: authenticated.query(({ ctx }) =>
       ctx.db.select().from(s.markets).orderBy(asc(s.markets.name)),
     ),
-    runs: publicProcedure.query(async ({ ctx }) => {
+    runs: authenticated.query(async ({ ctx }) => {
       return ctx.db
         .select({
           id: s.marketRuns.id,
@@ -317,7 +317,7 @@ export const appRouter = t.router({
         .orderBy(asc(s.marketRuns.startsAt))
         .limit(100);
     }),
-    inventory: publicProcedure.input(id).query(({ ctx, input }) =>
+    inventory: authenticated.input(id).query(({ ctx, input }) =>
       ctx.db
         .select({
           id: s.inventory.id,

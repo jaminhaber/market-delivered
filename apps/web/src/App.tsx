@@ -41,58 +41,52 @@ export function App() {
           market<span className="brand-light">delivered</span>
           <span className="brand-dot">.</span>
         </a>
-        <div className="account-controls">
-          {me.data ? (
-            <>
-              <span>{me.data.name}</span>
-              <button
-                className="secondary"
-                onClick={() =>
-                  void authClient.signOut().then(() => {
-                    queryClient.clear();
-                    setPage('Market');
-                  })
-                }
-              >
-                Sign out
-              </button>
-            </>
-          ) : (
-            <button className="secondary" onClick={() => setPage('Account')}>
-              Sign in
+        {me.data && (
+          <div className="account-controls">
+            <span>{me.data.name}</span>
+            <button
+              className="secondary"
+              onClick={() =>
+                void authClient.signOut().then(() => {
+                  queryClient.clear();
+                  setPage('Market');
+                })
+              }
+            >
+              Sign out
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </header>
-      <nav className="main-nav" aria-label="Main navigation">
-        {tabs.map((tab) => (
-          <button
-            key={tab}
-            className={page === tab ? 'selected' : ''}
-            aria-current={page === tab ? 'page' : undefined}
-            onClick={() => setPage(tab)}
-          >
-            {tab}
-          </button>
-        ))}
-      </nav>
+      {me.data && (
+        <nav className="main-nav" aria-label="Main navigation">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              className={page === tab ? 'selected' : ''}
+              aria-current={page === tab ? 'page' : undefined}
+              onClick={() => setPage(tab)}
+            >
+              {tab}
+            </button>
+          ))}
+        </nav>
+      )}
       <main id="content">
         {me.isPending ? (
           <Loading />
         ) : me.isError ? (
           <ErrorState error={me.error} />
+        ) : !me.data || page === 'Account' ? (
+          <div className="account-page">
+            <AuthForm onDone={() => setPage('Profile')} />
+          </div>
         ) : page === 'Market' ? (
           <Shop
             signedIn={!!me.data}
             onAccount={() => setPage('Account')}
             onOrders={() => setPage('Orders')}
           />
-        ) : page === 'Account' ? (
-          <div className="account-page">
-            <AuthForm onDone={() => setPage('Profile')} />
-          </div>
-        ) : !me.data ? (
-          <AuthForm onDone={() => setPage('Profile')} />
         ) : page === 'Profile' ? (
           <div className="workspace">
             <div className="page-heading">

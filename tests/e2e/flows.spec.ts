@@ -1323,6 +1323,35 @@ test('password reset through the browser invalidates old sessions and tokens', a
   await customer.request.dispose();
 });
 
+test('market and catalog endpoints require a session independently of the UI', async ({
+  request,
+}) => {
+  const anonymous = api(request);
+  expect(await anonymous.me.query()).toBeNull();
+  for (const query of [
+    () => anonymous.produce.categories.query(),
+    () => anonymous.produce.list.query(),
+    () => anonymous.markets.list.query(),
+    () => anonymous.markets.runs.query(),
+    () => anonymous.markets.inventory.query({ id: randomUUID() }),
+  ])
+    await rejectCode(query(), 'UNAUTHORIZED');
+
+  const customer = await actor();
+  try {
+    for (const result of await Promise.all([
+      customer.rpc.produce.categories.query(),
+      customer.rpc.produce.list.query(),
+      customer.rpc.markets.list.query(),
+      customer.rpc.markets.runs.query(),
+      customer.rpc.markets.inventory.query({ id: randomUUID() }),
+    ]))
+      expect(Array.isArray(result)).toBe(true);
+  } finally {
+    await customer.request.dispose();
+  }
+});
+
 test('browser-origin protection and database constraints hold independently of the UI', async () => {
   const customer = await actor();
   const denied = await customer.request.post('/trpc/profile.save', {
