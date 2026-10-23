@@ -117,12 +117,13 @@ The shared `generate-market-runs` job is used by the local worker, CLI, administ
 
 ### Local development
 
-`npm run dev` starts the frontend, API, and a separate cron worker. The worker runs once on startup, then daily at **12:00 UTC** (5 a.m. PDT / 4 a.m. PST). It runs independently of page views while the development process is running.
+`npm run dev` starts the frontend, API, and a separate cron worker. The worker runs both jobs on startup: market generation then runs daily at **12:00 UTC** (5 a.m. PDT / 4 a.m. PST), and market closing runs every minute. It runs independently of page views while the development process is running.
 
 ```sh
 npm run db:migrate
 npm run jobs:run      # Run once; also useful after deployment or schedule changes
 npm run jobs:worker   # Standalone worker, if web/API run separately
+npm run jobs:close    # Reconcile closed markets now
 npm run dev:apps      # Web/API only, without the worker
 ```
 
@@ -130,9 +131,9 @@ The seed invokes the same job once to initialize demo dates. Tests disable the l
 
 ### Vercel Cron
 
-`vercel.json` at the repository root declares a daily `0 12 * * *` invocation of `GET /internal/jobs/market-runs` on the shared project domain. Its top-level rewrite routes that exact path to the `api` service; the word `internal` in the path does not make it private. Set a separate cryptographically random `CRON_SECRET` of at least 32 characters in the project environment. Vercel sends it as `Authorization: Bearer <CRON_SECRET>`; the endpoint rejects missing/invalid credentials, fails closed if unconfigured, and sends `Cache-Control: no-store`. It never trusts a cron user-agent or browser session.
+`vercel.json` at the repository root declares a daily `0 12 * * *` invocation of `GET /internal/jobs/market-runs` on the shared project domain. A second cron invokes `/internal/jobs/close-markets` every minute. Top-level rewrites route both exact paths to the `api` service; the word `internal` in the path does not make it private. Set a separate cryptographically random `CRON_SECRET` of at least 32 characters in the project environment. Vercel sends it as `Authorization: Bearer <CRON_SECRET>`; the endpoint rejects missing/invalid credentials, fails closed if unconfigured, and sends `Cache-Control: no-store`. It never trusts a cron user-agent or browser session.
 
-The daily cadence works with Vercel Hobby's once-daily cron limit; its scheduling precision is hourly, so the four-date buffer avoids depending on an exact invocation minute. Vercel cron runs on production deployments; `vercel dev` does not schedule it. See [Vercel cron security](https://vercel.com/docs/cron-jobs/manage-cron-jobs) and [cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing).
+The minute-level closing cron requires Vercel Pro/Enterprise; Hobby rejects that cron at deployment. To remain on Hobby, remove the minute cron from `vercel.json` and configure an external scheduler to call the protected closing endpoint every minute (or run the standalone worker elsewhere). No plan upgrade is performed by this code. Vercel cron runs on production deployments; `vercel dev` does not schedule it. See [Vercel cron security](https://vercel.com/docs/cron-jobs/manage-cron-jobs) and [cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing).
 
 Deploy the API, apply migrations, run `npm run jobs:run` once with deployment database credentials, and confirm the cron appears in the project's Cron Jobs settings. The checked-in configuration is ready for deployment, but no Vercel project or live production cron has been provisioned from this checkout. Failed invocations are visible in Vercel/API logs and the Operations job history; use the manual retry after fixing the cause. Other hosts can schedule `npm run jobs:run` or call the protected endpoint with the same bearer header. Keep secrets in your host's secret store, never in committed cron command files.
 
@@ -185,7 +186,7 @@ Keep the API's `entrypoint: "src/index.mts"` and `outputDirectory: "."` settings
 
 The top-level rewrites send `/api/:path*` (including Better Auth), `/trpc/:path*`, `/mcp`, `/health`, `/ready`, and the exact `/internal/jobs/market-runs` path to `api`. All remaining paths go to `web`. Request paths are preserved, matching the existing Fastify routes and browser clients; `/api` is not stripped. MCP still requires an administrator bearer token, and the cron endpoint still requires `CRON_SECRET`.
 
-There are no service bindings: the Vite app runs in the browser and calls the public API on the same origin. It has no server function that calls the API internally. Vercel bindings resolve only in runtime functions, so they cannot replace browser URLs or the old build-time `API_ORIGIN` proxy. PostgreSQL is an external managed database, not a Vercel service; the local Docker Compose services are development/test databases only. The scheduling worker is replaced by the existing daily Vercel cron rather than deployed as another service.
+There are no service bindings: the Vite app runs in the browser and calls the public API on the same origin. It has no server function that calls the API internally. Vercel bindings resolve only in runtime functions, so they cannot replace browser URLs or the old build-time `API_ORIGIN` proxy. PostgreSQL is an external managed database, not a Vercel service; the local Docker Compose services are development/test databases only. The worker is replaced by the configured Vercel crons rather than deployed as another service.
 
 Set environment variables in the relevant Vercel environment, then redeploy:
 
@@ -223,3 +224,9 @@ Local checks validate code and isolated database behavior; hosted email delivery
 Before a larger launch, define delivery service areas, address validation, pricing/fee rules, notifications, and operational procedures for driver handoffs. Routing optimization, multi-driver splitting within a run, automatic payment settlement, fractional weights, and receipt uploads remain future work. Run lists prioritize shopping/delivery work, then upcoming scheduled runs, ahead of history. Lists currently cap at 100 records; cursor pagination should accompany growth beyond the invite-only launch.
 
 To clear all local development users, sessions, invitations, orders and catalog data and reseed Ojai, stop the dev processes and run `npm run db:reset:local`, then restart `npm run dev`. The reset refuses production mode, remote hosts and database names other than `market_delivered`. You will need a new invitation afterward; existing accounts and invitation links are removed.
+
+### Unfulfilled orders at market closing
+
+The `close-expired-markets` job uses each stored run's `ends_at` timestamp, so the market's timezone/DST has already been resolved. On its first tick at or after closing (normally within one minute), `placed`, `ready`, `out_for_delivery` and `delivery_failed` orders become `cancelled`. Delivered, previously cancelled and unavailable orders stay unchanged. Driver shopping/purchase/allocation/delivery mutations reject closed markets immediately, even before the next job tick. Customer and driver views refresh every minute.
+
+The closing job shares run-row locks with checkout and fulfillment, releases cancelled orders' inventory reservations, and appends one system event per cancelled order. It preserves purchases, item allocations and recorded cash. Unpaid cancelled orders have a zero final total; orders with cash already recorded retain those amounts for manual reconciliation, and customer/driver views show no further cash due. Runs with delivered orders close as completed; otherwise expired active runs close as cancelled. Retries and overlapping invocations do not duplicate cancellation events. Job history records cancelled-order/closed-run counts. MCP order reads remain read-only: this lifecycle job is not exposed as an MCP mutation.

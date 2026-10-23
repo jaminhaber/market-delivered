@@ -751,10 +751,13 @@ function SchedulingJobs() {
       <div className="run-cards">
         {jobs.data?.map((job) => (
           <article className="run-card" key={job.id}>
-            <strong>{job.status}</strong>
+            <strong>
+              {job.name} · {job.status}
+            </strong>
             <p>
               {when(job.startedAt)} · {job.source} · {job.runsCreated} runs
-              created
+              created · {job.ordersCancelled} orders cancelled ·{' '}
+              {job.runsClosed} runs closed
             </p>
             {job.error && <p>{job.error}</p>}
           </article>

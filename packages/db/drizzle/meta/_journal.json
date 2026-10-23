@@ -71,6 +71,13 @@
       "when": 1792609153514,
       "tag": "0009_small_tombstone",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792788994006,
+      "tag": "0010_typical_firebird",
+      "breakpoints": true
     }
   ]
 }

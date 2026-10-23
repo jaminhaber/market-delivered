@@ -728,6 +728,11 @@ export function operations(db: s.Database, actor: Actor) {
         const run = await lockRun(tx, id);
         await driverCheck(tx, actor);
         ensure(run.driverId === actor.id, 'This is not your run', 'FORBIDDEN');
+        ensure(
+          run.endsAt > (await clock(tx)),
+          'The market has closed; this run can no longer be fulfilled',
+          'CONFLICT',
+        );
         const now = await clock(tx);
         ensure(
           run.status === 'scheduled' &&
@@ -754,6 +759,11 @@ export function operations(db: s.Database, actor: Actor) {
         const run = await lockRun(tx, input.runId);
         await driverCheck(tx, actor);
         ensure(run.driverId === actor.id, 'This is not your run', 'FORBIDDEN');
+        ensure(
+          run.endsAt > (await clock(tx)),
+          'The market has closed; this run can no longer be fulfilled',
+          'CONFLICT',
+        );
         ensure(
           run.status === 'shopping',
           'Run must be in the shopping phase',
@@ -799,6 +809,11 @@ export function operations(db: s.Database, actor: Actor) {
         const run = await lockRun(tx, id);
         await driverCheck(tx, actor);
         ensure(run.driverId === actor.id, 'This is not your run', 'FORBIDDEN');
+        ensure(
+          run.endsAt > (await clock(tx)),
+          'The market has closed; this run can no longer be fulfilled',
+          'CONFLICT',
+        );
         ensure(
           run.status === 'shopping',
           'Run must be in the shopping phase',
@@ -994,6 +1009,11 @@ export function operations(db: s.Database, actor: Actor) {
           run.driverId === actor.id,
           'This is not your delivery',
           'FORBIDDEN',
+        );
+        ensure(
+          run.endsAt > (await clock(tx)),
+          'The market has closed; this order can no longer be fulfilled',
+          'CONFLICT',
         );
         const [order] = await tx
           .select()

@@ -21,4 +21,9 @@ export * from './schema.js';
 export * from './auth-schema.js';
 export * from './market-schema.js';
 export { ensureUpcomingRuns } from './recurrence.js';
-export { runMarketRunsJob, MARKET_RUNS_JOB } from './jobs.js';
+export {
+  runMarketRunsJob,
+  MARKET_RUNS_JOB,
+  runCloseMarketsJob,
+  CLOSE_MARKETS_JOB,
+} from './jobs.js';

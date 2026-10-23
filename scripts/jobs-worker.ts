@@ -1,5 +1,9 @@
 import cron from 'node-cron';
-import { createDatabase, runMarketRunsJob } from '../packages/db/src/index.js';
+import {
+  createDatabase,
+  runMarketRunsJob,
+  runCloseMarketsJob,
+} from '../packages/db/src/index.js';
 if (process.env.JOBS_WORKER_DISABLED === '1') {
   console.log('Local job worker disabled for isolated E2E tests.');
 } else {
@@ -8,34 +12,49 @@ if (process.env.JOBS_WORKER_DISABLED === '1') {
   pool.on('error', (error) =>
     console.error('Job worker database error', error),
   );
-  let active: Promise<void> | undefined;
-  function execute() {
-    if (active) return active;
-    active = runMarketRunsJob(db, 'worker')
-      .then((result) =>
-        console.log(JSON.stringify({ job: 'generate-market-runs', ...result })),
-      )
-      .catch((error) => console.error('Market scheduling job failed', error))
-      .finally(() => {
-        active = undefined;
-      });
-    return active;
-  }
-  const task = cron.schedule('0 12 * * *', execute, {
-    timezone: 'UTC',
-    noOverlap: true,
+  const jobs = [
+    {
+      name: 'generate-market-runs',
+      schedule: '0 12 * * *',
+      run: runMarketRunsJob,
+    },
+    {
+      name: 'close-expired-markets',
+      schedule: '* * * * *',
+      run: runCloseMarketsJob,
+    },
+  ].map((job) => {
+    let active: Promise<void> | undefined;
+    function execute() {
+      if (active) return active;
+      active = job
+        .run(db, 'worker')
+        .then((result) =>
+          console.log(JSON.stringify({ job: job.name, ...result })),
+        )
+        .catch((error) => console.error(`${job.name} failed`, error))
+        .finally(() => {
+          active = undefined;
+        });
+      return active;
+    }
+    const task = cron.schedule(job.schedule, execute, {
+      timezone: 'UTC',
+      noOverlap: true,
+    });
+    return { task, execute, finish: () => active };
   });
   console.log(
-    'Market scheduling worker: daily at 12:00 UTC, plus once on startup.',
+    'Job worker: market generation daily at 12:00 UTC; market closing every minute; both once on startup.',
   );
-  void execute();
+  for (const job of jobs) void job.execute();
   for (const signal of ['SIGINT', 'SIGTERM'] as const)
     process.once(signal, () => {
       void (async () => {
-        await task.stop();
-        await active;
+        await Promise.all(jobs.map((job) => job.task.stop()));
+        await Promise.all(jobs.map((job) => job.finish()));
         await pool.end();
-        await task.destroy();
+        await Promise.all(jobs.map((job) => job.task.destroy()));
       })().catch((error) => {
         console.error(error);
         process.exitCode = 1;

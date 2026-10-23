@@ -244,9 +244,8 @@ export const orderEvents = pgTable(
     orderId: uuid('order_id')
       .notNull()
       .references(() => orders.id),
-    actorId: text('actor_id')
-      .notNull()
-      .references(() => user.id),
+    // Null denotes an automated system transition.
+    actorId: text('actor_id').references(() => user.id),
     status: orderStatus('status').notNull(),
     note: text('note').notNull().default(''),
     createdAt: created(),
@@ -365,6 +364,8 @@ export const backgroundJobRuns = pgTable(
       .notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     schedulesProcessed: integer('schedules_processed').notNull().default(0),
+    ordersCancelled: integer('orders_cancelled').notNull().default(0),
+    runsClosed: integer('runs_closed').notNull().default(0),
     runsCreated: integer('runs_created').notNull().default(0),
     error: text('error'),
   },

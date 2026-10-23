@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { APIError } from 'better-auth/api';
+import { APIError, createAuthMiddleware } from 'better-auth/api';
+import { setSessionCookie } from 'better-auth/cookies';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { invitations, customerProfiles, driverProfiles } from '@market/db';
 import { betterAuth } from 'better-auth';
@@ -54,6 +55,43 @@ export function createAuth(db: Database, config: AuthConfig) {
       provider: 'pg',
       schema: { user, session, account, verification, rateLimit },
     }),
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== '/reset-password') return;
+        const token = ctx.body?.token || ctx.query?.token;
+        if (typeof token !== 'string') return;
+        const reset = await ctx.context.internalAdapter.findVerificationValue(
+          `reset-password:${token}`,
+        );
+        return { context: { context: { passwordResetUserId: reset?.value } } };
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== '/reset-password') return;
+        const result = ctx.context.returned;
+        if (
+          !result ||
+          typeof result !== 'object' ||
+          !('status' in result) ||
+          result.status !== true
+        )
+          return;
+        const userId = (
+          ctx.context as typeof ctx.context & {
+            passwordResetUserId?: string;
+          }
+        ).passwordResetUserId;
+        if (!userId) return;
+        const person = await ctx.context.internalAdapter.findUserById(userId);
+        if (!person || (config.production && !person.emailVerified)) return;
+        const freshSession =
+          await ctx.context.internalAdapter.createSession(userId);
+        if (!freshSession)
+          throw new APIError('INTERNAL_SERVER_ERROR', {
+            message: 'Unable to sign in after password reset.',
+          });
+        await setSessionCookie(ctx, { session: freshSession, user: person });
+      }),
+    },
     databaseHooks: {
       user: {
         create: {

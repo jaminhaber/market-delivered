@@ -14,6 +14,7 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState(''),
     [email, setEmail] = useState(''),
     [password, setPassword] = useState('');
+  const [needsVerification, setNeedsVerification] = useState(false);
   const invitation = useQuery({
     ...api.invitation.queryOptions({ token: invite }),
     enabled: !!invite,
@@ -47,13 +48,15 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
                     newPassword: password,
                     token,
                   });
-        if (response.error)
+        if (response.error) {
+          setNeedsVerification(response.error.code === 'EMAIL_NOT_VERIFIED');
           throw new Error(
             response.error.code === 'EMAIL_NOT_VERIFIED'
               ? 'Check your email for a verification link, or request a new one below.'
               : response.error.message,
           );
-        if (mode === 'signin' || mode === 'signup') {
+        }
+        if (mode === 'signin' || mode === 'signup' || mode === 'reset') {
           const current = await rpc.me.query();
           if (current) {
             queryClient.clear();
@@ -65,7 +68,7 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
       mode === 'forgot'
         ? 'If that account exists, a reset link has been sent.'
         : mode === 'reset'
-          ? 'Password reset. You can sign in.'
+          ? 'Password reset. If your email still needs verification, verify it before signing in.'
           : 'Account ready. If requested, check your email to verify your account.',
     );
   }
@@ -126,7 +129,9 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
                 mode === 'signin' ? 'current-password' : 'new-password'
               }
             />
-            <small>Use at least 12 characters for a new password.</small>
+            {mode !== 'signin' && (
+              <small>Use at least 12 characters for a new password.</small>
+            )}
           </label>
         )}
         <button disabled={busy || (mode === 'signup' && !signupEmail)}>
@@ -140,7 +145,7 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
         </button>
       </form>
       <div className="inline-actions">
-        {(mode === 'signin' || mode === 'signup') && (
+        {(mode === 'signup' || (mode === 'signin' && needsVerification)) && (
           <button
             className="secondary"
             disabled={busy || !(mode === 'signup' ? signupEmail : email)}
@@ -157,13 +162,17 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
             Resend verification email
           </button>
         )}
-        <button className="secondary" onClick={() => setMode('signin')}>
-          Already a member? Sign in
-        </button>
-        <button className="secondary" onClick={() => setMode('forgot')}>
-          Forgot password?
-        </button>
-        {invite && (
+        {mode !== 'signin' && (
+          <button className="secondary" onClick={() => setMode('signin')}>
+            Back to sign in
+          </button>
+        )}
+        {(mode === 'signin' || mode === 'signup') && (
+          <button className="secondary" onClick={() => setMode('forgot')}>
+            Forgot password?
+          </button>
+        )}
+        {invite && mode !== 'signup' && (
           <button className="secondary" onClick={() => setMode('signup')}>
             Use invitation
           </button>

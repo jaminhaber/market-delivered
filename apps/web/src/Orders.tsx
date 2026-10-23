@@ -10,7 +10,9 @@ import {
   when,
 } from './ui';
 export function Orders() {
-  const orders = useQuery(api.orders.mine.queryOptions());
+  const orders = useQuery(
+    api.orders.mine.queryOptions(undefined, { refetchInterval: 60000 }),
+  );
   const { act, busy, notice } = useAction();
   return (
     <div className="workspace">
@@ -34,6 +36,16 @@ export function Orders() {
               <span className="badge">{label(order.status)}</span>
               <span>{when(order.createdAt)}</span>
             </div>
+            {order.status === 'cancelled' && (
+              <p className="notice">
+                {order.events
+                  .filter((event) => event.status === 'cancelled')
+                  .at(-1)?.note || 'This order was cancelled.'}{' '}
+                No further cash is due.
+                {order.cashCollectedCents > 0 &&
+                  ` Cash of ${money(order.cashCollectedCents)} was already recorded; contact the team to reconcile it.`}
+              </p>
+            )}
             <p>
               Deliver to <strong>{order.address}</strong>
             </p>
@@ -79,9 +91,11 @@ export function Orders() {
             <p className="basket-line">
               <span>Final total, including delivery</span>
               <strong>
-                {order.actualTotalCents === null
-                  ? 'After shopping'
-                  : money(order.actualTotalCents)}
+                {order.status === 'cancelled'
+                  ? 'Cancelled'
+                  : order.actualTotalCents === null
+                    ? 'After shopping'
+                    : money(order.actualTotalCents)}
               </strong>
             </p>
             <p>
@@ -89,7 +103,8 @@ export function Orders() {
             </p>
             <p>
               Cash collected: {money(order.cashCollectedCents)}
-              {order.actualTotalCents !== null &&
+              {order.status !== 'cancelled' &&
+                order.actualTotalCents !== null &&
                 ` · Cash outstanding: ${money(order.actualTotalCents - order.cashCollectedCents)}`}
             </p>
             <p className="muted">

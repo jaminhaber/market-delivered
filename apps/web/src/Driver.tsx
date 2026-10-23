@@ -11,7 +11,9 @@ import {
   when,
 } from './ui';
 export function Driver() {
-  const runs = useQuery(api.driver.runs.queryOptions());
+  const runs = useQuery(
+    api.driver.runs.queryOptions(undefined, { refetchInterval: 60000 }),
+  );
   const me = useQuery(api.me.queryOptions());
   const [selected, setSelected] = useState('');
   const { act, busy, notice } = useAction();
@@ -78,7 +80,9 @@ export function Driver() {
   );
 }
 function DriverRun({ id }: { id: string }) {
-  const detail = useQuery(api.driver.detail.queryOptions({ id }));
+  const detail = useQuery(
+    api.driver.detail.queryOptions({ id }, { refetchInterval: 60000 }),
+  );
   const { act, busy, notice } = useAction();
   const [notes, setNotes] = useState<Record<string, string>>({});
   if (detail.isPending) return <Loading />;
@@ -322,7 +326,13 @@ function CashRecord({
 }) {
   const { act, busy, notice } = useAction();
   if (['cancelled', 'unavailable'].includes(order.status))
-    return <p>No cash due.</p>;
+    return (
+      <p>
+        No cash due.
+        {order.cashCollectedCents > 0 &&
+          ` Already recorded: ${money(order.cashCollectedCents)}; contact operations to reconcile.`}
+      </p>
+    );
   return (
     <div>
       <p>

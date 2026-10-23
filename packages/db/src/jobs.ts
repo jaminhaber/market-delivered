@@ -1,3 +1,4 @@
+import { closeExpiredMarkets } from './close-markets.js';
 import { eq, sql } from 'drizzle-orm';
 import type { Database } from './index.js';
 import { backgroundJobRuns } from './market-schema.js';
@@ -47,6 +48,55 @@ export async function runMarketRunsJob(
         status: 'failed',
         finishedAt: new Date(),
         error: 'Market run generation failed; see worker/API logs.',
+      })
+      .where(eq(backgroundJobRuns.id, attempt!.id));
+    throw error;
+  }
+}
+
+export const CLOSE_MARKETS_JOB = 'close-expired-markets';
+export async function runCloseMarketsJob(
+  db: Database,
+  source: 'cron' | 'cli' | 'worker',
+  asOf = new Date(),
+) {
+  const [attempt] = await db
+    .insert(backgroundJobRuns)
+    .values({ name: CLOSE_MARKETS_JOB, source })
+    .returning();
+  try {
+    return await db.transaction(async (tx) => {
+      const {
+        rows: [lock],
+      } = await tx.execute<{ acquired: boolean }>(
+        sql`SELECT pg_try_advisory_xact_lock(hashtext(${CLOSE_MARKETS_JOB})) AS acquired`,
+      );
+      if (!lock!.acquired) {
+        await tx
+          .update(backgroundJobRuns)
+          .set({ status: 'skipped', finishedAt: new Date() })
+          .where(eq(backgroundJobRuns.id, attempt!.id));
+        return {
+          id: attempt!.id,
+          status: 'skipped' as const,
+          ordersCancelled: 0,
+          runsClosed: 0,
+        };
+      }
+      const summary = await closeExpiredMarkets(tx, asOf);
+      await tx
+        .update(backgroundJobRuns)
+        .set({ status: 'succeeded', finishedAt: new Date(), ...summary })
+        .where(eq(backgroundJobRuns.id, attempt!.id));
+      return { id: attempt!.id, status: 'succeeded' as const, ...summary };
+    });
+  } catch (error) {
+    await db
+      .update(backgroundJobRuns)
+      .set({
+        status: 'failed',
+        finishedAt: new Date(),
+        error: 'Market closing failed; see worker/API logs.',
       })
       .where(eq(backgroundJobRuns.id, attempt!.id));
     throw error;

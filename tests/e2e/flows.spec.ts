@@ -28,6 +28,9 @@ import {
   verification,
   marketSchedules,
   runMarketRunsJob,
+  runCloseMarketsJob,
+  CLOSE_MARKETS_JOB,
+  orderEvents,
   backgroundJobRuns,
   MARKET_RUNS_JOB,
   markets,
@@ -1258,7 +1261,7 @@ test('expired and revoked invitations fail, used invitation cannot create anothe
   await request.dispose();
 });
 
-test('password reset through the browser invalidates old sessions and tokens', async ({
+test('password reset signs in automatically and invalidates old sessions and tokens', async ({
   page,
 }) => {
   const customer = await actor();
@@ -1300,26 +1303,17 @@ test('password reset through the browser invalidates old sessions and tokens', a
     .getByRole('button', { name: 'Reset password', exact: true })
     .click();
   await expect(
-    page.getByText('Password reset. You can sign in.', { exact: true }),
+    page.getByRole('heading', { name: 'Your profile', exact: true }),
   ).toBeVisible();
+  expect((await api(page.request).me.query())?.id).toBe(customer.id);
+  await expect(page).toHaveURL(baseURL + '/');
   expect(await customer.rpc.me.query()).toBeNull();
-  const reused = await page.request.post('/api/auth/reset-password', {
+  const reused = await customer.request.post('/api/auth/reset-password', {
     data: { token, newPassword: password },
     headers: { Origin: baseURL },
   });
   expect(reused.status()).toBeGreaterThanOrEqual(400);
-  await page
-    .getByRole('button', { name: 'Already a member? Sign in', exact: true })
-    .click();
-  await page.getByLabel('Email', { exact: true }).fill(customer.email);
-  await page.getByLabel('Password', { exact: true }).fill(nextPassword);
-  await page
-    .getByRole('button', { name: 'Sign in', exact: true })
-    .last()
-    .click();
-  await expect(
-    page.getByRole('heading', { name: 'Your profile', exact: true }),
-  ).toBeVisible();
+  expect(await customer.rpc.me.query()).toBeNull();
   await customer.request.dispose();
 });
 
@@ -2396,4 +2390,193 @@ test('loopback browser sign-in and profile writes work without trusting other or
     );
     expect(mutation.status()).toBe(403);
   }
+});
+
+test('market closing cancels unfinished deliveries once, preserves delivered orders and cash, and releases stock', async ({
+  page,
+}) => {
+  const { run, stock } = await setup(20);
+  const customer = await actor();
+  const driver = await actor('driver');
+  const placed = [];
+  for (let i = 0; i < 4; i++)
+    placed.push(
+      await customer.rpc.orders.place.mutate({
+        runId: run.id,
+        requestId: randomUUID(),
+        items: [{ inventoryId: stock.id, quantity: 1 }],
+      }),
+    );
+  await driver.rpc.driver.claim.mutate({ id: run.id });
+  await closeCutoff(run.id);
+  await driver.rpc.driver.start.mutate({ id: run.id });
+  await driver.rpc.driver.purchase.mutate({
+    runId: run.id,
+    inventoryId: stock.id,
+    quantity: 4,
+    totalCostCents: 1000,
+  });
+  await driver.rpc.driver.finish.mutate({ id: run.id });
+  const [delivered, ready, transit, failed] = placed;
+  await driver.rpc.driver.deliver.mutate({
+    orderId: delivered!.id,
+    status: 'out_for_delivery',
+    note: '',
+  });
+  await driver.rpc.driver.deliver.mutate({
+    orderId: delivered!.id,
+    status: 'delivered',
+    note: 'Handed over',
+  });
+  await driver.rpc.orders.recordCash.mutate({
+    orderId: delivered!.id,
+    amountCents: 850,
+    note: 'Paid',
+  });
+  await driver.rpc.orders.recordCash.mutate({
+    orderId: ready!.id,
+    amountCents: 100,
+    note: 'Partial cash recorded',
+  });
+  for (const order of [transit, failed])
+    await driver.rpc.driver.deliver.mutate({
+      orderId: order!.id,
+      status: 'out_for_delivery',
+      note: '',
+    });
+  await driver.rpc.driver.deliver.mutate({
+    orderId: failed!.id,
+    status: 'delivery_failed',
+    note: 'No answer',
+  });
+  const unopened = await setup(5);
+  const waiting = await customer.rpc.orders.place.mutate({
+    runId: unopened.run.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: unopened.stock.id, quantity: 1 }],
+  });
+  const future = await setup(5);
+  const futureOrder = await customer.rpc.orders.place.mutate({
+    runId: future.run.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: future.stock.id, quantity: 1 }],
+  });
+  const closing = new Date();
+  for (const id of [run.id, unopened.run.id])
+    await db
+      .update(marketRuns)
+      .set({
+        cutoffAt: new Date(+closing - 120000),
+        startsAt: new Date(+closing - 60000),
+        endsAt: closing,
+        deliveryStartAt: new Date(+closing - 60000),
+        deliveryEndAt: closing,
+      })
+      .where(eq(marketRuns.id, id));
+  await runCloseMarketsJob(db, 'cli', new Date(+closing - 1));
+  expect(
+    (await customer.rpc.orders.mine.query()).find(
+      (order) => order.id === transit!.id,
+    )!.status,
+  ).toBe('out_for_delivery');
+  await rejectCode(
+    driver.rpc.driver.deliver.mutate({
+      orderId: transit!.id,
+      status: 'delivered',
+      note: 'Too late',
+    }),
+    'CONFLICT',
+  );
+  const url = 'http://127.0.0.1:3101/internal/jobs/close-markets';
+  expect((await page.request.get(url)).status()).toBe(401);
+  expect(
+    (
+      await page.request.get(url, {
+        headers: { Authorization: 'Bearer wrong' },
+      })
+    ).status(),
+  ).toBe(401);
+  const headers = {
+    Authorization: 'Bearer e2e-only-cron-secret-not-for-production-123456789',
+  };
+  const calls = await Promise.all(
+    Array.from({ length: 4 }, () => page.request.get(url, { headers })),
+  );
+  expect(calls.every((response) => response.ok())).toBe(true);
+  const after = await customer.rpc.orders.mine.query();
+  const deliveredOrder = after.find((order) => order.id === delivered!.id)!;
+  expect(deliveredOrder).toMatchObject({
+    status: 'delivered',
+    actualTotalCents: 850,
+    cashCollectedCents: 850,
+  });
+  for (const id of [ready!.id, transit!.id, failed!.id, waiting.id]) {
+    const order = after.find((row) => row.id === id)!;
+    expect(order.status).toBe('cancelled');
+    const events = order.events.filter((event) => event.status === 'cancelled');
+    expect(events).toHaveLength(1);
+    expect(events[0]!.actorId).toBeNull();
+    expect(events[0]!.note).toContain('market closed');
+  }
+  expect(after.find((order) => order.id === ready!.id)).toMatchObject({
+    cashCollectedCents: 100,
+    actualTotalCents: 850,
+  });
+  expect(
+    after.find((order) => order.id === transit!.id)!.actualTotalCents,
+  ).toBe(0);
+  expect(after.find((order) => order.id === waiting.id)!.actualTotalCents).toBe(
+    0,
+  );
+  expect(after.find((order) => order.id === futureOrder.id)!.status).toBe(
+    'placed',
+  );
+  expect(
+    (await db.select().from(inventory).where(eq(inventory.id, stock.id)))[0]!
+      .reservedQuantity,
+  ).toBe(1);
+  expect(
+    (
+      await db
+        .select()
+        .from(inventory)
+        .where(eq(inventory.id, unopened.stock.id))
+    )[0]!.reservedQuantity,
+  ).toBe(0);
+  expect(
+    (await db.select().from(marketRuns).where(eq(marketRuns.id, run.id)))[0]!
+      .status,
+  ).toBe('completed');
+  expect(
+    (
+      await db
+        .select()
+        .from(marketRuns)
+        .where(eq(marketRuns.id, unopened.run.id))
+    )[0]!.status,
+  ).toBe('cancelled');
+  const retry = await page.request.get(url, { headers });
+  expect(await retry.json()).toMatchObject({
+    status: 'succeeded',
+    ordersCancelled: 0,
+    runsClosed: 0,
+  });
+  const jobs = await db
+    .select()
+    .from(backgroundJobRuns)
+    .where(eq(backgroundJobRuns.name, CLOSE_MARKETS_JOB));
+  expect(jobs.reduce((sum, job) => sum + job.ordersCancelled, 0)).toBe(4);
+  expect(
+    await db
+      .select()
+      .from(orderEvents)
+      .where(
+        and(
+          eq(orderEvents.orderId, transit!.id),
+          eq(orderEvents.status, 'cancelled'),
+        ),
+      ),
+  ).toHaveLength(1);
+  await driver.request.dispose();
+  await customer.request.dispose();
 });
