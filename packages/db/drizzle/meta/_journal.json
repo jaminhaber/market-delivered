@@ -5,78 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1792548950244,
-      "tag": "0000_rapid_frog_thor",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1792561391993,
-      "tag": "0001_spooky_adam_destine",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1792561744403,
-      "tag": "0002_lean_hawkeye",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1792562062441,
-      "tag": "0003_naive_black_tom",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1792562736946,
-      "tag": "0004_smiling_supernaut",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1792598706885,
-      "tag": "0005_crazy_talisman",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1792600390445,
-      "tag": "0006_tense_forgotten_one",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1792601756223,
-      "tag": "0007_wet_cargill",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1792606218055,
-      "tag": "0008_flowery_blob",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1792609153514,
-      "tag": "0009_small_tombstone",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
       "when": 1792788994006,
-      "tag": "0010_typical_firebird",
+      "tag": "0000_initial",
       "breakpoints": true
     }
   ]

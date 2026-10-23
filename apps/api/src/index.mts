@@ -1,4 +1,5 @@
-import { createDatabase } from '@market/db';
+import { fileURLToPath } from 'node:url';
+import { createDatabase, runMigrations } from '@market/db';
 import { attachDatabasePool } from '@vercel/functions';
 import { env } from './env.js';
 import { createServer } from './server.js';
@@ -8,6 +9,17 @@ if (process.env.VERCEL === '1') attachDatabasePool(pool);
 pool.on('error', (error) =>
   console.error('Unexpected database pool error', error),
 );
+try {
+  await runMigrations(
+    db,
+    fileURLToPath(new URL('../../../packages/db/drizzle', import.meta.url)),
+  );
+  console.info('Database migrations applied.');
+} catch (error) {
+  console.error('Database migration failed; API startup aborted.', error);
+  await pool.end();
+  throw error;
+}
 const server = await createServer(db, {
   cronSecret: env.CRON_SECRET,
   googleMapsKey: env.GOOGLE_MAPS_API_KEY,

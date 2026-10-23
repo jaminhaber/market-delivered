@@ -16,6 +16,7 @@ export function createDatabase(connectionString: string) {
   return { db, pool };
 }
 export type Database = ReturnType<typeof createDatabase>['db'];
+export { runMigrations } from './migrations.js';
 export * from './schema.js';
 
 export * from './auth-schema.js';

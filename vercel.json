@@ -6,7 +6,12 @@
       "framework": "fastify",
       "entrypoint": "src/index.mts",
       "buildCommand": "npm run build",
-      "outputDirectory": "."
+      "outputDirectory": ".",
+      "functions": {
+        "src/index.mts": {
+          "includeFiles": "../../packages/db/drizzle/**"
+        }
+      }
     },
     "web": {
       "root": "apps/web",

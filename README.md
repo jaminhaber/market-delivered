@@ -135,7 +135,7 @@ The seed invokes the same job once to initialize demo dates. Tests disable the l
 
 The minute-level closing cron requires Vercel Pro/Enterprise; Hobby rejects that cron at deployment. To remain on Hobby, remove the minute cron from `vercel.json` and configure an external scheduler to call the protected closing endpoint every minute (or run the standalone worker elsewhere). No plan upgrade is performed by this code. Vercel cron runs on production deployments; `vercel dev` does not schedule it. See [Vercel cron security](https://vercel.com/docs/cron-jobs/manage-cron-jobs) and [cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing).
 
-Deploy the API, apply migrations, run `npm run jobs:run` once with deployment database credentials, and confirm the cron appears in the project's Cron Jobs settings. The checked-in configuration is ready for deployment, but no Vercel project or live production cron has been provisioned from this checkout. Failed invocations are visible in Vercel/API logs and the Operations job history; use the manual retry after fixing the cause. Other hosts can schedule `npm run jobs:run` or call the protected endpoint with the same bearer header. Keep secrets in your host's secret store, never in committed cron command files.
+Deploy the API (startup applies migrations), run `npm run jobs:run` once with deployment database credentials, and confirm the cron appears in the project's Cron Jobs settings. The checked-in configuration is ready for deployment, but no Vercel project or live production cron has been provisioned from this checkout. Failed invocations are visible in Vercel/API logs and the Operations job history; use the manual retry after fixing the cause. Other hosts can schedule `npm run jobs:run` or call the protected endpoint with the same bearer header. Keep secrets in your host's secret store, never in committed cron command files.
 
 ## Schema and workspace
 
@@ -151,7 +151,9 @@ The schema covers users, auth accounts/sessions/verifications/rate limits, custo
 
 Database constraints enforce foreign keys, unique reservations/items/request keys, valid run dates, nonnegative money, and inventory bounds. Run-row locks serialize checkout, cancellation, inventory edits, driver claims, shopping, and delivery transitions. All money is integer USD cents; quantities are whole sale units such as bunches, baskets, or pounds. Fractional weights are not supported yet.
 
-To change the schema, edit the files under `packages/db/src`, run `npm run db:generate`, review the SQL and metadata, and run `npm run db:migrate`. Drizzle maintains ORM update timestamps; direct SQL writers must maintain those fields themselves. Apply migrations as a deployment step rather than on every API process startup.
+To change the schema, edit the files under `packages/db/src`, run `npm run db:generate`, review the SQL and metadata, and run `npm run db:migrate`. Drizzle maintains ORM update timestamps; direct SQL writers must maintain those fields themselves. The API applies pending migrations at startup before accepting requests. The manual command remains useful for database setup before seeding or running standalone CLI tools.
+
+The pre-release migration history is consolidated into `packages/db/drizzle/0000_initial.sql`, with one matching snapshot and journal entry. Tables are created in dependency order with their final columns and constraints, including inline foreign keys; the baseline has no `ALTER TABLE` steps. Future schema changes produce incremental migrations starting at `0001`. Its journal timestamp preserves the end of the original 11-migration chain, so fully migrated local databases keep their existing data and migration ledger and skip this equivalent baseline. A partially migrated database must be upgraded with the original history before switching, or explicitly recreated if disposable; do not delete its ledger and rerun the baseline over existing tables. Once this baseline has been applied in production, keep it immutable.
 
 ## Checks and E2E tests
 
@@ -172,7 +174,7 @@ The suite covers production verification/resend with a stubbed email provider, s
 
 ## Deployment
 
-Build with `npm ci && npm run build`, run migrations with deployment database credentials, and start the API with `NODE_ENV=production npm run start:api`. Serve `apps/web/dist` as static assets and route `/trpc` and `/api/auth` to the API on the same public origin. Same-origin hosting is recommended for session cookies.
+Build with `npm ci && npm run build` and start the API with `NODE_ENV=production npm run start:api`. Serve `apps/web/dist` as static assets and route `/trpc` and `/api/auth` to the API on the same public origin. Same-origin hosting is recommended for session cookies.
 
 For separate hosts, set `VITE_API_URL` and `VITE_AUTH_URL` at frontend build time and configure the exact `WEB_ORIGIN` and public `BETTER_AUTH_URL`. Cross-site cookie policy requires additional deployment-specific configuration; it is not enabled by default. Use the database provider’s TLS configuration, and do not disable certificate verification. Set `API_HOST=0.0.0.0` for containers. Scoped esbuild overrides keep migration/build dependencies patched.
 
@@ -181,6 +183,12 @@ The API includes structured logging with credential redaction, connection poolin
 ### Vercel test deployment
 
 Deploy one Vercel project with the repository root as its Root Directory, Node 22, and the workspace lockfile. The root `vercel.json` defines independently built `api` (Fastify, `apps/api`) and `web` (Vite, `apps/web`) services. Remove old dashboard build/output overrides that applied to a single app; build settings now belong to each service. See [Vercel Services](https://vercel.com/docs/services).
+
+The API runs pending Drizzle migrations at startup, before creating the server or accepting requests. Each instance takes a PostgreSQL transaction-scoped advisory lock before creating/reading Drizzle's migration ledger. Concurrent cold starts and manual CLI migrations wait for that same lock; after acquiring it, already-applied migrations are skipped. Migration failure closes the database pool and aborts startup. Warm requests do not rerun migrations. Builds remain database-independent.
+
+The API service's `functions` configuration explicitly includes `packages/db/drizzle` (SQL files and the journal) in the runtime deployment. Keep these assets with the repository layout when running the compiled API outside Vercel too. The startup path is relative to the API module, so it works regardless of the working directory.
+
+Set `DATABASE_URL` in Vercel for each environment you deploy, with runtime connectivity and schema-change permissions. Preview instances migrate their configured database too; give them a separate database. During a rolling deployment the previous application version can still serve traffic, so schema changes must remain compatible with it. Rolling back app code does not roll back database migrations.
 
 Keep the API's `entrypoint: "src/index.mts"` and `outputDirectory: "."` settings. This makes Vercel bundle the source and trace workspace dependencies instead of promoting `dist/index.mjs` to the function root without its dependency layout; see [Vercel issue #17651](https://github.com/vercel/vercel/issues/17651). The web service still uses `dist` for its static output.
 
@@ -204,10 +212,9 @@ Remove the old `API_ORIGIN` setting and leave `VITE_API_URL` and `VITE_AUTH_URL`
 
 To test service routing locally, run `vercel dev` from the repository root (or `vercel dev -L` without cloud authentication). Start PostgreSQL first and supply the API's required environment variables. Set `WEB_ORIGIN` and `BETTER_AUTH_URL` to the local Vercel URL (typically `http://localhost:3000`), not Vite's underlying port. Do not run `npm run dev` simultaneously: Vercel starts both services itself. Cron is not scheduled locally; invoke the protected endpoint or `npm run jobs:run` manually.
 
-Apply migrations to the hosted test database before sending traffic. From the workspace root, with deployment variables exported in the shell:
+API startup applies migrations automatically. After the first successful API request (for example, `/ready`), bootstrap the catalog and account from the workspace root with deployment variables exported in the shell:
 
 ```sh
-npm run db:migrate
 npm run db:seed         # Optional: fictional Ojai catalog and schedules for testing
 npm run jobs:run
 npm run invite:create -- you@example.com customer
@@ -215,7 +222,7 @@ npm run invite:create -- you@example.com customer
 npm run admin:grant -- you@example.com
 ```
 
-Shell-exported deployment variables take precedence over the local `.env`. Do not overwrite local development settings with production credentials or run database resets against a hosted database. Migrations are a deliberate release step; API startup never migrates automatically.
+Shell-exported deployment variables take precedence over the local `.env`. Do not overwrite local development settings with production credentials or run database resets against a hosted database. API startup migrates automatically on all hosts. For database setup before standalone CLI tools or a manual migration retry, use `npm run db:migrate` with the target database credentials.
 
 Before inviting testers, verify `/health` and `/ready` on the shared domain and these flows through the **shared URL**: invitation signup → delivered verification email → verified session → sign-out/sign-in; verification resend; password reset; profile save; checkout/cancellation; driver claim/shopping/delivery; and Operations driver reassignment. Confirm `/trpc/me` traffic reaches the API service on the shared origin and session cookies are Secure and HTTP-only. Verify Google autocomplete/validation with the deployed key if enabled. Run the scheduling job manually for preview tests: Vercel cron only schedules production deployments. For a dedicated test project deployed to its production environment, verify the daily cron in Vercel and Operations history.
 
