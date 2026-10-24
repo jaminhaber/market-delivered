@@ -80,6 +80,7 @@ export async function driverOrderDetail(
     .where(eq(s.orderItems.orderId, id));
   return {
     ...detail!,
+    isOwnOrder: order.customerId === actor.id,
     market: market!,
     items: detail!.items.map((item) => ({
       ...item,
@@ -125,7 +126,10 @@ export async function isAdmin(db: s.Database, userId: string) {
 
 export type DriverView = 'available' | 'mine';
 type ReadDb = Pick<s.Database, 'select'>;
-const driverSummaryColumns = {
+const driverSummaryColumns = (actor: Actor) => ({
+  isOwnOrder: sql<boolean>`${s.orders.customerId} = ${actor.id}`.as(
+    'is_own_order',
+  ),
   id: s.orders.id,
   runId: s.orders.runId,
   status: s.orders.status,
@@ -139,7 +143,7 @@ const driverSummaryColumns = {
     sql<number>`coalesce((select sum(quantity)::int from order_items where order_id = ${s.orders.id}),0)`.as(
       'item_count',
     ),
-};
+});
 function driverOrderFilter(
   actor: Actor,
   input: { view: DriverView; runId?: string; marketId?: string },
@@ -152,7 +156,6 @@ function driverOrderFilter(
       : and(
           eq(s.orders.status, 'placed'),
           sql`${s.orders.driverId} IS NULL`,
-          sql`${s.orders.customerId} <> ${actor.id}`,
           eq(s.marketRuns.status, 'scheduled'),
           sql`${s.marketRuns.endsAt} > now()`,
         ),
@@ -184,7 +187,7 @@ export async function driverOrders(
         .innerJoin(s.marketRuns, eq(s.marketRuns.id, s.orders.runId))
         .where(filter);
       const items = await tx
-        .select(driverSummaryColumns)
+        .select(driverSummaryColumns(actor))
         .from(s.orders)
         .innerJoin(s.marketRuns, eq(s.marketRuns.id, s.orders.runId))
         .where(filter)
@@ -249,7 +252,7 @@ export async function driverOrderGroups(
       // Rank within each date so a busy date cannot consume another date's order page.
       const ranked = tx
         .select({
-          ...driverSummaryColumns,
+          ...driverSummaryColumns(actor),
           position:
             sql<number>`row_number() over (partition by ${s.orders.runId} order by ${s.orders.createdAt},${s.orders.id})`.as(
               'position',
@@ -354,6 +357,7 @@ export async function driverShoppingList(
         .orderBy(asc(s.orderItems.name), asc(s.orderItems.id));
       const orders = assigned.map((order) => ({
         id: order.id,
+        isOwnOrder: order.customerId === actor.id,
         customerName: order.customerName,
         address: order.address,
         phone: order.phone,
@@ -368,6 +372,7 @@ export async function driverShoppingList(
         orderId: string;
         orderItemId: string;
         customerName: string;
+        isOwnOrder: boolean;
         status: (typeof orders)[number]['status'];
         quantity: number;
         purchasedQuantity: number | null;
@@ -440,6 +445,7 @@ export async function driverShoppingList(
             orderId: order.id,
             orderItemId: item.id,
             customerName: order.customerName,
+            isOwnOrder: order.isOwnOrder,
             status: order.status,
             quantity: item.quantity,
             purchasedQuantity: bought,

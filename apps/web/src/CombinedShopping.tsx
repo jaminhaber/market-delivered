@@ -208,7 +208,8 @@ export function CombinedShopping({
                         <ul>
                           {product.allocations.map((line) => (
                             <li key={line.orderItemId}>
-                              {line.customerName} · Order{' '}
+                              {line.customerName}
+                              {line.isOwnOrder && ' (Your order)'} · Order{' '}
                               {line.orderId.slice(0, 8)}:{' '}
                               {line.purchasedQuantity ?? 'Pending'} /{' '}
                               {line.quantity} {product.unit} ·{' '}
@@ -230,7 +231,8 @@ export function CombinedShopping({
                             .filter((line) => line.status !== 'shopping')
                             .map((line) => (
                               <li key={line.orderItemId}>
-                                {line.customerName} · Order{' '}
+                                {line.customerName}
+                                {line.isOwnOrder && ' (Your order)'} · Order{' '}
                                 {line.orderId.slice(0, 8)}:{' '}
                                 {line.purchasedQuantity ?? 'Pending'} /{' '}
                                 {line.quantity} {product.unit} ·{' '}
@@ -274,6 +276,7 @@ export function CombinedShopping({
                 </h3>
                 <span className="badge">{label(order.status)}</span>
               </div>
+              {order.isOwnOrder && <span className="badge">Your order</span>}
               <p>{order.address}</p>
               <p>{order.deliveryNotes}</p>
               {bought.length > 0 ? (
@@ -470,6 +473,7 @@ function CombinedPurchaseForm({
           <label className="purchase-allocation" key={line.orderItemId}>
             <span>
               {line.customerName}
+              {line.isOwnOrder && ' (Your order)'}
               <small>
                 Order {line.orderId.slice(0, 8)} · {line.quantity}{' '}
                 {product.unit} requested

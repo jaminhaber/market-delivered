@@ -1911,12 +1911,27 @@ test('operations UI edits a weekly schedule and MCP exposes persisted recurrence
     .getByRole('button', { name: 'Save weekly schedule', exact: true })
     .click();
   await expect(card).toContainText('14:00');
+  const schedulingJobs = admin.page.locator('details.scheduling-jobs');
+  const schedulingSummary = schedulingJobs.locator('summary');
+  await expect(schedulingJobs).not.toHaveAttribute('open', '');
+  await expect(schedulingSummary).toContainText('Scheduling jobs');
+  await expect(
+    schedulingJobs.getByRole('button', {
+      name: 'Run scheduling job now',
+      exact: true,
+    }),
+  ).toBeHidden();
+  await schedulingSummary.click();
+  await expect(schedulingJobs).toHaveAttribute('open', '');
   await admin.page
     .getByRole('button', { name: 'Run scheduling job now', exact: true })
     .click();
   await expect(
     admin.page.getByText('Scheduling job finished', { exact: true }),
   ).toBeVisible();
+  await expect(schedulingSummary).toContainText('succeeded');
+  await schedulingSummary.click();
+  await expect(schedulingJobs).not.toHaveAttribute('open', '');
   const { token } = await admin.rpc.admin.createToken.mutate({
     name: 'Weekly MCP',
   });
@@ -3136,6 +3151,15 @@ test('driver orders group by market and date and can be claimed together', async
     second = await setup(20);
   const customer = await actor();
   const driver = await browserActor(browser, 'driver', 'Grouped Orders Driver');
+  await driver.rpc.profile.save.mutate({
+    name: 'Grouped Orders Driver',
+    phone: '7075550101',
+    street: '10 Market Street',
+    city: 'Ojai',
+    region: 'CA',
+    postalCode: '93023',
+    deliveryNotes: '',
+  });
   const now = Date.now();
   const nextDate = await first.admin.rpc.admin.scheduleRun.mutate({
     marketId: first.market.id,
@@ -3161,7 +3185,9 @@ test('driver orders group by market and date and can be claimed together', async
     [second.run.id, second.stock.id],
   ]) {
     placed.push(
-      await customer.rpc.orders.place.mutate({
+      await (
+        placed.length === 0 ? driver.rpc : customer.rpc
+      ).orders.place.mutate({
         runId: runId!,
         requestId: randomUUID(),
         items: [{ inventoryId: inventoryId!, quantity: 1 }],
@@ -3190,6 +3216,7 @@ test('driver orders group by market and date and can be claimed together', async
       exact: true,
     }),
   });
+  await expect(date.getByText('Your order', { exact: true })).toBeVisible();
   await date
     .getByRole('checkbox', {
       name: 'Select all shown orders',
@@ -3221,7 +3248,10 @@ test('driver orders group by market and date and can be claimed together', async
   ).toBeVisible();
   expect(claimRequests).toEqual(['/trpc/driver.claimBatch']);
   const me = await driver.rpc.me.query();
-  const saved = await customer.rpc.orders.mine.query();
+  const saved = [
+    ...(await customer.rpc.orders.mine.query()),
+    ...(await driver.rpc.orders.mine.query()),
+  ];
   for (const order of placed.slice(0, 2))
     expect(saved.find((row) => row.id === order.id)).toMatchObject({
       status: 'claimed',
@@ -3238,6 +3268,7 @@ test('driver orders group by market and date and can be claimed together', async
       .getByRole('region', { name: first.market.name, exact: true })
       .locator('.run-card'),
   ).toHaveCount(2);
+  await expect(market.getByText('Your order', { exact: true })).toBeVisible();
   await expect(
     page.getByRole('region', { name: second.market.name, exact: true }),
   ).toHaveCount(0);
@@ -3344,6 +3375,18 @@ test('batch claim validates selections, returns individual outcomes, and retries
     requestId: randomUUID(),
     items: [{ inventoryId: stock.id, quantity: 1 }],
   });
+  const ownPool = await driver.rpc.driver.orders.query({
+    view: 'available',
+    runId: run.id,
+  });
+  expect(ownPool.items.find((order) => order.id === own.id)).toMatchObject({
+    isOwnOrder: true,
+  });
+  expect(
+    ownPool.items.find((order) => order.id === placed[0]!.id),
+  ).toMatchObject({
+    isOwnOrder: false,
+  });
   await rival.rpc.driver.claim.mutate({ id: placed[2]!.id });
   await customer.rpc.orders.cancel.mutate({ id: placed[3]!.id });
   await rejectCode(
@@ -3403,8 +3446,7 @@ test('batch claim validates selections, returns individual outcomes, and retries
     }),
     expect.objectContaining({
       orderId: own.id,
-      status: 'failed',
-      code: 'BAD_REQUEST',
+      status: 'claimed',
     }),
     {
       orderId: foreignOrder.id,
@@ -3421,6 +3463,27 @@ test('batch claim validates selections, returns individual outcomes, and retries
   ]);
   await closeCutoff(run.id);
   await driver.rpc.driver.start.mutate({ id: placed[0]!.id });
+  await driver.rpc.driver.start.mutate({ id: own.id });
+  const ownDetail = await driver.rpc.driver.detail.query({ id: own.id });
+  expect(ownDetail.isOwnOrder).toBe(true);
+  await driver.rpc.driver.purchase.mutate({
+    orderId: own.id,
+    orderItemId: ownDetail.items[0]!.id,
+    quantity: 1,
+    totalCostCents: 250,
+  });
+  await driver.rpc.driver.finish.mutate({ id: own.id });
+  await driver.rpc.driver.deliver.mutate({
+    orderId: own.id,
+    status: 'out_for_delivery',
+  });
+  await driver.rpc.driver.deliver.mutate({
+    orderId: own.id,
+    status: 'delivered',
+  });
+  expect((await driver.rpc.driver.detail.query({ id: own.id })).status).toBe(
+    'delivered',
+  );
   const retry = await driver.rpc.driver.claimBatch.mutate({
     runId: run.id,
     orderIds: ids.slice(0, 2),

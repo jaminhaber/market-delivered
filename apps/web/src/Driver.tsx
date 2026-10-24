@@ -357,6 +357,7 @@ function DriverDate({
                     <span className="badge">{label(order.status)}</span>
                   )}
                 </div>
+                {order.isOwnOrder && <span className="badge">Your order</span>}
                 <p>
                   Deliver to{' '}
                   <strong>
@@ -456,6 +457,7 @@ function DriverOrder({ id }: { id: string }) {
     <div>
       {notice}
       <Panel title={`Order ${id.slice(0, 8)}`}>
+        {order.isOwnOrder && <span className="badge">Your order</span>}
         <span className="badge">{label(order.status)}</span>
         <h3>{order.market.name}</h3>
         <p>{order.market.address}</p>

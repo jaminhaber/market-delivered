@@ -247,13 +247,6 @@ async function claimOrders(
         message:
           'Another driver has claimed this order or it is no longer available',
       };
-    if (order.customerId === actor.id)
-      return {
-        orderId,
-        status: 'failed',
-        code: 'BAD_REQUEST',
-        message: 'You cannot claim your own order',
-      };
     return { orderId, status: 'claimed' };
   });
   const ids = results

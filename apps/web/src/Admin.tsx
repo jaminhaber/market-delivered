@@ -776,41 +776,56 @@ function SchedulingJobs() {
     api.admin.jobs.queryOptions(undefined, { refetchInterval: 30000 }),
   );
   const { act, busy, notice } = useAction();
+  const latestJob = jobs.data?.[0];
   return (
-    <Panel title="Scheduling jobs">
-      {notice}
-      <p>
-        The daily job keeps four upcoming dates ready per active schedule. Run
-        it now after adding a schedule or updating inventory defaults.
-      </p>
-      <button
-        disabled={busy}
-        onClick={() =>
-          void act(
-            () => rpc.admin.runSchedulingJob.mutate(),
-            'Scheduling job finished',
-          )
-        }
-      >
-        Run scheduling job now
-      </button>
-      <div className="run-cards">
-        {jobs.data?.map((job) => (
-          <article className="run-card" key={job.id}>
-            <strong>
-              {job.name} · {job.status}
-            </strong>
-            <p>
-              {when(job.startedAt)} · {job.source} · {job.runsCreated} runs
-              created · {job.ordersCancelled} orders cancelled ·{' '}
-              {job.runsClosed} runs closed
-            </p>
-            {job.error && <p>{job.error}</p>}
-          </article>
-        ))}
-      </div>
-      {jobs.isError && <ErrorState error={jobs.error} />}
-    </Panel>
+    <section className="panel">
+      <details className="scheduling-jobs">
+        <summary>
+          <h2>Scheduling jobs</h2>
+          <span className="scheduling-jobs-status">
+            {jobs.isPending
+              ? 'Loading recent jobs…'
+              : jobs.isError
+                ? 'Unable to load recent jobs'
+                : latestJob
+                  ? `Latest: ${latestJob.name} · ${latestJob.status} · ${when(latestJob.startedAt)}`
+                  : 'No recent jobs'}
+          </span>
+        </summary>
+        {notice}
+        <p>
+          The daily job keeps four upcoming dates ready per active schedule. Run
+          it now after adding a schedule or updating inventory defaults.
+        </p>
+        <button
+          disabled={busy}
+          onClick={() =>
+            void act(
+              () => rpc.admin.runSchedulingJob.mutate(),
+              'Scheduling job finished',
+            )
+          }
+        >
+          Run scheduling job now
+        </button>
+        <div className="run-cards">
+          {jobs.data?.map((job) => (
+            <article className="run-card" key={job.id}>
+              <strong>
+                {job.name} · {job.status}
+              </strong>
+              <p>
+                {when(job.startedAt)} · {job.source} · {job.runsCreated} runs
+                created · {job.ordersCancelled} orders cancelled ·{' '}
+                {job.runsClosed} runs closed
+              </p>
+              {job.error && <p>{job.error}</p>}
+            </article>
+          ))}
+        </div>
+        {jobs.isError && <ErrorState error={jobs.error} />}
+      </details>
+    </section>
   );
 }
 

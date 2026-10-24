@@ -949,6 +949,23 @@ details {
 summary {
   cursor: pointer;
 }
+/* Keep the job history compact until an administrator opens it. */
+.scheduling-jobs {
+  margin-top: 0;
+}
+.scheduling-jobs > summary h2 {
+  display: inline;
+  margin: 0;
+}
+.scheduling-jobs-status {
+  display: block;
+  margin-top: 8px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.scheduling-jobs[open] > summary {
+  margin-bottom: 20px;
+}
 footer {
   margin-top: 30px;
 }
