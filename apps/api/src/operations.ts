@@ -464,17 +464,18 @@ export function operations(db: s.Database, actor: Actor) {
       admin();
       return db.transaction(async (tx) => {
         const token = randomBytes(32).toString('hex');
+        const expiresAt = new Date(Date.now() + 7 * 86400000);
         const [invitation] = await tx
           .insert(s.invitations)
           .values({
             ...input,
             createdBy: actor.id,
             tokenHash: createHash('sha256').update(token).digest('hex'),
-            expiresAt: new Date(Date.now() + 7 * 86400000),
+            expiresAt,
           })
           .returning({ id: s.invitations.id });
         await audit(tx, actor, 'invitation.created', invitation!.id);
-        return { token };
+        return { token, id: invitation!.id, expiresAt };
       });
     },
     async revokeInvitation(id: string) {

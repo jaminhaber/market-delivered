@@ -1,3 +1,4 @@
+import { createEmailSender } from './email.js';
 import { createHash } from 'node:crypto';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { setSessionCookie } from 'better-auth/cookies';
@@ -23,29 +24,7 @@ export type AuthConfig = {
   production?: boolean;
 };
 export function createAuth(db: Database, config: AuthConfig) {
-  async function sendEmail(to: string, subject: string, url: string) {
-    if (!config.resendKey) {
-      if (config.production)
-        throw new Error('Email delivery is not configured');
-      console.info(`[development email] ${subject} to ${to}: ${url}`);
-      return;
-    }
-    const result = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.resendKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: config.emailFrom,
-        to,
-        subject,
-        text: `${subject}\n\n${url}\n\nIf you did not request this, ignore this email.`,
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!result.ok) throw new Error('Email delivery failed');
-  }
+  const sendEmail = createEmailSender(config);
   return betterAuth({
     appName: 'Market Delivered',
     secret: config.secret,

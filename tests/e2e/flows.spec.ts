@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+import { registerMcp } from '../../apps/api/src/mcp.js';
 import {
   addressInput,
   geocodeAddress,
@@ -791,6 +793,128 @@ test('immutable order snapshots, invalid inventory, cross-run items, and run can
       .reservedQuantity,
   ).toBe(0);
 });
+test('MCP invitations email usable signup links and revoke failed sends', async () => {
+  const Fastify: typeof import('fastify').default = createRequire(
+    import.meta.url,
+  )('fastify');
+  const admin = await actor('admin');
+  const { token } = await admin.rpc.admin.createToken.mutate({
+    name: 'Invite users',
+  });
+  const config = {
+    secret: randomBytes(32).toString('hex'),
+    baseURL,
+    webOrigin: baseURL,
+    resendKey: 'local-stub-only',
+    emailFrom: 'accounts@example.test',
+  };
+  const server = Fastify();
+  registerMcp(server, db, baseURL, config);
+  const unconfigured = Fastify();
+  registerMcp(unconfigured, db, baseURL);
+  const messages: { to: string; subject: string; text: string }[] = [];
+  let failEmail = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    expect(String(url)).toBe('https://api.resend.com/emails');
+    messages.push(JSON.parse(String(options?.body)));
+    return new Response('{}', { status: failEmail ? 503 : 200 });
+  };
+  const call = async (arguments_: object, target = server, bearer = token) => {
+    const response = await target.inject({
+      method: 'POST',
+      url: '/mcp',
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      payload: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'invite_user', arguments: arguments_ },
+      },
+    });
+    return response;
+  };
+  try {
+    expect(
+      (await call({ email: 'blocked@example.test' }, server, 'invalid'))
+        .statusCode,
+    ).toBe(401);
+    for (const role of ['customer', 'driver'] as const) {
+      const email = `${unique('mcp-invite')}@example.test`;
+      const response = await call({
+        email: email.toUpperCase(),
+        ...(role === 'driver' ? { role } : {}),
+      });
+      expect(response.statusCode).toBe(200);
+      const result = response.json().result;
+      expect(result.isError).not.toBe(true);
+      const saved = JSON.parse(result.content[0].text);
+      expect(saved).toMatchObject({ email, role, emailStatus: 'accepted' });
+      expect(saved.token).toBeUndefined();
+      const message = messages.at(-1)!;
+      expect(message.to).toBe(email);
+      const url = new URL(message.text.split('\n\n')[1]!);
+      expect(url.origin).toBe(baseURL);
+      const invitationToken = url.searchParams.get('invite')!;
+      const [row] = await db
+        .select()
+        .from(invitations)
+        .where(eq(invitations.id, saved.id));
+      expect(row!.tokenHash).toBe(
+        createHash('sha256').update(invitationToken).digest('hex'),
+      );
+      expect(row!.createdBy).toBe(admin.id);
+      expect(row!.revokedAt).toBeNull();
+      expect(new Date(saved.expiresAt).getTime() - Date.now()).toBeGreaterThan(
+        6 * 86400000,
+      );
+      const signup = await admin.request.post('/api/auth/sign-up/email', {
+        headers: { 'x-invite-token': invitationToken, Origin: baseURL },
+        data: { name: 'Invited via MCP', email, password },
+      });
+      expect(signup.ok(), await signup.text()).toBeTruthy();
+    }
+    const count = messages.length;
+    for (const input of [
+      { email: 'invalid' },
+      { email: 'admin@example.test', role: 'admin' },
+    ]) {
+      expect((await call(input)).json().result.isError).toBe(true);
+    }
+    const missingEmail = `${unique('mcp-no-email')}@example.test`;
+    const missing = (await call({ email: missingEmail }, unconfigured)).json()
+      .result;
+    expect(JSON.parse(missing.content[0].text).code).toBe(
+      'PRECONDITION_FAILED',
+    );
+    expect(
+      await db
+        .select()
+        .from(invitations)
+        .where(eq(invitations.email, missingEmail)),
+    ).toHaveLength(0);
+    expect(messages).toHaveLength(count);
+    failEmail = true;
+    const email = `${unique('mcp-email-failure')}@example.test`;
+    const failed = (await call({ email })).json().result;
+    expect(failed.isError).toBe(true);
+    expect(JSON.parse(failed.content[0].text).error).toContain('revoked');
+    const [revoked] = await db
+      .select()
+      .from(invitations)
+      .where(eq(invitations.email, email));
+    expect(revoked!.revokedAt).not.toBeNull();
+  } finally {
+    globalThis.fetch = originalFetch;
+    await server.close();
+    await unconfigured.close();
+  }
+});
+
 test('authenticated MCP schedules markets and inventory; invalid, expired, revoked, and demoted tokens fail', async () => {
   const { admin, produce, farm } = await setup();
   const { token } = await admin.rpc.admin.createToken.mutate({

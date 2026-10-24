@@ -489,9 +489,11 @@ function TokensAdmin() {
       <p>
         Tokens can manage farms, catalog items, markets, schedules, and
         inventory with your administrator privileges, and read customer orders
-        and delivery details. Order changes and fulfillment use the app. Share
-        tokens only with trusted clients. Tokens expire after 90 days; revoke
-        unused or exposed tokens below and create replacements as needed.
+        and delivery details. They can also email customer or approved-driver
+        signup invitations with the invite_user tool. Order changes and
+        fulfillment use the app. Share tokens only with trusted clients. Tokens
+        expire after 90 days; revoke unused or exposed tokens below and create
+        replacements as needed.
       </p>
       <details>
         <summary>Connection troubleshooting</summary>

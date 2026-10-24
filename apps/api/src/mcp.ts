@@ -1,3 +1,5 @@
+import { TRPCError } from '@trpc/server';
+import { createEmailSender, type EmailConfig } from './email.js';
 import { createHash } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -31,6 +33,7 @@ export function registerMcp(
   app: FastifyInstance,
   db: s.Database,
   webOrigin: string,
+  emailConfig: EmailConfig = {},
 ) {
   app.route({
     method: ['GET', 'POST', 'DELETE'],
@@ -123,6 +126,57 @@ export function registerMcp(
           .innerJoin(s.produce, eq(s.produce.id, s.inventory.produceId))
           .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
           .where(eq(s.inventory.runId, runId));
+      mcp.registerTool(
+        'invite_user',
+        {
+          description:
+            'Invite a customer or driver and email them a signup link valid for seven days. Defaults to customer; driver invitations grant approved driver access after signup. Cannot grant administrator access. Requires configured email delivery. Success means the email provider accepted the message, not that it reached the inbox. Creates a new invitation on each call; do not retry after success.',
+          inputSchema: z.object({
+            email: z.string().trim().email().max(254).toLowerCase(),
+            role: z.enum(['customer', 'driver']).default('customer'),
+          }),
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: true,
+          },
+        },
+        (input) =>
+          call(async () => {
+            if (!emailConfig.resendKey || !emailConfig.emailFrom)
+              throw new TRPCError({
+                code: 'PRECONDITION_FAILED',
+                message:
+                  'Invitation email delivery requires RESEND_API_KEY and EMAIL_FROM. Configure email delivery before retrying.',
+              });
+            const invitation = await ops.createInvitation(input);
+            const url = new URL('/', webOrigin);
+            url.searchParams.set('invite', invitation.token);
+            try {
+              await createEmailSender(emailConfig)(
+                input.email,
+                'You’re invited to Market Delivered',
+                url.href,
+                `You’re invited to Market Delivered as a ${input.role}. Sign up within seven days using this email address: ${input.email}`,
+              );
+            } catch {
+              await ops.revokeInvitation(invitation.id);
+              throw new TRPCError({
+                code: 'INTERNAL_SERVER_ERROR',
+                message:
+                  'Invitation email delivery failed. The invitation has been revoked; retry to create and send a new one.',
+              });
+            }
+            return {
+              id: invitation.id,
+              email: input.email,
+              role: input.role,
+              expiresAt: invitation.expiresAt,
+              emailStatus: 'accepted',
+            };
+          }),
+      );
       mcp.registerTool(
         'list_farms',
         {

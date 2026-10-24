@@ -125,7 +125,7 @@ export async function createServer(
       },
     },
   });
-  registerMcp(server, db, config.webOrigin);
+  registerMcp(server, db, config.webOrigin, config);
   registerJobs(server, db, config.cronSecret);
   return server;
 }
