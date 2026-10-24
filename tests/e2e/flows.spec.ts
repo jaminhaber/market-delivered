@@ -198,6 +198,7 @@ async function signupUi(
   await expect(
     page.getByRole('heading', { name: 'Your profile', exact: true }),
   ).toBeVisible();
+  await expect(page).toHaveURL(/\?page=profile$/);
 }
 async function profileUi(page: Page) {
   await page.getByLabel('Phone', { exact: true }).fill('7075550123');
@@ -275,6 +276,19 @@ test('invite-only signup, profiles, sign-out, sign-in, and session isolation', a
   await signupUi(page, email, inv.token, 'Test Neighbor');
   await profileUi(page);
   await page.reload();
+  await expect(
+    page.getByRole('heading', { name: 'Your profile', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Orders', exact: true }).click();
+  await expect(page).toHaveURL(/\?page=orders$/);
+  await page.goBack();
+  await expect(
+    page.getByRole('heading', { name: 'Your profile', exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(
+    page.getByRole('button', { name: 'Orders', exact: true }),
+  ).toHaveAttribute('aria-current', 'page');
   await page.getByRole('button', { name: 'Profile', exact: true }).click();
   await expect(page.getByLabel('Street address', { exact: true })).toHaveValue(
     '25 Main Street',
@@ -312,6 +326,34 @@ test('invite-only signup, profiles, sign-out, sign-in, and session isolation', a
   const other = await actor();
   expect(await other.rpc.orders.mine.query()).toEqual([]);
   await other.request.dispose();
+});
+test('accepted invitation URL clears while signup awaits email verification', async ({
+  page,
+}) => {
+  const email = `${unique('verify-invite')}@example.test`;
+  const invitation = await invite(email);
+  // Production signup can succeed without issuing a session until verification.
+  await page.route('**/api/auth/sign-up/email', (route) =>
+    route.fulfill({ json: { token: null, user: { email } } }),
+  );
+  await page.goto(`/?invite=${invitation.token}&source=email#content`);
+  await page.getByLabel('Full name', { exact: true }).fill('New Neighbor');
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue(email);
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page
+    .getByRole('button', { name: 'Create account', exact: true })
+    .click();
+  await expect(page).toHaveURL(/\?source=email#content$/);
+  await expect(
+    page.getByRole('heading', { name: 'Welcome back' }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue(email);
+  await expect(
+    page.getByRole('button', { name: 'Resend verification email' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Use invitation' }),
+  ).toHaveCount(0);
 });
 test('admin UI creates market, schedule, catalog, inventory, invitations, and MCP tokens', async ({
   browser,
@@ -396,6 +438,14 @@ test('admin UI creates market, schedule, catalog, inventory, invitations, and MC
     page.getByText('Inventory saved', { exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: 'People', exact: true }).click();
+  await expect(page).toHaveURL(/\?page=operations&tab=people$/);
+  await page.reload();
+  await expect(
+    page.getByLabel('Invitation email', { exact: true }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(page.getByLabel('Produce name', { exact: true })).toBeVisible();
+  await page.goForward();
   await page
     .getByLabel('Invitation email', { exact: true })
     .fill(`${unique('driver-invite')}@example.test`);

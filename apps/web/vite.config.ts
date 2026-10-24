@@ -7,7 +7,7 @@ export default defineConfig({
     port: Number(process.env.WEB_PORT ?? '5173'),
     strictPort: true,
     proxy: Object.fromEntries(
-      ['/trpc', '/api/auth'].map((path) => [
+      ['/trpc', '/api/auth', '/mcp'].map((path) => [
         path,
         `http://127.0.0.1:${process.env.API_PORT ?? '3001'}`,
       ]),

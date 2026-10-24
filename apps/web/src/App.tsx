@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Sprout } from 'lucide-react';
 import { api, queryClient } from './api';
@@ -9,14 +8,9 @@ import { Orders } from './Orders';
 import { Driver } from './Driver';
 import { Admin } from './Admin';
 import { ErrorState, Loading } from './ui';
+import { useUrlState } from './navigation';
 export function App() {
   const me = useQuery(api.me.queryOptions());
-  const [page, setPage] = useState(
-    new URLSearchParams(location.search).has('invite') ||
-      new URLSearchParams(location.search).has('token')
-      ? 'Account'
-      : 'Market',
-  );
   const tabs = [
     'Market',
     ...(me.data
@@ -28,6 +22,14 @@ export function App() {
         ]
       : []),
   ];
+  const [urlPage, setPage] = useUrlState(
+    'page',
+    [...tabs, 'Account'],
+    'Market',
+  );
+  const params = new URLSearchParams(location.search);
+  const page =
+    params.has('invite') || params.has('token') ? 'Account' : urlPage;
   return (
     <>
       <a className="skip-link" href="#content">
@@ -49,7 +51,7 @@ export function App() {
               onClick={() =>
                 void authClient.signOut().then(() => {
                   queryClient.clear();
-                  setPage('Market');
+                  setPage('Market', true);
                 })
               }
             >
@@ -79,7 +81,7 @@ export function App() {
           <ErrorState error={me.error} />
         ) : !me.data || page === 'Account' ? (
           <div className="account-page">
-            <AuthForm onDone={() => setPage('Profile')} />
+            <AuthForm onDone={() => setPage('Profile', true)} />
           </div>
         ) : page === 'Market' ? (
           <Shop

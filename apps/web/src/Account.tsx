@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, queryClient, rpc } from './api';
 import { authClient } from './auth';
 import { Panel, useAction } from './ui';
+import { updateSearch } from './navigation';
 export function AuthForm({ onDone }: { onDone: () => void }) {
   const params = new URLSearchParams(location.search),
     invite = params.get('invite') ?? '',
@@ -56,11 +57,16 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
               : response.error.message,
           );
         }
+        if (mode === 'signup') {
+          updateSearch({ invite: null }, true);
+          setEmail(signupEmail);
+          setMode('signin');
+          setNeedsVerification(true);
+        }
         if (mode === 'signin' || mode === 'signup' || mode === 'reset') {
           const current = await rpc.me.query();
           if (current) {
             queryClient.clear();
-            history.replaceState({}, '', location.pathname);
             onDone();
           }
         }

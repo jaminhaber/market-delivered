@@ -701,6 +701,13 @@ small {
 .panel h3 {
   font-size: 15px;
 }
+.mcp-endpoint {
+  overflow-wrap: anywhere;
+}
+.mcp-config {
+  max-width: 100%;
+  overflow-x: auto;
+}
 .form-stack {
   display: grid;
   gap: 17px;

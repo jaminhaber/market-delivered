@@ -3,10 +3,15 @@ import { useQuery } from '@tanstack/react-query';
 import { api, rpc } from './api';
 import { ErrorState, label, Loading, Panel, useAction, when } from './ui';
 import { OrderDriverAssignment } from './OrderDriverAssignment';
+import { useUrlState } from './navigation';
 const value = (form: HTMLFormElement, name: string) =>
   String(new FormData(form).get(name) ?? '');
 export function Admin() {
-  const [tab, setTab] = useState('Markets');
+  const [tab, setTab] = useUrlState(
+    'tab',
+    ['Markets', 'Farms', 'Inventory', 'Orders', 'People', 'MCP access'],
+    'Markets',
+  );
   return (
     <div className="workspace">
       <div className="page-heading">
@@ -431,22 +436,80 @@ function TokensAdmin() {
   const tokens = useQuery(api.admin.tokens.queryOptions());
   const { act, busy, notice } = useAction();
   const [token, setToken] = useState('');
+  const endpoint = new URL(
+    '/mcp',
+    new URL(import.meta.env.VITE_API_URL || '/', window.location.origin),
+  ).href;
   return (
     <Panel title="Authenticated market operations MCP">
       {notice}
       <p>
-        Endpoint:{' '}
-        <code>
-          {import.meta.env.VITE_API_URL
-            ? new URL('/mcp', import.meta.env.VITE_API_URL).href
-            : 'http://127.0.0.1:3001/mcp'}
-        </code>
+        Endpoint: <code className="mcp-endpoint">{endpoint}</code>
       </p>
+      <h3>Connect your MCP client</h3>
+      <ol>
+        <li>
+          Create a named token below, using a separate token for each client.
+        </li>
+        <li>
+          Copy and save the token securely; its full value is shown only once.
+        </li>
+        <li>
+          Add a remote MCP server in your client. Use the endpoint above and
+          select <strong>Streamable HTTP</strong> as the transport.
+        </li>
+        <li>
+          Set the <code>Authorization</code> header to{' '}
+          <code>Bearer YOUR_TOKEN</code>, replacing <code>YOUR_TOKEN</code> with
+          the token you created. OAuth sign-in is not supported; choose a client
+          that accepts custom headers or bearer tokens.
+        </li>
+        <li>Connect and ask the client to list markets to verify access.</li>
+      </ol>
       <p>
-        Connect a Streamable HTTP client with an Authorization: Bearer token
-        header. Tokens can manage markets, market days, and inventory with your
-        administrator privileges. They expire after 90 days.
+        For clients that use an <code>mcpServers</code> JSON configuration,
+        adapt this example to your client’s format:
       </p>
+      <pre className="mcp-config">
+        <code>
+          {JSON.stringify(
+            {
+              mcpServers: {
+                'market-delivered': {
+                  url: endpoint,
+                  headers: { Authorization: 'Bearer YOUR_TOKEN' },
+                },
+              },
+            },
+            null,
+            2,
+          )}
+        </code>
+      </pre>
+      <p>
+        Tokens can manage farms, catalog items, markets, schedules, and
+        inventory with your administrator privileges, and read customer orders
+        and delivery details. Order changes and fulfillment use the app. Share
+        tokens only with trusted clients. Tokens expire after 90 days; revoke
+        unused or exposed tokens below and create replacements as needed.
+      </p>
+      <details>
+        <summary>Connection troubleshooting</summary>
+        <p>
+          A 401 response means the token is missing, invalid, expired, revoked,
+          or its owner no longer has administrator access. Check the header and
+          use a current token. A 403 response means the client sent an Origin
+          header that does not match this app’s configured web origin.
+        </p>
+        <p>
+          Opening the endpoint in a browser does not test an MCP connection:
+          requests require a bearer token and MCP uses POST here. Use Streamable
+          HTTP rather than the older SSE transport. A local endpoint is only
+          reachable by clients on your computer; use the deployed site’s
+          endpoint for hosted clients.
+        </p>
+      </details>
+      <h3>Access tokens</h3>
       <form
         className="form-stack"
         onSubmit={(e) => {

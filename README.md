@@ -105,12 +105,13 @@ Auth rate limits use PostgreSQL so they work across API processes. The isolated 
 
 ## Authenticated MCP
 
-The API exposes a stateless Streamable HTTP MCP endpoint at <http://127.0.0.1:3001/mcp>.
+The API exposes a stateless Streamable HTTP MCP endpoint at `/mcp`. **Operations → MCP access** displays the full endpoint for the current site (or the API host configured with `VITE_API_URL`). Local development proxies `/mcp` through the web server; the API is also available directly at <http://127.0.0.1:3001/mcp> with the default ports. Hosted clients need the deployed HTTPS endpoint rather than a localhost URL.
 
 1. Sign in as an administrator.
 2. Open **Operations → MCP access** and create a named token.
 3. Save the token immediately; the raw value is shown once.
-4. Configure your MCP client with the endpoint and `Authorization: Bearer <token>`.
+4. Configure your MCP client with the displayed endpoint, Streamable HTTP transport, and `Authorization: Bearer <token>`. The MCP access page includes a JSON configuration example; adapt it to your client's format. Use a client that supports custom headers or bearer tokens.
+5. Connect and list markets to verify access. Opening the URL in a browser is not a connection test: this endpoint requires authenticated MCP POST requests and does not support the older SSE transport.
 
 Tokens expire after 90 days, are stored only as SHA-256 hashes, and can be revoked. Each request also checks that the token owner still has administrator access. The integration uses explicitly configured bearer tokens; OAuth discovery and interactive OAuth login are not implemented.
 
