@@ -89,7 +89,7 @@ export function AuthForm({
           setEmail(signupEmail);
           setPassword('');
           setMode('signin');
-          setNeedsVerification(true);
+          setNeedsVerification(false);
         }
         if (mode === 'reset') {
           updateSearch({ token: null, reset: null, error: null }, true);
@@ -109,7 +109,7 @@ export function AuthForm({
         ? 'If that account exists, a reset link has been sent.'
         : mode === 'reset'
           ? 'Password reset. If your email still needs verification, verify it before signing in.'
-          : 'Account ready. If requested, check your email to verify your account.',
+          : 'Account ready.',
     );
   }
   if (currentUser && !token) {
@@ -220,14 +220,14 @@ export function AuthForm({
         </button>
       </form>
       <div className="inline-actions">
-        {(mode === 'signup' || (mode === 'signin' && needsVerification)) && (
+        {mode === 'signin' && needsVerification && (
           <button
             className="secondary"
-            disabled={busy || !(mode === 'signup' ? signupEmail : email)}
+            disabled={busy || !email}
             onClick={() =>
               void act(async () => {
                 const response = await authClient.sendVerificationEmail({
-                  email: mode === 'signup' ? signupEmail : email,
+                  email,
                   callbackURL: location.origin + '/',
                 });
                 if (response.error) throw new Error(response.error.message);

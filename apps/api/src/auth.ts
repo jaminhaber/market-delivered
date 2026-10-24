@@ -45,6 +45,26 @@ export function createAuth(db: Database, config: AuthConfig) {
         return { context: { context: { passwordResetUserId: reset?.value } } };
       }),
       after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path === '/sign-up/email') {
+          const result = ctx.context.returned as {
+            token?: string | null;
+            user?: { id: string; emailVerified: boolean };
+          } | null;
+          if (result?.token || !result?.user?.emailVerified) return;
+          const person = await ctx.context.internalAdapter.findUserById(
+            result.user.id,
+          );
+          if (!person?.emailVerified) return;
+          const freshSession = await ctx.context.internalAdapter.createSession(
+            person.id,
+          );
+          if (!freshSession)
+            throw new APIError('INTERNAL_SERVER_ERROR', {
+              message: 'Unable to sign in after accepting invitation.',
+            });
+          await setSessionCookie(ctx, { session: freshSession, user: person });
+          return ctx.json({ ...result, token: freshSession.token });
+        }
         if (ctx.path !== '/reset-password') return;
         const result = ctx.context.returned;
         if (
@@ -95,7 +115,8 @@ export function createAuth(db: Database, config: AuthConfig) {
               throw new APIError('FORBIDDEN', {
                 message: 'A valid invitation matching your email is required.',
               });
-            return { data: person };
+            // A valid invitation is bound to this email and proves access to its link.
+            return { data: { ...person, emailVerified: true } };
           },
           after: async (person, context) => {
             const token = context?.headers?.get('x-invite-token') ?? '';
@@ -143,7 +164,7 @@ export function createAuth(db: Database, config: AuthConfig) {
         sendEmail(user.email, 'Reset your Market Delivered password', url),
     },
     emailVerification: {
-      sendOnSignUp: !!config.production,
+      sendOnSignUp: false,
       sendOnSignIn: !!config.production,
       autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) =>

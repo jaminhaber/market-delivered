@@ -411,12 +411,12 @@ test('signed-in invitation links offer a safe account switch and preserve the in
   ).toBeVisible();
 });
 
-test('accepted invitation URL clears while signup awaits email verification', async ({
+test('accepted invitation URL clears without prompting for verification', async ({
   page,
 }) => {
   const email = `${unique('verify-invite')}@example.test`;
   const invitation = await invite(email);
-  // Production signup can succeed without issuing a session until verification.
+  // A successful signup without a session falls back to sign-in.
   await page.route('**/api/auth/sign-up/email', (route) =>
     route.fulfill({ json: { token: null, user: { email } } }),
   );
@@ -434,7 +434,7 @@ test('accepted invitation URL clears while signup awaits email verification', as
   await expect(page.getByLabel('Email', { exact: true })).toHaveValue(email);
   await expect(
     page.getByRole('button', { name: 'Resend verification email' }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole('button', { name: 'Use invitation' }),
   ).toHaveCount(0);
@@ -2393,7 +2393,7 @@ test('production config rejects missing origins, example secrets, and incomplete
     expect(() => parseEnvironment({ ...source, ...override })).toThrow();
 });
 
-test('production verification supports retries, secure sessions, and rate-limited resend', async () => {
+test('production invitations verify email and sign in while legacy verification still works', async () => {
   const email = `${unique('verification')}@example.test`;
   const invitation = await invite(email);
   const origin = 'https://market.example.test';
@@ -2435,10 +2435,27 @@ test('production verification supports retries, secure sessions, and rate-limite
       callbackURL: origin + '/',
     });
     expect(signup.status, await signup.text()).toBe(200);
-    expect(messages).toHaveLength(1);
+    expect(messages).toHaveLength(0);
+    const signupCookies = signup.headers.getSetCookie();
+    expect(signupCookies.join(';')).toContain('Secure');
+    expect(signupCookies.join(';')).toContain('HttpOnly');
+    const signupSession = await auth.api.getSession({
+      headers: {
+        cookie: signupCookies.map((cookie) => cookie.split(';')[0]).join('; '),
+      },
+    });
+    expect(signupSession?.user.email).toBe(email);
+    expect(signupSession?.user.emailVerified).toBe(true);
+    expect((await call('sign-in/email', { email, password })).status).toBe(200);
+
+    // Accounts created before invitations verified email can still verify it.
+    await db
+      .update(user)
+      .set({ emailVerified: false })
+      .where(eq(user.email, email));
     const signin = await call('sign-in/email', { email, password });
     expect(signin.status).toBe(403);
-    expect(messages).toHaveLength(2);
+    expect(messages).toHaveLength(1);
     for (let i = 0; i < 5; i++) {
       const resend = await call('send-verification-email', {
         email,
