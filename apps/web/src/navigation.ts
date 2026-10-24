@@ -46,6 +46,7 @@ export function useUrlState(
                 invite: null,
                 token: null,
                 reset: null,
+                error: null,
                 ...(next !== 'Operations' ? { tab: null } : {}),
               }
             : {}),

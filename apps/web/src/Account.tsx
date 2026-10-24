@@ -1,14 +1,21 @@
 import { AddressAutocomplete } from './AddressAutocomplete';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, queryClient, rpc } from './api';
-import { authClient } from './auth';
-import { Panel, useAction } from './ui';
+import { authClient, signOut } from './auth';
+import { Panel, Loading, useAction } from './ui';
 import { updateSearch } from './navigation';
-export function AuthForm({ onDone }: { onDone: () => void }) {
+export function AuthForm({
+  currentUser,
+  onDone,
+}: {
+  currentUser: Awaited<ReturnType<typeof rpc.me.query>> | undefined;
+  onDone: () => void;
+}) {
   const params = new URLSearchParams(location.search),
     invite = params.get('invite') ?? '',
-    token = params.get('token') ?? '';
+    token = params.get('token') ?? '',
+    linkError = params.get('error');
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot' | 'reset'>(
     token ? 'reset' : invite ? 'signup' : 'signin',
   );
@@ -16,13 +23,33 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
     [email, setEmail] = useState(''),
     [password, setPassword] = useState('');
   const [needsVerification, setNeedsVerification] = useState(false);
+  useEffect(() => {
+    if (!token && !invite) return;
+    setMode(token ? 'reset' : 'signup');
+    setPassword('');
+    setNeedsVerification(false);
+  }, [invite, token]);
   const invitation = useQuery({
     ...api.invitation.queryOptions({ token: invite }),
-    enabled: !!invite,
+    enabled: !!invite && !token && !currentUser,
     retry: false,
+    staleTime: 0,
   });
   const signupEmail = invitation.data?.email ?? '';
   const { act, busy, notice } = useAction();
+  const linkNotice = linkError && (
+    <p role="alert">
+      This email link is invalid or expired. Request a new link below.
+    </p>
+  );
+  function changeMode(next: typeof mode) {
+    setPassword('');
+    setNeedsVerification(false);
+    setEmail(signupEmail || email);
+    setMode(next);
+    if (next !== 'reset')
+      updateSearch({ token: null, reset: null, error: null }, true);
+  }
   async function submit(e: FormEvent) {
     e.preventDefault();
     await act(
@@ -60,13 +87,20 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
         if (mode === 'signup') {
           updateSearch({ invite: null }, true);
           setEmail(signupEmail);
+          setPassword('');
           setMode('signin');
           setNeedsVerification(true);
+        }
+        if (mode === 'reset') {
+          updateSearch({ token: null, reset: null, error: null }, true);
+          setPassword('');
+          setMode('signin');
         }
         if (mode === 'signin' || mode === 'signup' || mode === 'reset') {
           const current = await rpc.me.query();
           if (current) {
-            queryClient.clear();
+            await queryClient.cancelQueries();
+            await queryClient.resetQueries();
             onDone();
           }
         }
@@ -76,6 +110,33 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
         : mode === 'reset'
           ? 'Password reset. If your email still needs verification, verify it before signing in.'
           : 'Account ready. If requested, check your email to verify your account.',
+    );
+  }
+  if (currentUser && !token) {
+    return (
+      <Panel title={invite ? 'You’re already signed in' : 'Your account'}>
+        {notice}
+        {linkNotice}
+        <p>You’re signed in as {currentUser.email}.</p>
+        {invite && (
+          <p>
+            Invitations create a new account. To use this invitation for another
+            account, sign out first. Your invitation link will be kept.
+          </p>
+        )}
+        <div className="inline-actions">
+          <button onClick={onDone} disabled={busy}>
+            Continue to your profile
+          </button>
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() => void act(signOut)}
+          >
+            Sign out{invite ? ' to use invitation' : ''}
+          </button>
+        </div>
+      </Panel>
     );
   }
   return (
@@ -91,6 +152,8 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
       }
     >
       {notice}
+      {linkNotice}
+      {mode === 'signup' && invitation.isPending && <Loading />}
       <form onSubmit={submit} className="form-stack">
         {mode === 'signup' && (
           <>
@@ -140,7 +203,13 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
             )}
           </label>
         )}
-        <button disabled={busy || (mode === 'signup' && !signupEmail)}>
+        <button
+          disabled={
+            busy ||
+            (mode === 'signup' &&
+              (!signupEmail || invitation.isFetching || invitation.isError))
+          }
+        >
           {mode === 'signin'
             ? 'Sign in'
             : mode === 'signup'
@@ -169,17 +238,17 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
           </button>
         )}
         {mode !== 'signin' && (
-          <button className="secondary" onClick={() => setMode('signin')}>
+          <button className="secondary" onClick={() => changeMode('signin')}>
             Back to sign in
           </button>
         )}
         {(mode === 'signin' || mode === 'signup') && (
-          <button className="secondary" onClick={() => setMode('forgot')}>
+          <button className="secondary" onClick={() => changeMode('forgot')}>
             Forgot password?
           </button>
         )}
-        {invite && mode !== 'signup' && (
-          <button className="secondary" onClick={() => setMode('signup')}>
+        {invite && mode !== 'signup' && mode !== 'reset' && (
+          <button className="secondary" onClick={() => changeMode('signup')}>
             Use invitation
           </button>
         )}

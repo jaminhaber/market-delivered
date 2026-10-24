@@ -329,6 +329,88 @@ test('invite-only signup, profiles, sign-out, sign-in, and session isolation', a
   expect(await other.rpc.orders.mine.query()).toEqual([]);
   await other.request.dispose();
 });
+test('sign-out refreshes the home page and reports failures without losing the session', async ({
+  page,
+}) => {
+  const email = `${unique('signout')}@example.test`;
+  const invitation = await invite(email);
+  await signupUi(page, email, invitation.token, 'Signout Neighbor');
+  await page.goto('/');
+  await page.route('**/api/auth/sign-out', (route) =>
+    route.fulfill({ status: 500, json: { message: 'Unable to sign out' } }),
+  );
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Unable to sign out');
+  await expect(
+    page.getByRole('button', { name: 'Sign out', exact: true }),
+  ).toBeEnabled();
+  expect((await api(page.request).me.query())?.email).toBe(email);
+  await page.unroute('**/api/auth/sign-out');
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Welcome back' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Sign out', exact: true }),
+  ).toHaveCount(0);
+  expect(await api(page.request).me.query()).toBeNull();
+});
+
+test('signed-in invitation links offer a safe account switch and preserve the invitation', async ({
+  page,
+}) => {
+  const email = `${unique('existing-invite')}@example.test`;
+  const used = await invite(email);
+  await signupUi(page, email, used.token, 'Existing Neighbor');
+  // Reopening a consumed link should still let the current user continue.
+  await page.goto(`/?invite=${used.token}`);
+  await expect(page.getByText(`You’re signed in as ${email}.`)).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Create account', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Continue to your profile' }).click();
+  await expect(page).toHaveURL(/\?page=profile$/);
+
+  const nextEmail = `${unique('switch-invite')}@example.test`;
+  const next = await invite(nextEmail);
+  await page.goto(`/?invite=${next.token}&source=email#content`);
+  await page
+    .getByRole('button', { name: 'Sign out to use invitation', exact: true })
+    .click();
+  await expect(page).toHaveURL(`/?invite=${next.token}&source=email#content`);
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue(
+    nextEmail,
+  );
+  expect(await api(page.request).me.query()).toBeNull();
+  await page.getByLabel('Full name', { exact: true }).fill('Next Neighbor');
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page
+    .getByRole('button', { name: 'Create account', exact: true })
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Your profile', exact: true }),
+  ).toBeVisible();
+  expect((await api(page.request).me.query())?.email).toBe(nextEmail);
+
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.goto(`/?invite=${next.token}`);
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'invalid or expired' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Create account', exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole('button', { name: 'Back to sign in', exact: true })
+    .click();
+  await page.getByLabel('Email', { exact: true }).fill(nextEmail);
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Your profile', exact: true }),
+  ).toBeVisible();
+});
+
 test('accepted invitation URL clears while signup awaits email verification', async ({
   page,
 }) => {
@@ -357,6 +439,38 @@ test('accepted invitation URL clears while signup awaits email verification', as
     page.getByRole('button', { name: 'Use invitation' }),
   ).toHaveCount(0);
 });
+test('email link errors and resets without a session recover to sign-in', async ({
+  page,
+}) => {
+  await page.goto('/?reset=1&error=INVALID_TOKEN');
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'invalid or expired' }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Forgot password?', exact: true })
+    .click();
+  await expect(page).toHaveURL(baseURL + '/');
+  await expect(
+    page.getByRole('heading', { name: 'Reset your password', exact: true }),
+  ).toBeVisible();
+
+  // An unverified account can reset its password without receiving a session.
+  await page.route('**/api/auth/reset-password', (route) =>
+    route.fulfill({ json: { status: true } }),
+  );
+  await page.goto('/?reset=1&token=unverified-reset-token&source=email');
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page
+    .getByRole('button', { name: 'Reset password', exact: true })
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Welcome back', exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL('/?source=email');
+  await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
+  await expect(page.getByRole('status')).toContainText('Password reset.');
+});
+
 test('admin UI creates market, schedule, catalog, inventory, invitations, and MCP tokens', async ({
   browser,
 }) => {
@@ -1466,7 +1580,7 @@ test('password reset signs in automatically and invalidates old sessions and tok
     page.getByRole('heading', { name: 'Your profile', exact: true }),
   ).toBeVisible();
   expect((await api(page.request).me.query())?.id).toBe(customer.id);
-  await expect(page).toHaveURL(baseURL + '/');
+  await expect(page).toHaveURL(baseURL + '/?page=profile');
   expect(await customer.rpc.me.query()).toBeNull();
   const reused = await customer.request.post('/api/auth/reset-password', {
     data: { token, newPassword: password },

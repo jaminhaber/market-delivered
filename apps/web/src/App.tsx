@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Sprout } from 'lucide-react';
-import { api, queryClient } from './api';
-import { authClient } from './auth';
+import { api } from './api';
+import { signOut } from './auth';
 import { AuthForm, Profile } from './Account';
 import { Shop } from './Shop';
 import { Orders } from './Orders';
@@ -11,6 +12,18 @@ import { ErrorState, Loading } from './ui';
 import { useUrlState } from './navigation';
 export function App() {
   const me = useQuery(api.me.queryOptions());
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<unknown>(null);
+  async function handleSignOut() {
+    setSigningOut(true);
+    setSignOutError(null);
+    try {
+      await signOut();
+    } catch (error) {
+      setSignOutError(error);
+      setSigningOut(false);
+    }
+  }
   const tabs = [
     'Market',
     ...(me.data
@@ -29,7 +42,12 @@ export function App() {
   );
   const params = new URLSearchParams(location.search);
   const page =
-    params.has('invite') || params.has('token') ? 'Account' : urlPage;
+    params.has('invite') ||
+    params.has('token') ||
+    params.has('error') ||
+    params.has('reset')
+      ? 'Account'
+      : urlPage;
   return (
     <>
       <a className="skip-link" href="#content">
@@ -48,12 +66,8 @@ export function App() {
             <span>{me.data.name}</span>
             <button
               className="secondary"
-              onClick={() =>
-                void authClient.signOut().then(() => {
-                  queryClient.clear();
-                  setPage('Market', true);
-                })
-              }
+              disabled={signingOut}
+              onClick={() => void handleSignOut()}
             >
               Sign out
             </button>
@@ -75,13 +89,17 @@ export function App() {
         </nav>
       )}
       <main id="content">
+        {signOutError != null && <ErrorState error={signOutError} />}
         {me.isPending ? (
           <Loading />
         ) : me.isError ? (
           <ErrorState error={me.error} />
         ) : !me.data || page === 'Account' ? (
           <div className="account-page">
-            <AuthForm onDone={() => setPage('Profile', true)} />
+            <AuthForm
+              currentUser={me.data}
+              onDone={() => setPage('Profile', true)}
+            />
           </div>
         ) : page === 'Market' ? (
           <Shop
