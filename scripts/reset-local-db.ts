@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { createDatabase } from '../packages/db/src/index.js';
 
 const databaseURL = process.env.DATABASE_URL;
@@ -11,14 +12,19 @@ if (
   throw new Error(
     'Reset only supports the local market_delivered development database',
   );
-const { pool } = createDatabase(databaseURL);
+const { db, pool } = createDatabase(databaseURL);
 try {
-  // Explicit application roots cascade to all user, order, invitation, stock and schedule data.
-  // Preserve the Drizzle migration ledger and database schema.
-  await pool.query(
-    'TRUNCATE TABLE users, farms, markets, auth_verifications, auth_rate_limits, background_job_runs CASCADE',
-  );
-  console.log('Local development data cleared.');
+  // Reset schema objects as well as data: replacement baselines cannot run over
+  // existing enums/tables, and the old migration ledger must not survive.
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('market-delivered:migrations'))`,
+    );
+    await tx.execute(sql`DROP SCHEMA IF EXISTS drizzle CASCADE`);
+    await tx.execute(sql`DROP SCHEMA IF EXISTS public CASCADE`);
+    await tx.execute(sql`CREATE SCHEMA public`);
+  });
+  console.log('Local development schema, data and migration history cleared.');
 } finally {
   await pool.end();
 }

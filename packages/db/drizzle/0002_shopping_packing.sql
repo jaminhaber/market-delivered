@@ -1,0 +1,2 @@
+ALTER TABLE "order_items" ADD COLUMN "packed_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "order_items" ADD CONSTRAINT "packed_item_valid" CHECK ("order_items"."packed_at" IS NULL OR ("order_items"."fulfilled_quantity" IS NOT NULL AND "order_items"."fulfilled_quantity" > 0));

@@ -5,8 +5,22 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1792788994006,
-      "tag": "0000_initial",
+      "when": 1792797000000,
+      "tag": "0000_auth_and_basics",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792797000001,
+      "tag": "0001_orders_and_fulfillment",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792802667467,
+      "tag": "0002_shopping_packing",
       "breakpoints": true
     }
   ]

@@ -28,9 +28,6 @@ import {
   verification,
   marketSchedules,
   runMarketRunsJob,
-  runCloseMarketsJob,
-  CLOSE_MARKETS_JOB,
-  orderEvents,
   backgroundJobRuns,
   MARKET_RUNS_JOB,
   markets,
@@ -143,13 +140,16 @@ async function setup(quantity = 10) {
     deliveryEndAt: new Date(now + 2 * 86400000).toISOString(),
     deliveryFeeCents: 500,
   });
+  const farm = await admin.rpc.admin.createFarm.mutate({
+    name: 'Test grower',
+    location: 'Sonoma',
+  });
   const produce = await admin.rpc.admin.createProduce.mutate({
     name: unique('Carrots'),
     description: 'Fresh test carrots',
     category: 'Vegetables',
     unit: 'bunch',
-    source: 'Test grower',
-    location: 'Sonoma',
+    farmId: farm.id,
   });
   const stock = await admin.rpc.admin.saveInventory.mutate({
     runId: run.id,
@@ -158,7 +158,7 @@ async function setup(quantity = 10) {
     quantity,
     active: true,
   });
-  return { admin, market, run, produce, stock };
+  return { admin, market, run, farm, produce, stock };
 }
 async function closeCutoff(runId: string) {
   await db
@@ -283,10 +283,11 @@ test('invite-only signup, profiles, sign-out, sign-in, and session isolation', a
   await rejectCode(
     api(page.request).profile.saveDriver.mutate({
       phone: '8055550101',
-      vehicle: 'Uninvited van',
+      vehicle: 'Delivery van',
     }),
     'FORBIDDEN',
   );
+  expect((await api(page.request).me.query())!.driver).toBeNull();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(
     page.getByRole('button', { name: 'Sign in', exact: true }),
@@ -362,18 +363,20 @@ test('admin UI creates market, schedule, catalog, inventory, invitations, and MC
   await expect(
     page.getByText('Market day scheduled', { exact: true }),
   ).toBeVisible();
+  await page.getByRole('button', { name: 'Farms', exact: true }).click();
+  await page.getByLabel('Farm name', { exact: true }).fill('Neighborhood farm');
+  await page.getByLabel('Farm location', { exact: true }).fill('Sonoma');
+  await page.getByRole('button', { name: 'Save farm', exact: true }).click();
+  await expect(page.getByText('Farm saved', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Inventory', exact: true }).click();
   const produceName = unique('UI tomatoes');
   await page.getByLabel('Produce name', { exact: true }).fill(produceName);
   await page.getByLabel('Description', { exact: true }).fill('Sweet tomatoes');
   await page
-    .getByLabel('Source / vendor', { exact: true })
-    .fill('Neighborhood farm');
-  await page.getByLabel('Source location', { exact: true }).fill('Sonoma');
-  await page.getByRole('button', { name: 'Add produce', exact: true }).click();
-  await expect(
-    page.getByText('Produce added to catalog', { exact: true }),
-  ).toBeVisible();
+    .getByLabel('Catalog farm', { exact: true })
+    .selectOption({ label: 'Neighborhood farm' });
+  await page.getByRole('button', { name: 'Save produce', exact: true }).click();
+  await expect(page.getByText('Catalog saved', { exact: true })).toBeVisible();
   const option = page
     .getByLabel('Inventory market run')
     .locator('option')
@@ -422,11 +425,12 @@ test('admin UI creates market, schedule, catalog, inventory, invitations, and MC
   await expect(page.getByText('Token revoked', { exact: true })).toBeVisible();
   await admin.context.close();
 });
-test('customer checkout to driver shopping, shortages, failed delivery retry, and completion in browsers', async ({
+test('customer checkout and per-order driver shopping, shortages, cash and delivery retry in browsers', async ({
   browser,
 }) => {
-  const { run, stock, produce } = await setup(10),
-    customer = await browserActor(browser, 'customer', 'First Neighbor');
+  const { run, produce } = await setup(10);
+  const customer = await browserActor(browser, 'customer', 'Order Customer');
+  const driver = await browserActor(browser, 'driver', 'Order Driver');
   await customer.page
     .getByRole('button', { name: 'Market', exact: true })
     .click();
@@ -436,32 +440,27 @@ test('customer checkout to driver shopping, shortages, failed delivery retry, an
     .check();
   await customer.page
     .getByLabel(`Quantity for ${produce.name}`, { exact: true })
-    .fill('2');
+    .fill('3');
   await customer.page
     .getByRole('button', { name: 'Place order', exact: true })
     .click();
   await expect(
     customer.page.getByRole('heading', { name: 'Your orders', exact: true }),
   ).toBeVisible();
+  const order = (await customer.rpc.orders.mine.query())[0]!;
   await expect(
-    customer.page.getByText('placed', { exact: true }).first(),
+    customer.page.getByRole('heading', {
+      name: `Order ${order.id.slice(0, 8)}`,
+      exact: true,
+    }),
   ).toBeVisible();
-  const customer2 = await actor();
-  await customer2.rpc.orders.place.mutate({
-    runId: run.id,
-    requestId: randomUUID(),
-    items: [{ inventoryId: stock.id, quantity: 2 }],
-  });
-  const driver = await browserActor(browser, 'driver', 'Market Driver');
   await driver.page
     .getByRole('button', { name: 'Driver', exact: true })
     .click();
-  const runCard = driver.page.locator('.run-card').filter({
-    hasText: (await driver.rpc.markets.runs.query()).find(
-      (r) => r.id === run.id,
-    )!.marketName,
-  });
-  await runCard.getByRole('button', { name: 'Claim run', exact: true }).click();
+  const card = driver.page
+    .locator('.run-card')
+    .filter({ hasText: `Order ${order.id.slice(0, 8)}` });
+  await card.getByRole('button', { name: 'Claim order', exact: true }).click();
   await expect(
     driver.page.getByRole('button', { name: 'Start shopping', exact: true }),
   ).toBeDisabled();
@@ -470,28 +469,31 @@ test('customer checkout to driver shopping, shortages, failed delivery retry, an
   await driver.page
     .getByRole('button', { name: 'Driver', exact: true })
     .click();
-  await runCard.getByRole('button', { name: 'Open run', exact: true }).click();
+  await driver.page
+    .getByRole('button', { name: 'My orders', exact: true })
+    .click();
+  await driver.page
+    .locator('.run-card')
+    .filter({ hasText: order.id.slice(0, 8) })
+    .getByRole('button', { name: 'Open order', exact: true })
+    .click();
   await driver.page
     .getByRole('button', { name: 'Start shopping', exact: true })
     .click();
-  await expect(
-    driver.page.getByRole('heading', {
-      name: 'Combined shopping list',
-      exact: true,
-    }),
-  ).toBeVisible();
   await driver.page
     .getByRole('button', { name: 'Finish shopping', exact: true })
     .click();
-  await expect(driver.page.getByRole('alert')).toContainText(
-    'Record every shopping item',
-  );
+  await expect(
+    driver.page
+      .getByRole('alert')
+      .filter({ hasText: 'Record every shopping item' }),
+  ).toBeVisible();
   await driver.page
     .getByLabel(`Purchased quantity for ${produce.name}`, { exact: true })
-    .fill('3');
+    .fill('2');
   await driver.page
     .getByLabel(`Total cost for ${produce.name}`, { exact: true })
-    .fill('9.01');
+    .fill('4.01');
   await driver.page
     .getByRole('button', { name: 'Record purchase', exact: true })
     .click();
@@ -502,92 +504,48 @@ test('customer checkout to driver shopping, shortages, failed delivery retry, an
     .getByRole('button', { name: 'Finish shopping', exact: true })
     .click();
   await expect(
-    driver.page.getByText('Shopping complete; deliveries are ready', {
-      exact: true,
-    }),
+    driver.page.getByText('Shopping complete; order is ready', { exact: true }),
   ).toBeVisible();
-  let detail = await driver.rpc.driver.detail.query({ id: run.id });
-  expect(detail.orders.map((o) => o.items[0]!.fulfilledQuantity)).toEqual([
-    2, 1,
-  ]);
-  expect(
-    detail.orders.reduce((sum, o) => sum + o.items[0]!.actualCostCents!, 0),
-  ).toBe(901);
-  expect(detail.orders.map((o) => o.actualTotalCents)).toEqual([1200, 850]);
-  const first = driver.page
-    .locator('.delivery-card')
-    .filter({ hasText: 'First Neighbor' });
-  await first
-    .getByRole('button', { name: 'Start delivery', exact: true })
-    .click();
-  await first
-    .getByRole('textbox', { name: /Delivery note for/ })
-    .fill('Customer unavailable');
-  await first
-    .getByRole('button', { name: 'Report failed delivery', exact: true })
-    .click();
-  await expect(
-    first.getByRole('button', { name: 'Retry delivery', exact: true }),
-  ).toBeVisible();
-  await first
-    .getByRole('button', { name: 'Retry delivery', exact: true })
-    .click();
-  await first
-    .getByRole('button', { name: 'Mark delivered', exact: true })
-    .click();
-  await rejectCode(
-    customer.rpc.orders.recordCash.mutate({
-      orderId: detail.orders[0]!.id,
-      amountCents: 1200,
-      note: '',
-    }),
-    'FORBIDDEN',
-  );
-  await rejectCode(
-    driver.rpc.orders.recordCash.mutate({
-      orderId: detail.orders[0]!.id,
-      amountCents: 1201,
-      note: '',
-    }),
-    'BAD_REQUEST',
-  );
-  await first.getByLabel('Cash collected ($)', { exact: true }).fill('12.00');
-  await first
+  const detail = await driver.rpc.driver.detail.query({ id: order.id });
+  expect(detail.items[0]).toMatchObject({
+    fulfilledQuantity: 2,
+    actualCostCents: 401,
+  });
+  expect(detail.actualTotalCents).toBe(1200);
+  await driver.page
+    .getByLabel('Cash collected ($)', { exact: true })
+    .fill('12');
+  await driver.page
     .getByRole('button', { name: 'Save cash record', exact: true })
     .click();
   await expect(
-    first.getByText('Cash record saved', { exact: true }),
+    driver.page.getByText('Cash record saved', { exact: true }),
   ).toBeVisible();
-  expect((await customer.rpc.orders.mine.query())[0]!.cashCollectedCents).toBe(
-    1200,
-  );
-  const second = driver.page
-    .locator('.delivery-card')
-    .filter({ hasText: 'Local Customer' });
-  await second
+  await driver.page
     .getByRole('button', { name: 'Start delivery', exact: true })
     .click();
-  await second
+  await driver.page
+    .getByLabel('Delivery note', { exact: true })
+    .fill('No answer');
+  await driver.page
+    .getByRole('button', { name: 'Report failed delivery', exact: true })
+    .click();
+  await driver.page
+    .getByRole('button', { name: 'Retry delivery', exact: true })
+    .click();
+  await driver.page
     .getByRole('button', { name: 'Mark delivered', exact: true })
     .click();
   await expect(
-    driver.page.getByText('All deliveries are complete.', { exact: true }),
+    driver.page.getByText('Delivery complete. Thank you!', { exact: true }),
   ).toBeVisible();
-  await customer.page.reload();
-  await customer.page
-    .getByRole('button', { name: 'Orders', exact: true })
-    .click();
-  await expect(
-    customer.page.getByText('delivered', { exact: true }).first(),
-  ).toBeVisible();
-  detail = await driver.rpc.driver.detail.query({ id: run.id });
-  expect(detail.run.status).toBe('completed');
-  expect(
-    (await customer2.rpc.orders.mine.query())[0]!.items[0]!.fulfilledQuantity,
-  ).toBe(1);
+  expect((await customer.rpc.orders.mine.query())[0]).toMatchObject({
+    status: 'delivered',
+    cashCollectedCents: 1200,
+    actualTotalCents: 1200,
+  });
   await customer.context.close();
   await driver.context.close();
-  await customer2.request.dispose();
 });
 test('concurrent orders cannot oversell, retries are idempotent, cancellation releases reservations', async () => {
   const { run, stock } = await setup(1),
@@ -648,21 +606,30 @@ test('server enforces cutoffs, ownership, driver approval, and transitions', asy
   );
   await rejectCode(customer.rpc.admin.runs.query(), 'FORBIDDEN');
   await rejectCode(
-    customer.rpc.driver.claim.mutate({ id: run.id }),
+    customer.rpc.driver.claim.mutate({ id: order.id }),
     'FORBIDDEN',
   );
-  await driver.rpc.driver.claim.mutate({ id: run.id });
-  await rejectCode(driver2.rpc.driver.claim.mutate({ id: run.id }), 'CONFLICT');
+  await driver.rpc.driver.claim.mutate({ id: order.id });
   await rejectCode(
-    driver2.rpc.driver.detail.query({ id: run.id }),
-    'FORBIDDEN',
+    driver2.rpc.driver.claim.mutate({ id: order.id }),
+    'CONFLICT',
   );
-  await rejectCode(driver.rpc.driver.start.mutate({ id: run.id }), 'CONFLICT');
+  await rejectCode(
+    driver2.rpc.driver.detail.query({ id: order.id }),
+    'NOT_FOUND',
+  );
+  await rejectCode(
+    driver.rpc.driver.start.mutate({ id: order.id }),
+    'CONFLICT',
+  );
   await admin.rpc.admin.reviewDriver.mutate({
     userId: driver.id,
     status: 'suspended',
   });
-  await rejectCode(driver.rpc.driver.detail.query({ id: run.id }), 'FORBIDDEN');
+  await rejectCode(
+    driver.rpc.driver.detail.query({ id: order.id }),
+    'FORBIDDEN',
+  );
   await admin.rpc.admin.reviewDriver.mutate({
     userId: driver.id,
     status: 'approved',
@@ -689,7 +656,7 @@ test('server enforces cutoffs, ownership, driver approval, and transitions', asy
     }),
     'BAD_REQUEST',
   );
-  await driver.rpc.driver.start.mutate({ id: run.id });
+  await driver.rpc.driver.start.mutate({ id: order.id });
   await rejectCode(
     driver.rpc.driver.deliver.mutate({
       orderId: order.id,
@@ -699,18 +666,19 @@ test('server enforces cutoffs, ownership, driver approval, and transitions', asy
     'CONFLICT',
   );
   await driver.rpc.driver.purchase.mutate({
-    runId: run.id,
-    inventoryId: stock.id,
+    orderId: order.id,
+    orderItemId: (await driver.rpc.driver.detail.query({ id: order.id }))
+      .items[0]!.id,
     quantity: 0,
     totalCostCents: 0,
   });
-  await driver.rpc.driver.finish.mutate({ id: run.id });
+  await driver.rpc.driver.finish.mutate({ id: order.id });
   const result = (await customer.rpc.orders.mine.query())[0]!;
   expect(result.status).toBe('unavailable');
   expect(result.actualTotalCents).toBe(0);
-  expect(
-    (await driver.rpc.driver.detail.query({ id: run.id })).run.status,
-  ).toBe('completed');
+  expect((await driver.rpc.driver.detail.query({ id: order.id })).status).toBe(
+    'unavailable',
+  );
 });
 test('immutable order snapshots, invalid inventory, cross-run items, and run cancellation', async () => {
   const { admin, run, stock } = await setup(),
@@ -774,7 +742,7 @@ test('immutable order snapshots, invalid inventory, cross-run items, and run can
   ).toBe(0);
 });
 test('authenticated MCP schedules markets and inventory; invalid, expired, revoked, and demoted tokens fail', async () => {
-  const { admin, produce } = await setup();
+  const { admin, produce, farm } = await setup();
   const { token } = await admin.rpc.admin.createToken.mutate({
     name: 'E2E MCP',
   });
@@ -887,22 +855,41 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   expect(
     (await tool('update_run', { id: run.id, ...runFields })).deliveryFeeCents,
   ).toBe(250);
+  const orchard = await tool('create_farm', {
+    name: 'Ojai Orchard',
+    location: 'Ojai',
+  });
+  expect(
+    (await tool('list_farms', { search: 'Ojai Orchard' })).map(
+      (f: { id: string }) => f.id,
+    ),
+  ).toContain(orchard.id);
   const catalog = await tool('create_produce', {
     name: unique('MCP Peaches'),
     description: 'Fresh peaches',
     category: 'Fruit',
     unit: 'basket',
-    source: 'Ojai Orchard',
-    location: 'Ojai',
+    farmId: orchard.id,
   });
   const catalogInput = {
     name: unique('Updated MCP Peaches'),
     description: 'Ripe local peaches',
     category: 'Fruit',
     unit: 'basket',
-    source: 'Valley Orchard',
-    location: 'Ojai, CA',
+    farmId: orchard.id,
   };
+  await tool('update_farm', {
+    id: orchard.id,
+    name: 'Valley Orchard',
+    location: 'Ojai, CA',
+    contactPhone: '8055550101',
+    notes: 'North stall',
+    active: true,
+  });
+  expect(await tool('get_farm', { id: orchard.id })).toMatchObject({
+    name: 'Valley Orchard',
+    notes: 'North stall',
+  });
   await tool('update_produce', { id: catalog.id, ...catalogInput });
   expect(await tool('get_produce', { id: catalog.id })).toMatchObject({
     name: catalogInput.name,
@@ -1127,8 +1114,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
     description: 'Edited after checkout',
     category: 'Vegetables',
     unit: 'bunch',
-    source: 'New vendor',
-    location: 'Ojai',
+    farmId: farm.id,
   });
   expect((await customer.rpc.orders.mine.query())[0]!.items[0]!.name).not.toBe(
     'Renamed catalog item',
@@ -2226,7 +2212,7 @@ test('address budgets are atomic across callers and enforced before provider req
   );
 });
 
-test('operations reassigns suspended-driver runs without losing shopping or delivery progress', async ({
+test('operations reassigns suspended-driver orders without losing shopping or delivery progress', async ({
   page,
 }) => {
   const { admin, run, stock } = await setup();
@@ -2240,24 +2226,25 @@ test('operations reassigns suspended-driver runs without losing shopping or deli
   });
   await rejectCode(
     customer.rpc.admin.assignDriver.mutate({
-      runId: run.id,
+      orderId: order.id,
       driverId: first.id,
     }),
     'FORBIDDEN',
   );
   await rejectCode(
     admin.rpc.admin.assignDriver.mutate({
-      runId: run.id,
+      orderId: order.id,
       driverId: customer.id,
     }),
-    'BAD_REQUEST',
+    'FORBIDDEN',
   );
-  await first.rpc.driver.claim.mutate({ id: run.id });
+  await first.rpc.driver.claim.mutate({ id: order.id });
   await closeCutoff(run.id);
-  await first.rpc.driver.start.mutate({ id: run.id });
+  await first.rpc.driver.start.mutate({ id: order.id });
   await first.rpc.driver.purchase.mutate({
-    runId: run.id,
-    inventoryId: stock.id,
+    orderId: order.id,
+    orderItemId: (await first.rpc.driver.detail.query({ id: order.id }))
+      .items[0]!.id,
     quantity: 1,
     totalCostCents: 200,
   });
@@ -2266,11 +2253,14 @@ test('operations reassigns suspended-driver runs without losing shopping or deli
     status: 'suspended',
   });
   await rejectCode(
-    admin.rpc.admin.assignDriver.mutate({ runId: run.id, driverId: first.id }),
-    'BAD_REQUEST',
+    admin.rpc.admin.assignDriver.mutate({
+      orderId: order.id,
+      driverId: first.id,
+    }),
+    'FORBIDDEN',
   );
   await rejectCode(
-    admin.rpc.admin.assignDriver.mutate({ runId: run.id, driverId: null }),
+    admin.rpc.admin.assignDriver.mutate({ orderId: order.id, driverId: null }),
     'CONFLICT',
   );
   // Exercise the same Operations form administrators use for recovery.
@@ -2286,11 +2276,13 @@ test('operations reassigns suspended-driver runs without losing shopping or deli
     .last()
     .click();
   await page.getByRole('button', { name: 'Operations', exact: true }).click();
-  const card = page.locator('.run-card').filter({
-    hasText: (await admin.rpc.admin.runs.query()).find(
-      (row) => row.run.id === run.id,
-    )!.market.name,
-  });
+  await page
+    .getByRole('button', { name: 'Orders', exact: true })
+    .last()
+    .click();
+  const card = page
+    .locator('.delivery-card')
+    .filter({ hasText: order.id.slice(0, 8) });
   await card
     .getByLabel('Assigned driver', { exact: true })
     .selectOption(replacement.id);
@@ -2300,11 +2292,14 @@ test('operations reassigns suspended-driver runs without losing shopping or deli
   await expect(
     page.getByText('Driver assignment updated', { exact: true }),
   ).toBeVisible();
-  await rejectCode(first.rpc.driver.detail.query({ id: run.id }), 'FORBIDDEN');
-  const detail = await replacement.rpc.driver.detail.query({ id: run.id });
-  expect(detail.run.status).toBe('shopping');
-  expect(detail.shopping[0]!.purchase?.totalCostCents).toBe(200);
-  await replacement.rpc.driver.finish.mutate({ id: run.id });
+  await rejectCode(
+    first.rpc.driver.detail.query({ id: order.id }),
+    'FORBIDDEN',
+  );
+  const detail = await replacement.rpc.driver.detail.query({ id: order.id });
+  expect(detail.status).toBe('shopping');
+  expect(detail.items[0]!.purchase?.totalCostCents).toBe(200);
+  await replacement.rpc.driver.finish.mutate({ id: order.id });
   await replacement.rpc.driver.deliver.mutate({
     orderId: order.id,
     status: 'out_for_delivery',
@@ -2315,7 +2310,7 @@ test('operations reassigns suspended-driver runs without losing shopping or deli
     status: 'approved',
   });
   await admin.rpc.admin.assignDriver.mutate({
-    runId: run.id,
+    orderId: order.id,
     driverId: first.id,
   });
   await rejectCode(
@@ -2333,7 +2328,7 @@ test('operations reassigns suspended-driver runs without losing shopping or deli
   });
   await rejectCode(
     admin.rpc.admin.assignDriver.mutate({
-      runId: run.id,
+      orderId: order.id,
       driverId: replacement.id,
     }),
     'CONFLICT',
@@ -2392,13 +2387,790 @@ test('loopback browser sign-in and profile writes work without trusting other or
   }
 });
 
-test('market closing cancels unfinished deliveries once, preserves delivered orders and cash, and releases stock', async ({
+test('market closing expires unshopped orders once and allows shopping completion, delivery and retry afterward', async ({
   page,
 }) => {
   const { run, stock } = await setup(20);
   const customer = await actor();
   const driver = await actor('driver');
   const placed = [];
+  for (let i = 0; i < 5; i++)
+    placed.push(
+      await customer.rpc.orders.place.mutate({
+        runId: run.id,
+        requestId: randomUUID(),
+        items: [{ inventoryId: stock.id, quantity: 1 }],
+      }),
+    );
+  const [waiting, claimed, shopping, ready, transit] = placed;
+  for (const order of [claimed!, shopping!, ready!, transit!])
+    await driver.rpc.driver.claim.mutate({ id: order.id });
+  await closeCutoff(run.id);
+  for (const order of [shopping!, ready!, transit!]) {
+    await driver.rpc.driver.start.mutate({ id: order.id });
+    const detail = await driver.rpc.driver.detail.query({ id: order.id });
+    await driver.rpc.driver.purchase.mutate({
+      orderId: order.id,
+      orderItemId: detail.items[0]!.id,
+      quantity: 1,
+      totalCostCents: 250,
+    });
+    if (order.id !== shopping!.id)
+      await driver.rpc.driver.finish.mutate({ id: order.id });
+  }
+  await driver.rpc.driver.deliver.mutate({
+    orderId: transit!.id,
+    status: 'out_for_delivery',
+  });
+  const closing = new Date();
+  await db
+    .update(marketRuns)
+    .set({
+      endsAt: closing,
+      deliveryEndAt: new Date(+closing + 3600000),
+      deliveryStartAt: new Date(+closing - 60000),
+    })
+    .where(eq(marketRuns.id, run.id));
+  const url = 'http://127.0.0.1:3101/internal/jobs/close-markets';
+  expect((await page.request.get(url)).status()).toBe(401);
+  const headers = {
+    Authorization: 'Bearer e2e-only-cron-secret-not-for-production-123456789',
+  };
+  const calls = await Promise.all(
+    Array.from({ length: 3 }, () => page.request.get(url, { headers })),
+  );
+  expect(calls.every((r) => r.ok())).toBe(true);
+  const after = await customer.rpc.orders.mine.query();
+  for (const order of [waiting!, claimed!]) {
+    const expired = after.find((o) => o.id === order.id)!;
+    expect(expired.status).toBe('cancelled');
+    expect(expired.events.filter((e) => e.status === 'cancelled')).toHaveLength(
+      1,
+    );
+  }
+  expect(after.find((o) => o.id === shopping!.id)!.status).toBe('shopping');
+  expect(after.find((o) => o.id === ready!.id)!.status).toBe('ready');
+  expect(after.find((o) => o.id === transit!.id)!.status).toBe(
+    'out_for_delivery',
+  );
+  expect(
+    (await db.select().from(inventory).where(eq(inventory.id, stock.id)))[0]!
+      .reservedQuantity,
+  ).toBe(3);
+  await driver.rpc.driver.finish.mutate({ id: shopping!.id });
+  await driver.rpc.driver.deliver.mutate({
+    orderId: transit!.id,
+    status: 'delivery_failed',
+    note: 'No answer',
+  });
+  await driver.rpc.driver.deliver.mutate({
+    orderId: transit!.id,
+    status: 'out_for_delivery',
+  });
+  await driver.rpc.driver.deliver.mutate({
+    orderId: transit!.id,
+    status: 'delivered',
+  });
+  await driver.rpc.orders.recordCash.mutate({
+    orderId: transit!.id,
+    amountCents: 850,
+  });
+  expect(
+    await driver.rpc.driver.detail.query({ id: transit!.id }),
+  ).toMatchObject({ status: 'delivered', cashCollectedCents: 850 });
+  const retry = await page.request.get(url, { headers });
+  expect(await retry.json()).toMatchObject({
+    ordersCancelled: 0,
+    runsClosed: 0,
+  });
+  await customer.request.dispose();
+  await driver.request.dispose();
+});
+
+test('driver registration requires an invitation and ignores self-selected signup roles', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(
+    page.getByRole('button', { name: 'Create account', exact: true }),
+  ).toHaveCount(0);
+  for (const role of ['customer', 'driver', 'admin']) {
+    const response = await page.request.post('/api/auth/sign-up/email', {
+      headers: { 'x-signup-role': role },
+      data: {
+        email: `${unique('uninvited')}@example.test`,
+        name: 'Uninvited User',
+        password,
+      },
+    });
+    expect(response.status()).toBe(403);
+  }
+  const customerEmail = `${unique('invited-customer')}@example.test`;
+  const customerInvitation = await invite(customerEmail, 'customer');
+  const isolated = await requestFactory.newContext({ baseURL });
+  try {
+    const response = await isolated.post('/api/auth/sign-up/email', {
+      headers: {
+        'x-invite-token': customerInvitation.token,
+        'x-signup-role': 'driver',
+      },
+      data: { email: customerEmail, name: 'Invited Customer', password },
+    });
+    expect(response.status()).toBe(200);
+    expect((await api(isolated).me.query())!.driver).toBeNull();
+  } finally {
+    await isolated.dispose();
+  }
+  const email = `${unique('invited-driver')}@example.test`;
+  const invitation = await invite(email, 'driver');
+  await signupUi(page, email, invitation.token, 'Invited Driver');
+  await expect(
+    page.getByRole('heading', { name: 'Your driver details', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Phone', { exact: true }).fill('8055550112');
+  await page.getByLabel('Vehicle', { exact: true }).fill('Cargo bike');
+  await page
+    .getByRole('button', { name: 'Save driver details', exact: true })
+    .click();
+  await expect(
+    page.getByText('Driver details saved', { exact: true }),
+  ).toBeVisible();
+  const me = await api(page.request).me.query();
+  expect(me!.driver).toMatchObject({
+    status: 'approved',
+    phone: '8055550112',
+    vehicle: 'Cargo bike',
+  });
+  expect(me!.admin).toBe(false);
+  await page.getByRole('button', { name: 'Driver', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Available orders', exact: true }),
+  ).toBeVisible();
+});
+
+test('order claims are atomic, different drivers shop the same date independently, and the claim pool protects customer details', async () => {
+  const { run, stock, admin, farm, produce } = await setup(20);
+  const customer = await actor(),
+    a = await actor('driver'),
+    b = await actor('driver');
+  const first = await customer.rpc.orders.place.mutate({
+    runId: run.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: stock.id, quantity: 2 }],
+  });
+  const second = await customer.rpc.orders.place.mutate({
+    runId: run.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: stock.id, quantity: 3 }],
+  });
+  const pool = (
+    await a.rpc.driver.orders.query({ view: 'available', runId: run.id })
+  ).items;
+  const publicOrder = pool.find((o) => o.id === first.id)!;
+  expect(publicOrder).toBeDefined();
+  for (const key of [
+    'customerName',
+    'phone',
+    'address',
+    'street',
+    'deliveryNotes',
+    'customerId',
+  ])
+    expect(publicOrder).not.toHaveProperty(key);
+  const claims = await Promise.allSettled([
+    a.rpc.driver.claim.mutate({ id: first.id }),
+    b.rpc.driver.claim.mutate({ id: first.id }),
+  ]);
+  expect(claims.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+  const winner = claims[0]!.status === 'fulfilled' ? a : b,
+    other = winner === a ? b : a;
+  await rejectCode(
+    other.rpc.driver.detail.query({ id: first.id }),
+    'NOT_FOUND',
+  );
+  await other.rpc.driver.claim.mutate({ id: second.id });
+  // A released order returns to the pool and can be claimed without changing any sibling order.
+  await other.rpc.driver.release.mutate({ id: second.id });
+  expect(
+    (
+      await other.rpc.driver.orders.query({ view: 'available', runId: run.id })
+    ).items.some((o) => o.id === second.id),
+  ).toBe(true);
+  await other.rpc.driver.claim.mutate({ id: second.id });
+  await admin.rpc.admin.updateFarm.mutate({
+    id: farm.id,
+    name: 'Renamed farm',
+    location: 'New farm location',
+    active: false,
+  });
+  expect(
+    (await customer.rpc.markets.inventory.query({ id: run.id })).some(
+      (i) => i.id === stock.id,
+    ),
+  ).toBe(false);
+  await rejectCode(
+    customer.rpc.orders.place.mutate({
+      runId: run.id,
+      requestId: randomUUID(),
+      items: [{ inventoryId: stock.id, quantity: 1 }],
+    }),
+    'BAD_REQUEST',
+  );
+  await rejectCode(
+    customer.rpc.admin.createFarm.mutate({
+      name: 'Unauthorized farm',
+      location: 'Ojai',
+    }),
+    'FORBIDDEN',
+  );
+  await closeCutoff(run.id);
+  await winner.rpc.driver.start.mutate({ id: first.id });
+  await other.rpc.driver.start.mutate({ id: second.id });
+  const one = await winner.rpc.driver.detail.query({ id: first.id }),
+    two = await other.rpc.driver.detail.query({ id: second.id });
+  expect(one.items[0]!.farmName).toBe('Test grower');
+  await rejectCode(
+    winner.rpc.driver.purchase.mutate({
+      orderId: first.id,
+      orderItemId: two.items[0]!.id,
+      quantity: 1,
+      totalCostCents: 100,
+    }),
+    'NOT_FOUND',
+  );
+  await rejectCode(
+    winner.rpc.driver.purchase.mutate({
+      orderId: first.id,
+      orderItemId: one.items[0]!.id,
+      quantity: 3,
+      totalCostCents: 100,
+    }),
+    'BAD_REQUEST',
+  );
+  await winner.rpc.driver.purchase.mutate({
+    orderId: first.id,
+    orderItemId: one.items[0]!.id,
+    quantity: 1,
+    totalCostCents: 177,
+  });
+  await winner.rpc.driver.finish.mutate({ id: first.id });
+  expect((await other.rpc.driver.detail.query({ id: second.id })).status).toBe(
+    'shopping',
+  );
+  expect(await winner.rpc.driver.detail.query({ id: first.id })).toMatchObject({
+    status: 'ready',
+    actualTotalCents: 850,
+  });
+  await other.rpc.driver.purchase.mutate({
+    orderId: second.id,
+    orderItemId: two.items[0]!.id,
+    quantity: 3,
+    totalCostCents: 555,
+  });
+  await other.rpc.driver.finish.mutate({ id: second.id });
+  expect(await other.rpc.driver.detail.query({ id: second.id })).toMatchObject({
+    status: 'ready',
+    actualTotalCents: 1550,
+  });
+  expect(
+    (await winner.rpc.driver.detail.query({ id: first.id })).items[0]!
+      .actualCostCents,
+  ).toBe(177);
+  // Updating a suspended driver's details never restores claiming privileges.
+  await admin.rpc.admin.reviewDriver.mutate({
+    userId: winner.id,
+    status: 'suspended',
+  });
+  await winner.rpc.profile.saveDriver.mutate({
+    phone: '8055550199',
+    vehicle: 'New bike',
+  });
+  await rejectCode(
+    winner.rpc.driver.orders.query({ view: 'available', runId: run.id }),
+    'FORBIDDEN',
+  );
+  await rejectCode(
+    admin.rpc.admin.updateProduce.mutate({
+      id: produce.id,
+      name: produce.name,
+      description: 'Updated',
+      category: 'Vegetables',
+      unit: 'lb',
+      farmId: farm.id,
+    }),
+    'CONFLICT',
+  );
+  for (const person of [customer, a, b, admin]) await person.request.dispose();
+});
+
+test('two baseline migrations separate auth/basic data from order fulfillment and retries preserve data', async () => {
+  const { readFile, mkdtemp, mkdir, writeFile, rm } =
+    await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const { runMigrations } = await import('../../packages/db/src/migrations.js');
+  const name = `market_migration_${randomUUID().replaceAll('-', '')}_e2e`;
+  const url = new URL(databaseURL);
+  url.pathname = '/' + name;
+  const temporary = await mkdtemp(join(tmpdir(), 'market-migrations-'));
+  await pool.query(`CREATE DATABASE "${name}"`);
+  const fresh = createDatabase(url.href);
+  try {
+    const folder = fileURLToPath(
+      new URL('../../packages/db/drizzle', import.meta.url),
+    );
+    const journal = JSON.parse(
+      await readFile(folder + '/meta/_journal.json', 'utf8'),
+    ) as { entries: { tag: string }[] };
+    expect(journal.entries.slice(0, 2).map((entry) => entry.tag)).toEqual([
+      '0000_auth_and_basics',
+      '0001_orders_and_fulfillment',
+    ]);
+    await mkdir(join(temporary, 'meta'));
+    await writeFile(
+      join(temporary, 'meta/_journal.json'),
+      JSON.stringify({ ...journal, entries: journal.entries.slice(0, 1) }),
+    );
+    await writeFile(
+      join(temporary, '0000_auth_and_basics.sql'),
+      await readFile(join(folder, '0000_auth_and_basics.sql')),
+    );
+    await runMigrations(fresh.db, temporary);
+    const first = (
+      await fresh.pool.query(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='public'",
+      )
+    ).rows.map((row) => row.table_name);
+    for (const table of [
+      'users',
+      'auth_sessions',
+      'driver_profiles',
+      'farms',
+      'produce',
+      'markets',
+      'api_tokens',
+    ])
+      expect(first).toContain(table);
+    for (const table of [
+      'orders',
+      'order_items',
+      'purchases',
+      'inventory',
+      'market_runs',
+    ])
+      expect(first).not.toContain(table);
+    await fresh.pool.query(
+      "INSERT INTO users(id,name,email) VALUES ('baseline-user','Baseline User','baseline@example.test')",
+    );
+    await runMigrations(fresh.db, folder);
+    const second = (
+      await fresh.pool.query(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema='public'",
+      )
+    ).rows.map((row) => row.table_name);
+    for (const table of [
+      'orders',
+      'order_items',
+      'purchases',
+      'inventory',
+      'market_runs',
+      'market_schedules',
+      'schedule_inventory',
+      'order_events',
+      'background_job_runs',
+    ])
+      expect(second).toContain(table);
+    expect(second).not.toContain('legacy_run_purchases');
+    expect(
+      (
+        await fresh.pool.query(
+          "SELECT column_name FROM information_schema.columns WHERE table_name='orders' AND column_name='driver_id'",
+        )
+      ).rows,
+    ).toHaveLength(1);
+    expect(
+      (
+        await fresh.pool.query(
+          "SELECT column_name FROM information_schema.columns WHERE table_name='market_runs' AND column_name='driver_id'",
+        )
+      ).rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await fresh.pool.query(
+          "SELECT column_name FROM information_schema.columns WHERE table_name='purchases' AND column_name='order_item_id'",
+        )
+      ).rows,
+    ).toHaveLength(1);
+    await Promise.all([
+      runMigrations(fresh.db, folder),
+      runMigrations(fresh.db, folder),
+    ]);
+    expect(
+      (
+        await fresh.pool.query(
+          'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
+        )
+      ).rows[0]!.count,
+    ).toBe(journal.entries.length);
+    expect((await fresh.pool.query('SELECT id FROM users')).rows).toEqual([
+      { id: 'baseline-user' },
+    ]);
+  } finally {
+    await fresh.pool.end();
+    await pool.query(`DROP DATABASE "${name}"`);
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('driver orders group by market and date and can be claimed together', async ({
+  browser,
+}) => {
+  const first = await setup(20),
+    second = await setup(20);
+  const customer = await actor();
+  const driver = await browserActor(browser, 'driver', 'Grouped Orders Driver');
+  const now = Date.now();
+  const nextDate = await first.admin.rpc.admin.scheduleRun.mutate({
+    marketId: first.market.id,
+    cutoffAt: new Date(now + 2 * 86400000).toISOString(),
+    startsAt: new Date(now + 3 * 86400000).toISOString(),
+    endsAt: new Date(now + 3 * 86400000 + 4 * 3600000).toISOString(),
+    deliveryStartAt: new Date(now + 3 * 86400000 + 3600000).toISOString(),
+    deliveryEndAt: new Date(now + 3 * 86400000 + 5 * 3600000).toISOString(),
+    deliveryFeeCents: 500,
+  });
+  const nextStock = await first.admin.rpc.admin.saveInventory.mutate({
+    runId: nextDate.id,
+    produceId: first.produce.id,
+    priceCents: 350,
+    quantity: 20,
+  });
+  const placed: Awaited<ReturnType<typeof customer.rpc.orders.place.mutate>>[] =
+    [];
+  for (const [runId, inventoryId] of [
+    [first.run.id, first.stock.id],
+    [first.run.id, first.stock.id],
+    [nextDate.id, nextStock.id],
+    [second.run.id, second.stock.id],
+  ]) {
+    placed.push(
+      await customer.rpc.orders.place.mutate({
+        runId: runId!,
+        requestId: randomUUID(),
+        items: [{ inventoryId: inventoryId!, quantity: 1 }],
+      }),
+    );
+  }
+  const page = driver.page;
+  await page.getByRole('button', { name: 'Driver', exact: true }).click();
+  await page
+    .getByLabel('Filter by market', { exact: true })
+    .selectOption(second.market.id);
+  await expect(
+    page.getByRole('region', { name: second.market.name, exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel('Filter by market', { exact: true })
+    .selectOption(first.market.id);
+  const market = page.getByRole('region', {
+    name: first.market.name,
+    exact: true,
+  });
+  await expect(market.locator('.driver-market-date')).toHaveCount(2);
+  const date = market.locator('.driver-market-date').filter({
+    has: page.getByRole('heading', {
+      name: `Order ${placed[0]!.id.slice(0, 8)}`,
+      exact: true,
+    }),
+  });
+  await date
+    .getByRole('checkbox', {
+      name: 'Select all shown orders',
+      exact: true,
+    })
+    .check();
+  await expect(
+    date.getByRole('button', { name: 'Claim selected (2)', exact: true }),
+  ).toBeEnabled();
+  await expect(date.getByText('2 selected', { exact: true })).toBeVisible();
+  await expect(
+    market.getByRole('checkbox', {
+      name: `Select order ${placed[2]!.id.slice(0, 8)}`,
+      exact: true,
+    }),
+  ).not.toBeChecked();
+  const claimRequests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.includes('driver.claim'))
+      claimRequests.push(new URL(request.url()).pathname);
+  });
+  await date
+    .getByRole('button', { name: 'Claim selected (2)', exact: true })
+    .click();
+  await expect(
+    page.getByText('2 orders claimed. Open My orders to start shopping.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(claimRequests).toEqual(['/trpc/driver.claimBatch']);
+  const me = await driver.rpc.me.query();
+  const saved = await customer.rpc.orders.mine.query();
+  for (const order of placed.slice(0, 2))
+    expect(saved.find((row) => row.id === order.id)).toMatchObject({
+      status: 'claimed',
+      driverId: me!.id,
+    });
+  for (const order of placed.slice(2))
+    expect(saved.find((row) => row.id === order.id)).toMatchObject({
+      status: 'placed',
+      driverId: null,
+    });
+  await page.getByRole('button', { name: 'My orders', exact: true }).click();
+  await expect(
+    page
+      .getByRole('region', { name: first.market.name, exact: true })
+      .locator('.run-card'),
+  ).toHaveCount(2);
+  await expect(
+    page.getByRole('region', { name: second.market.name, exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Open order', exact: true })
+    .first()
+    .click();
+  await expect(
+    page.getByRole('heading', { name: 'Shopping list', exact: true }),
+  ).toBeVisible();
+  await driver.context.close();
+  await customer.request.dispose();
+});
+
+test('bulk claims report a competing claim and retain successful orders', async ({
+  browser,
+}) => {
+  const { run, stock, market } = await setup(20);
+  const customer = await actor(),
+    rival = await actor('driver');
+  const driver = await browserActor(browser, 'driver', 'Bulk Claim Driver');
+  const placed: Awaited<ReturnType<typeof customer.rpc.orders.place.mutate>>[] =
+    [];
+  for (let i = 0; i < 2; i++)
+    placed.push(
+      await customer.rpc.orders.place.mutate({
+        runId: run.id,
+        requestId: randomUUID(),
+        items: [{ inventoryId: stock.id, quantity: 1 }],
+      }),
+    );
+  const page = driver.page;
+  await page.getByRole('button', { name: 'Driver', exact: true }).click();
+  await page
+    .getByLabel('Filter by market', { exact: true })
+    .selectOption(market.id);
+  const group = page.getByRole('region', { name: market.name, exact: true });
+  await group
+    .getByRole('checkbox', {
+      name: 'Select all shown orders',
+      exact: true,
+    })
+    .check();
+  let taken = false;
+  await page.route('**/trpc/**', async (route) => {
+    if (
+      !taken &&
+      new URL(route.request().url()).pathname.includes('driver.claim')
+    ) {
+      taken = true;
+      await rival.rpc.driver.claim.mutate({ id: placed[1]!.id });
+    }
+    await route.continue();
+  });
+  await group
+    .getByRole('button', { name: 'Claim selected (2)', exact: true })
+    .click();
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'Claimed 1 of 2 orders.' }),
+  ).toBeVisible();
+  const me = await driver.rpc.me.query();
+  const saved = await customer.rpc.orders.mine.query();
+  expect(saved.find((order) => order.id === placed[0]!.id)!.driverId).toBe(
+    me!.id,
+  );
+  expect(saved.find((order) => order.id === placed[1]!.id)!.driverId).toBe(
+    rival.id,
+  );
+  await expect(group).toHaveCount(0);
+  await page.getByRole('button', { name: 'My orders', exact: true }).click();
+  await expect(
+    page
+      .getByRole('region', { name: market.name, exact: true })
+      .locator('.run-card'),
+  ).toHaveCount(1);
+  await driver.context.close();
+  await customer.request.dispose();
+  await rival.request.dispose();
+});
+
+test('batch claim validates selections, returns individual outcomes, and retries do not duplicate events', async () => {
+  const { run, stock, admin } = await setup(30),
+    foreign = await setup(5);
+  const customer = await actor(),
+    driver = await actor('driver'),
+    rival = await actor('driver');
+  const placed: Awaited<ReturnType<typeof customer.rpc.orders.place.mutate>>[] =
+    [];
+  for (let i = 0; i < 5; i++)
+    placed.push(
+      await customer.rpc.orders.place.mutate({
+        runId: run.id,
+        requestId: randomUUID(),
+        items: [{ inventoryId: stock.id, quantity: 1 }],
+      }),
+    );
+  const foreignOrder = await customer.rpc.orders.place.mutate({
+    runId: foreign.run.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: foreign.stock.id, quantity: 1 }],
+  });
+  const own = await driver.rpc.orders.place.mutate({
+    runId: run.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: stock.id, quantity: 1 }],
+  });
+  await rival.rpc.driver.claim.mutate({ id: placed[2]!.id });
+  await customer.rpc.orders.cancel.mutate({ id: placed[3]!.id });
+  await rejectCode(
+    customer.rpc.driver.claimBatch.mutate({
+      runId: run.id,
+      orderIds: [placed[0]!.id],
+    }),
+    'FORBIDDEN',
+  );
+  await rejectCode(
+    driver.rpc.driver.claimBatch.mutate({ runId: run.id, orderIds: [] }),
+    'BAD_REQUEST',
+  );
+  await rejectCode(
+    driver.rpc.driver.claimBatch.mutate({
+      runId: run.id,
+      orderIds: [placed[0]!.id, placed[0]!.id],
+    }),
+    'BAD_REQUEST',
+  );
+  await rejectCode(
+    driver.rpc.driver.claimBatch.mutate({
+      runId: run.id,
+      orderIds: Array.from({ length: 101 }, () => randomUUID()),
+    }),
+    'BAD_REQUEST',
+  );
+  const missing = randomUUID(),
+    ids = [
+      placed[0]!.id,
+      placed[1]!.id,
+      placed[2]!.id,
+      placed[3]!.id,
+      own.id,
+      foreignOrder.id,
+      missing,
+    ];
+  const batch = await driver.rpc.driver.claimBatch.mutate({
+    runId: run.id,
+    orderIds: ids,
+  });
+  expect(batch.results.map((result) => result.orderId)).toEqual(ids);
+  expect(batch.results.slice(0, 2).map((result) => result.status)).toEqual([
+    'claimed',
+    'claimed',
+  ]);
+  expect(batch.results.slice(2)).toEqual([
+    expect.objectContaining({
+      orderId: placed[2]!.id,
+      status: 'failed',
+      code: 'CONFLICT',
+    }),
+    expect.objectContaining({
+      orderId: placed[3]!.id,
+      status: 'failed',
+      code: 'CONFLICT',
+    }),
+    expect.objectContaining({
+      orderId: own.id,
+      status: 'failed',
+      code: 'BAD_REQUEST',
+    }),
+    {
+      orderId: foreignOrder.id,
+      status: 'failed',
+      code: 'NOT_FOUND',
+      message: 'Order not found for this market date',
+    },
+    {
+      orderId: missing,
+      status: 'failed',
+      code: 'NOT_FOUND',
+      message: 'Order not found for this market date',
+    },
+  ]);
+  await closeCutoff(run.id);
+  await driver.rpc.driver.start.mutate({ id: placed[0]!.id });
+  const retry = await driver.rpc.driver.claimBatch.mutate({
+    runId: run.id,
+    orderIds: ids.slice(0, 2),
+  });
+  expect(retry.results.map((result) => result.status)).toEqual([
+    'already_claimed',
+    'already_claimed',
+  ]);
+  for (const orderId of ids.slice(0, 2)) {
+    const counts = await db.execute<{ events: number; audits: number }>(
+      sql`select (select count(*)::int from order_events where order_id=${orderId} and status='claimed') as events, (select count(*)::int from audit_events where target_id=${orderId} and action='order.claimed') as audits`,
+    );
+    expect(counts.rows[0]).toEqual({ events: 1, audits: 1 });
+  }
+  await db
+    .update(marketRuns)
+    .set({ endsAt: new Date(Date.now() - 1000) })
+    .where(eq(marketRuns.id, run.id));
+  expect(
+    (
+      await driver.rpc.driver.claimBatch.mutate({
+        runId: run.id,
+        orderIds: [placed[1]!.id, placed[4]!.id],
+      })
+    ).results,
+  ).toEqual([
+    { orderId: placed[1]!.id, status: 'already_claimed' },
+    expect.objectContaining({
+      orderId: placed[4]!.id,
+      status: 'failed',
+      code: 'CONFLICT',
+    }),
+  ]);
+  await admin.rpc.admin.reviewDriver.mutate({
+    userId: driver.id,
+    status: 'suspended',
+  });
+  await rejectCode(
+    driver.rpc.driver.claimBatch.mutate({
+      runId: run.id,
+      orderIds: [placed[1]!.id],
+    }),
+    'FORBIDDEN',
+  );
+  for (const person of [customer, driver, rival, admin, foreign.admin])
+    await person.request.dispose();
+});
+
+test('overlapping batch claims avoid double assignment and shared market locks permit independent claims', async () => {
+  const { run, stock } = await setup(10);
+  const customer = await actor(),
+    a = await actor('driver'),
+    b = await actor('driver');
+  const placed: Awaited<ReturnType<typeof customer.rpc.orders.place.mutate>>[] =
+    [];
   for (let i = 0; i < 4; i++)
     placed.push(
       await customer.rpc.orders.place.mutate({
@@ -2407,176 +3179,695 @@ test('market closing cancels unfinished deliveries once, preserves delivered ord
         items: [{ inventoryId: stock.id, quantity: 1 }],
       }),
     );
-  await driver.rpc.driver.claim.mutate({ id: run.id });
-  await closeCutoff(run.id);
-  await driver.rpc.driver.start.mutate({ id: run.id });
-  await driver.rpc.driver.purchase.mutate({
-    runId: run.id,
-    inventoryId: stock.id,
-    quantity: 4,
-    totalCostCents: 1000,
-  });
-  await driver.rpc.driver.finish.mutate({ id: run.id });
-  const [delivered, ready, transit, failed] = placed;
-  await driver.rpc.driver.deliver.mutate({
-    orderId: delivered!.id,
-    status: 'out_for_delivery',
-    note: '',
-  });
-  await driver.rpc.driver.deliver.mutate({
-    orderId: delivered!.id,
-    status: 'delivered',
-    note: 'Handed over',
-  });
-  await driver.rpc.orders.recordCash.mutate({
-    orderId: delivered!.id,
-    amountCents: 850,
-    note: 'Paid',
-  });
-  await driver.rpc.orders.recordCash.mutate({
-    orderId: ready!.id,
-    amountCents: 100,
-    note: 'Partial cash recorded',
-  });
-  for (const order of [transit, failed])
-    await driver.rpc.driver.deliver.mutate({
-      orderId: order!.id,
-      status: 'out_for_delivery',
-      note: '',
-    });
-  await driver.rpc.driver.deliver.mutate({
-    orderId: failed!.id,
-    status: 'delivery_failed',
-    note: 'No answer',
-  });
-  const unopened = await setup(5);
-  const waiting = await customer.rpc.orders.place.mutate({
-    runId: unopened.run.id,
-    requestId: randomUUID(),
-    items: [{ inventoryId: unopened.stock.id, quantity: 1 }],
-  });
-  const future = await setup(5);
-  const futureOrder = await customer.rpc.orders.place.mutate({
-    runId: future.run.id,
-    requestId: randomUUID(),
-    items: [{ inventoryId: future.stock.id, quantity: 1 }],
-  });
-  const closing = new Date();
-  for (const id of [run.id, unopened.run.id])
-    await db
-      .update(marketRuns)
-      .set({
-        cutoffAt: new Date(+closing - 120000),
-        startsAt: new Date(+closing - 60000),
-        endsAt: closing,
-        deliveryStartAt: new Date(+closing - 60000),
-        deliveryEndAt: closing,
-      })
-      .where(eq(marketRuns.id, id));
-  await runCloseMarketsJob(db, 'cli', new Date(+closing - 1));
-  expect(
-    (await customer.rpc.orders.mine.query()).find(
-      (order) => order.id === transit!.id,
-    )!.status,
-  ).toBe('out_for_delivery');
-  await rejectCode(
-    driver.rpc.driver.deliver.mutate({
-      orderId: transit!.id,
-      status: 'delivered',
-      note: 'Too late',
+  const batches = await Promise.all([
+    a.rpc.driver.claimBatch.mutate({
+      runId: run.id,
+      orderIds: [placed[0]!.id, placed[1]!.id],
     }),
-    'CONFLICT',
+    b.rpc.driver.claimBatch.mutate({
+      runId: run.id,
+      orderIds: [placed[1]!.id, placed[0]!.id, placed[2]!.id],
+    }),
+  ]);
+  expect(
+    batches
+      .flatMap((batch) => batch.results)
+      .filter((result) => result.status === 'claimed'),
+  ).toHaveLength(3);
+  expect(
+    batches
+      .flatMap((batch) => batch.results)
+      .filter((result) => result.status === 'failed'),
+  ).toHaveLength(2);
+  for (const placedOrder of placed.slice(0, 3)) {
+    const row = (await customer.rpc.orders.mine.query()).find(
+      (order) => order.id === placedOrder.id,
+    )!;
+    expect([a.id, b.id]).toContain(row.driverId);
+    expect(
+      row.events.filter((event) => event.status === 'claimed'),
+    ).toHaveLength(1);
+  }
+  const held = await pool.connect();
+  let claim: ReturnType<typeof a.rpc.driver.claimBatch.mutate> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await held.query('BEGIN');
+    await held.query('SELECT id FROM market_runs WHERE id=$1 FOR SHARE', [
+      run.id,
+    ]);
+    claim = a.rpc.driver.claimBatch.mutate({
+      runId: run.id,
+      orderIds: [placed[3]!.id],
+    });
+    const result = await Promise.race([
+      claim,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error('Claim blocked by a compatible shared market lock'),
+            ),
+          5000,
+        );
+      }),
+    ]);
+    expect(result.results).toEqual([
+      { orderId: placed[3]!.id, status: 'claimed' },
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await held.query('ROLLBACK');
+    held.release();
+    if (claim) await claim;
+  }
+  for (const person of [customer, a, b]) await person.request.dispose();
+});
+
+test('grouped driver API counts and paginates market dates and their orders independently without private customer data', async () => {
+  const first = await setup(10),
+    second = await setup(5);
+  const customer = await actor(),
+    driver = await actor('driver');
+  const later = await first.admin.rpc.admin.scheduleRun.mutate({
+    ...first.run,
+    startsAt: new Date(Date.now() + 3 * 86400000).toISOString(),
+    endsAt: new Date(Date.now() + 4 * 86400000).toISOString(),
+    deliveryStartAt: new Date(Date.now() + 3 * 86400000).toISOString(),
+    deliveryEndAt: new Date(Date.now() + 4 * 86400000).toISOString(),
+  });
+  const laterStock = await first.admin.rpc.admin.saveInventory.mutate({
+    runId: later.id,
+    produceId: first.produce.id,
+    priceCents: 350,
+    quantity: 10,
+  });
+  const placed: Awaited<ReturnType<typeof customer.rpc.orders.place.mutate>>[] =
+    [];
+  for (let i = 0; i < 3; i++)
+    placed.push(
+      await customer.rpc.orders.place.mutate({
+        runId: first.run.id,
+        requestId: randomUUID(),
+        items: [{ inventoryId: first.stock.id, quantity: 1 }],
+      }),
+    );
+  await customer.rpc.orders.place.mutate({
+    runId: later.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: laterStock.id, quantity: 2 }],
+  });
+  await customer.rpc.orders.place.mutate({
+    runId: second.run.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: second.stock.id, quantity: 1 }],
+  });
+  const groups = await driver.rpc.driver.orderGroups.query({
+    view: 'available',
+    marketId: first.market.id,
+    limit: 1,
+    orderLimit: 2,
+  });
+  expect(groups).toMatchObject({
+    totalGroups: 2,
+    hasMore: true,
+    nextOffset: 1,
+  });
+  expect(groups.markets).toHaveLength(1);
+  expect(groups.markets[0]).toMatchObject({
+    market: { id: first.market.id },
+    orderCount: 3,
+  });
+  const date = groups.markets[0]!.dates[0]!;
+  expect(date).toMatchObject({
+    run: { id: first.run.id },
+    page: { total: 3, hasMore: true, nextOffset: 2 },
+  });
+  expect(date.page.items.map((order) => order.id)).toEqual(
+    placed.slice(0, 2).map((order) => order.id),
   );
-  const url = 'http://127.0.0.1:3101/internal/jobs/close-markets';
-  expect((await page.request.get(url)).status()).toBe(401);
+  for (const order of date.page.items)
+    for (const key of [
+      'customerName',
+      'phone',
+      'address',
+      'street',
+      'deliveryNotes',
+      'customerId',
+    ])
+      expect(order).not.toHaveProperty(key);
+  const rest = await driver.rpc.driver.orders.query({
+    view: 'available',
+    runId: first.run.id,
+    limit: 2,
+    offset: 2,
+  });
+  expect(rest).toMatchObject({ total: 3, hasMore: false, nextOffset: null });
+  expect(rest.items.map((order) => order.id)).toEqual([placed[2]!.id]);
+  const next = await driver.rpc.driver.orderGroups.query({
+    view: 'available',
+    marketId: first.market.id,
+    limit: 1,
+    orderLimit: 2,
+    offset: groups.nextOffset!,
+  });
+  expect(next).toMatchObject({
+    totalGroups: 2,
+    hasMore: false,
+    nextOffset: null,
+  });
+  expect(next.markets[0]!.dates[0]!.run.id).toBe(later.id);
   expect(
     (
-      await page.request.get(url, {
-        headers: { Authorization: 'Bearer wrong' },
+      await driver.rpc.driver.orderGroups.query({
+        view: 'available',
+        marketId: first.market.id,
+        offset: 10,
       })
-    ).status(),
-  ).toBe(401);
-  const headers = {
-    Authorization: 'Bearer e2e-only-cron-secret-not-for-production-123456789',
-  };
-  const calls = await Promise.all(
-    Array.from({ length: 4 }, () => page.request.get(url, { headers })),
-  );
-  expect(calls.every((response) => response.ok())).toBe(true);
-  const after = await customer.rpc.orders.mine.query();
-  const deliveredOrder = after.find((order) => order.id === delivered!.id)!;
-  expect(deliveredOrder).toMatchObject({
-    status: 'delivered',
-    actualTotalCents: 850,
-    cashCollectedCents: 850,
-  });
-  for (const id of [ready!.id, transit!.id, failed!.id, waiting.id]) {
-    const order = after.find((row) => row.id === id)!;
-    expect(order.status).toBe('cancelled');
-    const events = order.events.filter((event) => event.status === 'cancelled');
-    expect(events).toHaveLength(1);
-    expect(events[0]!.actorId).toBeNull();
-    expect(events[0]!.note).toContain('market closed');
-  }
-  expect(after.find((order) => order.id === ready!.id)).toMatchObject({
-    cashCollectedCents: 100,
-    actualTotalCents: 850,
+    ).markets,
+  ).toEqual([]);
+  await driver.rpc.driver.claimBatch.mutate({
+    runId: first.run.id,
+    orderIds: [placed[0]!.id],
   });
   expect(
-    after.find((order) => order.id === transit!.id)!.actualTotalCents,
-  ).toBe(0);
-  expect(after.find((order) => order.id === waiting.id)!.actualTotalCents).toBe(
-    0,
-  );
-  expect(after.find((order) => order.id === futureOrder.id)!.status).toBe(
-    'placed',
-  );
-  expect(
-    (await db.select().from(inventory).where(eq(inventory.id, stock.id)))[0]!
-      .reservedQuantity,
+    (
+      await driver.rpc.driver.orderGroups.query({
+        view: 'mine',
+        marketId: first.market.id,
+      })
+    ).markets[0]!.dates[0]!.page.total,
   ).toBe(1);
   expect(
     (
-      await db
-        .select()
-        .from(inventory)
-        .where(eq(inventory.id, unopened.stock.id))
-    )[0]!.reservedQuantity,
-  ).toBe(0);
-  expect(
-    (await db.select().from(marketRuns).where(eq(marketRuns.id, run.id)))[0]!
-      .status,
-  ).toBe('completed');
+      await driver.rpc.driver.orderGroups.query({
+        view: 'available',
+        marketId: first.market.id,
+      })
+    ).markets[0]!.dates[0]!.page.total,
+  ).toBe(2);
+  await rejectCode(
+    customer.rpc.driver.orderGroups.query({ view: 'available' }),
+    'FORBIDDEN',
+  );
+  for (const person of [customer, driver, first.admin, second.admin])
+    await person.request.dispose();
+});
+
+test('drivers browse more than 25 orders within a date without carrying hidden selections', async ({
+  browser,
+}) => {
+  const { run, stock, market } = await setup(50);
+  const customer = await actor();
+  const driver = await browserActor(browser, 'driver', 'Paginated Driver');
+  for (let i = 0; i < 26; i++)
+    await customer.rpc.orders.place.mutate({
+      runId: run.id,
+      requestId: randomUUID(),
+      items: [{ inventoryId: stock.id, quantity: 1 }],
+    });
+  const page = driver.page;
+  await page.getByRole('button', { name: 'Driver', exact: true }).click();
+  await page
+    .getByLabel('Filter by market', { exact: true })
+    .selectOption(market.id);
+  const group = page.getByRole('region', { name: market.name, exact: true });
+  await expect(group.locator('.run-card')).toHaveCount(25);
+  await expect(
+    group.getByText('26 orders across these dates', { exact: true }),
+  ).toBeVisible();
+  await group
+    .getByRole('checkbox', { name: 'Select all shown orders', exact: true })
+    .check();
+  await expect(
+    group.getByRole('button', { name: 'Claim selected (25)', exact: true }),
+  ).toBeEnabled();
+  await group.getByRole('button', { name: 'More orders', exact: true }).click();
+  await expect(group.locator('.run-card')).toHaveCount(1);
+  await expect(
+    group.getByRole('button', { name: 'Claim selected (0)', exact: true }),
+  ).toBeDisabled();
+  await group
+    .getByRole('checkbox', { name: 'Select all shown orders', exact: true })
+    .check();
+  await group
+    .getByRole('button', { name: 'Claim selected (1)', exact: true })
+    .click();
+  await expect(
+    page.getByText('1 order claimed. Open My orders to start shopping.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(group.locator('.run-card')).toHaveCount(25);
   expect(
     (
-      await db
-        .select()
-        .from(marketRuns)
-        .where(eq(marketRuns.id, unopened.run.id))
-    )[0]!.status,
-  ).toBe('cancelled');
-  const retry = await page.request.get(url, { headers });
-  expect(await retry.json()).toMatchObject({
-    status: 'succeeded',
-    ordersCancelled: 0,
-    runsClosed: 0,
-  });
-  const jobs = await db
-    .select()
-    .from(backgroundJobRuns)
-    .where(eq(backgroundJobRuns.name, CLOSE_MARKETS_JOB));
-  expect(jobs.reduce((sum, job) => sum + job.ordersCancelled, 0)).toBe(4);
-  expect(
-    await db
-      .select()
-      .from(orderEvents)
-      .where(
-        and(
-          eq(orderEvents.orderId, transit!.id),
-          eq(orderEvents.status, 'cancelled'),
-        ),
-      ),
-  ).toHaveLength(1);
-  await driver.request.dispose();
+      await driver.rpc.driver.orderGroups.query({
+        view: 'mine',
+        marketId: market.id,
+      })
+    ).markets[0]!.orderCount,
+  ).toBe(1);
   await customer.request.dispose();
+  await driver.context.close();
+});
+
+test('combined shopping shows every assigned order across pages, allocates exact cents, and finalizes shortages per customer', async () => {
+  const { run, stock, market } = await setup(50),
+    other = await setup(5);
+  const customer = await actor(),
+    driver = await actor('driver'),
+    rival = await actor('driver');
+  const placed: Awaited<ReturnType<typeof customer.rpc.orders.place.mutate>>[] =
+    [];
+  for (let i = 0; i < 27; i++)
+    placed.push(
+      await customer.rpc.orders.place.mutate({
+        runId: run.id,
+        requestId: randomUUID(),
+        items: [{ inventoryId: stock.id, quantity: 1 }],
+      }),
+    );
+  await driver.rpc.driver.claimBatch.mutate({
+    runId: run.id,
+    orderIds: placed.slice(0, 26).map((order) => order.id),
+  });
+  await rival.rpc.driver.claim.mutate({ id: placed[26]!.id });
+  const elsewhere = await customer.rpc.orders.place.mutate({
+    runId: other.run.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: other.stock.id, quantity: 1 }],
+  });
+  await driver.rpc.driver.claim.mutate({ id: elsewhere.id });
+  const trip = await driver.rpc.driver.shoppingList.query({ runId: run.id });
+  expect(trip.market.id).toBe(market.id);
+  expect(trip.orders).toHaveLength(26);
+  expect(trip.orders.map((order) => order.id)).not.toContain(placed[26]!.id);
+  expect(trip.orders.map((order) => order.id)).not.toContain(elsewhere.id);
+  const product = trip.vendors[0]!.items[0]!;
+  expect(product).toMatchObject({
+    requestedQuantity: 26,
+    purchasedQuantity: 0,
+    remainingQuantity: 26,
+  });
+  expect(product.allocations).toHaveLength(26);
+  await rejectCode(
+    driver.rpc.driver.startShoppingBatch.mutate({ runId: run.id }),
+    'CONFLICT',
+  );
+  await closeCutoff(run.id);
+  expect(
+    await driver.rpc.driver.startShoppingBatch.mutate({ runId: run.id }),
+  ).toEqual({ ordersStarted: 26 });
+  expect(
+    await driver.rpc.driver.startShoppingBatch.mutate({ runId: run.id }),
+  ).toEqual({ ordersStarted: 0 });
+  const input = {
+    runId: run.id,
+    inventoryId: stock.id,
+    quantity: 25,
+    totalCostCents: 2501,
+    allocations: product.allocations.map((line, index) => ({
+      orderItemId: line.orderItemId,
+      quantity: index < 25 ? 1 : 0,
+      expectedPurchaseUpdatedAt: null,
+    })),
+  };
+  const bought = await driver.rpc.driver.combinedPurchase.mutate(input);
+  expect(
+    bought.allocations.reduce((sum, line) => sum + line.totalCostCents, 0),
+  ).toBe(2501);
+  expect(bought.allocations.reduce((sum, line) => sum + line.quantity, 0)).toBe(
+    25,
+  );
+  const saved = await driver.rpc.driver.shoppingList.query({ runId: run.id });
+  expect(saved.vendors[0]!.items[0]).toMatchObject({
+    requestedQuantity: 26,
+    purchasedQuantity: 25,
+    remainingQuantity: 0,
+    shortageQuantity: 1,
+    totalCostCents: 2501,
+  });
+  await rejectCode(
+    driver.rpc.driver.combinedPurchase.mutate(input),
+    'CONFLICT',
+  );
+  expect(
+    await driver.rpc.driver.finishShoppingBatch.mutate({ runId: run.id }),
+  ).toEqual({ ordersCompleted: 26 });
+  expect(
+    await driver.rpc.driver.finishShoppingBatch.mutate({ runId: run.id }),
+  ).toEqual({ ordersCompleted: 0 });
+  const final = await driver.rpc.driver.shoppingList.query({ runId: run.id });
+  expect(final.orders.filter((order) => order.status === 'ready')).toHaveLength(
+    25,
+  );
+  expect(
+    final.orders.filter((order) => order.status === 'unavailable'),
+  ).toHaveLength(1);
+  expect(
+    final.orders
+      .filter((order) => order.status === 'ready')
+      .every((order) => order.actualTotalCents === 850),
+  ).toBe(true);
+  expect(
+    final.orders.find((order) => order.status === 'unavailable')!
+      .actualTotalCents,
+  ).toBe(0);
+  expect(
+    (await rival.rpc.driver.detail.query({ id: placed[26]!.id })).status,
+  ).toBe('claimed');
+  expect(
+    (await driver.rpc.driver.detail.query({ id: elsewhere.id })).status,
+  ).toBe('claimed');
+  for (const person of [customer, driver, rival])
+    await person.request.dispose();
+});
+
+test('combined purchases validate ownership, current allocations and saved versions; incomplete finalization rolls back', async () => {
+  const { admin, run, stock, produce } = await setup(20);
+  const customer = await actor(),
+    driver = await actor('driver'),
+    rival = await actor('driver');
+  const farm = await admin.rpc.admin.createFarm.mutate({
+    name: 'Second vendor',
+    location: 'West stall',
+  });
+  const duplicate = await admin.rpc.admin.createProduce.mutate({
+    name: produce.name,
+    description: 'Different farm',
+    category: 'Vegetables',
+    unit: 'bunch',
+    farmId: farm.id,
+  });
+  const extra = await admin.rpc.admin.saveInventory.mutate({
+    runId: run.id,
+    produceId: duplicate.id,
+    quantity: 10,
+    priceCents: 400,
+  });
+  const a = await customer.rpc.orders.place.mutate({
+      runId: run.id,
+      requestId: randomUUID(),
+      items: [
+        { inventoryId: stock.id, quantity: 2 },
+        { inventoryId: extra.id, quantity: 1 },
+      ],
+    }),
+    b = await customer.rpc.orders.place.mutate({
+      runId: run.id,
+      requestId: randomUUID(),
+      items: [{ inventoryId: stock.id, quantity: 2 }],
+    });
+  await driver.rpc.driver.claimBatch.mutate({
+    runId: run.id,
+    orderIds: [a.id, b.id],
+  });
+  await rejectCode(
+    customer.rpc.driver.shoppingList.query({ runId: run.id }),
+    'FORBIDDEN',
+  );
+  await rejectCode(
+    rival.rpc.driver.shoppingList.query({ runId: run.id }),
+    'NOT_FOUND',
+  );
+  await closeCutoff(run.id);
+  await driver.rpc.driver.startShoppingBatch.mutate({ runId: run.id });
+  const trip = await driver.rpc.driver.shoppingList.query({ runId: run.id });
+  expect(trip.vendors).toHaveLength(2);
+  const product = trip.vendors
+    .flatMap((vendor) => vendor.items)
+    .find((item) => item.inventoryId === stock.id)!;
+  expect(product.requestedQuantity).toBe(4);
+  const input = {
+    runId: run.id,
+    inventoryId: stock.id,
+    quantity: 3,
+    totalCostCents: 501,
+    allocations: product.allocations.map((line, index) => ({
+      orderItemId: line.orderItemId,
+      quantity: index ? 1 : 2,
+      expectedPurchaseUpdatedAt: line.purchaseUpdatedAt,
+    })),
+  };
+  await rejectCode(
+    driver.rpc.driver.setPacked.mutate({
+      orderId: a.id,
+      orderItemId: product.allocations[0]!.orderItemId,
+      packed: true,
+    }),
+    'CONFLICT',
+  );
+  await rejectCode(
+    driver.rpc.driver.combinedPurchase.mutate({
+      ...input,
+      allocations: input.allocations.slice(0, 1),
+    }),
+    'CONFLICT',
+  );
+  await rejectCode(
+    driver.rpc.driver.combinedPurchase.mutate({ ...input, quantity: 4 }),
+    'BAD_REQUEST',
+  );
+  await rejectCode(
+    driver.rpc.driver.combinedPurchase.mutate({
+      ...input,
+      allocations: [input.allocations[0]!, input.allocations[0]!],
+    }),
+    'BAD_REQUEST',
+  );
+  await rejectCode(
+    rival.rpc.driver.combinedPurchase.mutate(input),
+    'NOT_FOUND',
+  );
+  await driver.rpc.driver.purchase.mutate({
+    orderId: a.id,
+    orderItemId: product.allocations[0]!.orderItemId,
+    quantity: 1,
+    totalCostCents: 200,
+  });
+  await rejectCode(
+    driver.rpc.driver.combinedPurchase.mutate(input),
+    'CONFLICT',
+  );
+  const current = await driver.rpc.driver.shoppingList.query({ runId: run.id });
+  const fresh = current.vendors
+    .flatMap((vendor) => vendor.items)
+    .find((item) => item.inventoryId === stock.id)!;
+  input.allocations = fresh.allocations.map((line, index) => ({
+    orderItemId: line.orderItemId,
+    quantity: index ? 1 : 2,
+    expectedPurchaseUpdatedAt: line.purchaseUpdatedAt,
+  }));
+  expect(
+    (await driver.rpc.driver.combinedPurchase.mutate(input)).allocations.map(
+      (line) => line.totalCostCents,
+    ),
+  ).toEqual([334, 167]);
+  await rejectCode(
+    driver.rpc.driver.finishShoppingBatch.mutate({ runId: run.id }),
+    'BAD_REQUEST',
+  );
+  const still = await driver.rpc.driver.shoppingList.query({ runId: run.id });
+  expect(still.orders.every((order) => order.status === 'shopping')).toBe(true);
+  expect(
+    still.orders
+      .flatMap((order) => order.items)
+      .every((item) => item.fulfilledQuantity === null),
+  ).toBe(true);
+  const missing = still.vendors
+    .flatMap((vendor) => vendor.items)
+    .find((item) => item.inventoryId === extra.id)!;
+  await driver.rpc.driver.combinedPurchase.mutate({
+    runId: run.id,
+    inventoryId: extra.id,
+    quantity: 0,
+    totalCostCents: 0,
+    allocations: missing.allocations.map((line) => ({
+      orderItemId: line.orderItemId,
+      quantity: 0,
+      expectedPurchaseUpdatedAt: line.purchaseUpdatedAt,
+    })),
+  });
+  await driver.rpc.driver.finishShoppingBatch.mutate({ runId: run.id });
+  const finished = await driver.rpc.driver.shoppingList.query({
+    runId: run.id,
+  });
+  const orderA = finished.orders.find((order) => order.id === a.id)!;
+  expect(orderA.actualTotalCents).toBe(1200);
+  expect(
+    finished.orders.find((order) => order.id === b.id)!.actualTotalCents,
+  ).toBe(850);
+  const available = orderA.items.find((item) => item.inventoryId === stock.id)!,
+    unavailable = orderA.items.find((item) => item.inventoryId === extra.id)!;
+  await rejectCode(
+    driver.rpc.driver.setPacked.mutate({
+      orderId: a.id,
+      orderItemId: unavailable.id,
+      packed: true,
+    }),
+    'BAD_REQUEST',
+  );
+  await rejectCode(
+    rival.rpc.driver.setPacked.mutate({
+      orderId: a.id,
+      orderItemId: available.id,
+      packed: true,
+    }),
+    'FORBIDDEN',
+  );
+  await driver.rpc.driver.setPacked.mutate({
+    orderId: a.id,
+    orderItemId: available.id,
+    packed: true,
+  });
+  expect(
+    (await driver.rpc.driver.shoppingList.query({ runId: run.id })).orders
+      .find((order) => order.id === a.id)!
+      .items.find((item) => item.id === available.id)!.packedAt,
+  ).not.toBeNull();
+  await driver.rpc.driver.setPacked.mutate({
+    orderId: a.id,
+    orderItemId: available.id,
+    packed: false,
+  });
+  expect(
+    (await driver.rpc.driver.detail.query({ id: a.id })).items.find(
+      (item) => item.id === available.id,
+    )!.packedAt,
+  ).toBeNull();
+  await admin.rpc.admin.reviewDriver.mutate({
+    userId: driver.id,
+    status: 'suspended',
+  });
+  await rejectCode(
+    driver.rpc.driver.shoppingList.query({ runId: run.id }),
+    'FORBIDDEN',
+  );
+  await rejectCode(
+    driver.rpc.driver.finishShoppingBatch.mutate({ runId: run.id }),
+    'FORBIDDEN',
+  );
+  for (const person of [customer, driver, rival, admin])
+    await person.request.dispose();
+});
+
+test('driver shops combined quantities, reviews allocations and packs customer orders with saved checkboxes', async ({
+  browser,
+}) => {
+  const { run, stock, market, produce } = await setup(20);
+  const customer = await actor();
+  const driver = await browserActor(browser, 'driver', 'Combined Shopper');
+  const placed: Awaited<ReturnType<typeof customer.rpc.orders.place.mutate>>[] =
+    [];
+  for (let i = 0; i < 2; i++)
+    placed.push(
+      await customer.rpc.orders.place.mutate({
+        runId: run.id,
+        requestId: randomUUID(),
+        items: [{ inventoryId: stock.id, quantity: 2 }],
+      }),
+    );
+  await driver.rpc.driver.claimBatch.mutate({
+    runId: run.id,
+    orderIds: placed.map((order) => order.id),
+  });
+  await closeCutoff(run.id);
+  const page = driver.page;
+  async function openTrip() {
+    await page.getByRole('button', { name: 'Driver', exact: true }).click();
+    await page.getByRole('button', { name: 'My orders', exact: true }).click();
+    await page
+      .getByLabel('Filter by market', { exact: true })
+      .selectOption(market.id);
+    await page
+      .getByRole('button', { name: 'Combined shopping list', exact: true })
+      .click();
+    await expect(
+      page.getByRole('heading', {
+        name: 'Combined shopping list',
+        exact: true,
+      }),
+    ).toBeVisible();
+  }
+  await openTrip();
+  await page
+    .getByRole('button', {
+      name: 'Start shopping for all claimed orders (2)',
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByText('Shopping started for your claimed orders', { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel(`Combined quantity for ${produce.name}`, { exact: true })
+    .fill('3');
+  await page
+    .getByLabel(`Combined cost for ${produce.name}`, { exact: true })
+    .fill('5.01');
+  await page
+    .getByText('Review allocations to 2 customer orders', { exact: true })
+    .click();
+  const first = page.getByLabel(
+      `Allocate ${produce.name} to order ${placed[0]!.id.slice(0, 8)}`,
+      { exact: true },
+    ),
+    second = page.getByLabel(
+      `Allocate ${produce.name} to order ${placed[1]!.id.slice(0, 8)}`,
+      { exact: true },
+    );
+  await expect(first).toHaveValue('2');
+  await expect(second).toHaveValue('1');
+  await first.fill('1');
+  await second.fill('2');
+  await page
+    .getByRole('button', { name: 'Save combined purchase', exact: true })
+    .click();
+  await expect(
+    page.getByText('Combined purchase saved', { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Finish shopping (2 orders)', exact: true })
+    .click();
+  await expect(
+    page.getByText('Shopping finalized; pack each customer’s order below', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const check = page.getByRole('checkbox', {
+    name: `Packed ${produce.name} for order ${placed[0]!.id.slice(0, 8)}`,
+    exact: true,
+  });
+  await check.check();
+  await expect(
+    page.getByText('Packing checklist saved', { exact: true }),
+  ).toBeVisible();
+  await expect(check).toBeChecked();
+  await page.reload();
+  await openTrip();
+  await expect(
+    page.getByRole('checkbox', {
+      name: `Packed ${produce.name} for order ${placed[0]!.id.slice(0, 8)}`,
+      exact: true,
+    }),
+  ).toBeChecked();
+  const trip = await driver.rpc.driver.shoppingList.query({ runId: run.id });
+  expect(trip.orders.find((order) => order.id === placed[0]!.id)).toMatchObject(
+    {
+      actualTotalCents: 850,
+      items: [
+        expect.objectContaining({ fulfilledQuantity: 1, actualCostCents: 167 }),
+      ],
+    },
+  );
+  expect(trip.orders.find((order) => order.id === placed[1]!.id)).toMatchObject(
+    {
+      actualTotalCents: 1200,
+      items: [
+        expect.objectContaining({ fulfilledQuantity: 2, actualCostCents: 334 }),
+      ],
+    },
+  );
+  await customer.request.dispose();
+  await driver.context.close();
 });

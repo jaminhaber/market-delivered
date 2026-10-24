@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, rpc } from './api';
-import { ErrorState, label, Panel, useAction, when } from './ui';
-import { RunDriverAssignment } from './RunDriverAssignment';
+import { ErrorState, label, Loading, Panel, useAction, when } from './ui';
+import { OrderDriverAssignment } from './OrderDriverAssignment';
 const value = (form: HTMLFormElement, name: string) =>
   String(new FormData(form).get(name) ?? '');
 export function Admin() {
@@ -14,7 +14,14 @@ export function Admin() {
         <h1>Operations</h1>
       </div>
       <div className="subnav">
-        {['Markets', 'Inventory', 'People', 'MCP access'].map((t) => (
+        {[
+          'Markets',
+          'Farms',
+          'Inventory',
+          'Orders',
+          'People',
+          'MCP access',
+        ].map((t) => (
           <button
             className={t === tab ? '' : 'secondary'}
             key={t}
@@ -28,6 +35,10 @@ export function Admin() {
         <MarketsAdmin />
       ) : tab === 'Inventory' ? (
         <InventoryAdmin />
+      ) : tab === 'Farms' ? (
+        <FarmsAdmin />
+      ) : tab === 'Orders' ? (
+        <OrdersAdmin />
       ) : tab === 'People' ? (
         <PeopleAdmin />
       ) : (
@@ -150,8 +161,7 @@ function MarketsAdmin() {
               <span className="badge">{label(run.status)}</span>
               <p>{when(run.startsAt, market.timezone)}</p>
               <p>Cutoff {when(run.cutoffAt, market.timezone)}</p>
-              <p>{run.driverId ? 'Driver assigned' : 'Awaiting a driver'}</p>
-              <RunDriverAssignment run={run} />
+              <p>Drivers claim individual orders for this market date.</p>
               {run.status === 'scheduled' && (
                 <button
                   className="secondary"
@@ -179,8 +189,14 @@ function InventoryAdmin() {
     catalog = useQuery(api.produce.list.queryOptions({}));
   const { act, busy, notice } = useAction();
   const [runId, setRunId] = useState('');
+  const [editing, setEditing] = useState<{
+    produceId: string;
+    quantity: number;
+    priceCents: number;
+    active: boolean;
+  } | null>(null);
   const inventory = useQuery(
-    api.markets.inventory.queryOptions({ id: runId }, { enabled: !!runId }),
+    api.admin.inventory.queryOptions({ id: runId }, { enabled: !!runId }),
   );
   return (
     <>
@@ -188,6 +204,7 @@ function InventoryAdmin() {
       <div className="page-grid">
         <Panel title="Stock a market day">
           <form
+            key={`${runId}-${editing?.produceId ?? 'new'}`}
             className="form-stack"
             onSubmit={(e) => {
               e.preventDefault();
@@ -212,7 +229,10 @@ function InventoryAdmin() {
                 aria-label="Inventory market run"
                 required
                 value={runId}
-                onChange={(e) => setRunId(e.target.value)}
+                onChange={(e) => {
+                  setRunId(e.target.value);
+                  setEditing(null);
+                }}
               >
                 <option value="">Choose a market day</option>
                 {runs.data
@@ -226,7 +246,12 @@ function InventoryAdmin() {
             </label>
             <label>
               Produce
-              <select aria-label="Produce" name="produceId" required>
+              <select
+                aria-label="Produce"
+                name="produceId"
+                required
+                defaultValue={editing?.produceId}
+              >
                 {catalog.data?.map((i) => (
                   <option value={i.id} key={i.id}>
                     {i.name} / {i.unit}
@@ -238,6 +263,7 @@ function InventoryAdmin() {
               Offered quantity
               <input
                 name="quantity"
+                defaultValue={editing?.quantity}
                 required
                 type="number"
                 min={0}
@@ -248,6 +274,7 @@ function InventoryAdmin() {
               Unit price ($)
               <input
                 name="price"
+                defaultValue={editing ? editing.priceCents / 100 : undefined}
                 type="number"
                 required
                 min={0}
@@ -256,7 +283,12 @@ function InventoryAdmin() {
               />
             </label>
             <label className="checkbox-label">
-              <input name="active" type="checkbox" defaultChecked /> Published
+              <input
+                name="active"
+                type="checkbox"
+                defaultChecked={editing?.active ?? true}
+              />{' '}
+              Published
             </label>
             <label className="checkbox-label">
               <input name="repeat" type="checkbox" defaultChecked />
@@ -267,66 +299,15 @@ function InventoryAdmin() {
           {inventory.data?.map((i) => (
             <p key={i.id}>
               {i.name}: {i.quantity} offered / {i.reservedQuantity} reserved /{' '}
-              {i.availableQuantity} remaining
+              {i.availableQuantity} remaining ·{' '}
+              {i.active ? 'Published' : 'Hidden'}{' '}
+              <button className="secondary" onClick={() => setEditing(i)}>
+                Edit inventory
+              </button>
             </p>
           ))}
         </Panel>
-        <Panel title="Add produce to the catalog">
-          <form
-            className="form-stack"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const form = e.currentTarget;
-              void act(async () => {
-                await rpc.admin.createProduce.mutate({
-                  name: value(form, 'name'),
-                  description: value(form, 'description'),
-                  category: value(form, 'category') as
-                    'Vegetables' | 'Fruit' | 'Herbs',
-                  unit: value(form, 'unit') as
-                    'lb' | 'bunch' | 'basket' | 'each',
-                  source: value(form, 'source'),
-                  location: value(form, 'location'),
-                });
-                form.reset();
-              }, 'Produce added to catalog');
-            }}
-          >
-            <label>
-              Produce name
-              <input name="name" required minLength={2} maxLength={150} />
-            </label>
-            <label>
-              Description
-              <textarea name="description" maxLength={500} />
-            </label>
-            <label>
-              Category
-              <select aria-label="Category" name="category">
-                {['Vegetables', 'Fruit', 'Herbs'].map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Sale unit
-              <select aria-label="Sale unit" name="unit">
-                {['lb', 'bunch', 'basket', 'each'].map((u) => (
-                  <option key={u}>{u}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Source / vendor
-              <input name="source" required minLength={2} maxLength={150} />
-            </label>
-            <label>
-              Source location
-              <input name="location" required minLength={2} maxLength={150} />
-            </label>
-            <button disabled={busy}>Add produce</button>
-          </form>
-        </Panel>
+        <CatalogAdmin />
       </div>
     </>
   );
@@ -764,6 +745,271 @@ function SchedulingJobs() {
         ))}
       </div>
       {jobs.isError && <ErrorState error={jobs.error} />}
+    </Panel>
+  );
+}
+
+function FarmsAdmin() {
+  const farms = useQuery(api.farms.list.queryOptions());
+  const [selected, setSelected] = useState('');
+  const { act, busy, notice } = useAction();
+  const farm = farms.data?.find((f) => f.id === selected);
+  if (farms.isPending) return <Loading />;
+  return (
+    <Panel title="Farms and vendors">
+      {notice}
+      {farms.isError && <ErrorState error={farms.error} />}
+      <p>
+        Manage reusable vendor records. Archiving a farm hides its offerings
+        from new orders while preserving existing orders.
+      </p>
+      <label>
+        Farm to edit
+        <select
+          aria-label="Farm to edit"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+        >
+          <option value="">Create a farm</option>
+          {farms.data?.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+              {f.active ? '' : ' (archived)'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <form
+        className="form-stack"
+        key={selected}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const form = e.currentTarget;
+          void act(async () => {
+            const input = {
+              name: value(form, 'name'),
+              location: value(form, 'location'),
+              contactPhone: value(form, 'contactPhone'),
+              notes: value(form, 'notes'),
+              active: value(form, 'active') === 'on',
+            };
+            if (selected)
+              await rpc.admin.updateFarm.mutate({ id: selected, ...input });
+            else {
+              await rpc.admin.createFarm.mutate(input);
+              form.reset();
+            }
+          }, 'Farm saved');
+        }}
+      >
+        <label>
+          Farm name
+          <input
+            name="name"
+            required
+            minLength={2}
+            maxLength={150}
+            defaultValue={farm?.name}
+          />
+        </label>
+        <label>
+          Farm location
+          <input
+            name="location"
+            required
+            minLength={2}
+            maxLength={500}
+            defaultValue={farm?.location}
+          />
+        </label>
+        <label>
+          Contact phone
+          <input
+            name="contactPhone"
+            type="tel"
+            maxLength={30}
+            defaultValue={farm?.contactPhone}
+          />
+        </label>
+        <label>
+          Shopping notes
+          <textarea name="notes" maxLength={1000} defaultValue={farm?.notes} />
+        </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            name="active"
+            defaultChecked={farm?.active ?? true}
+          />
+          Active
+        </label>
+        <button disabled={busy}>Save farm</button>
+      </form>
+    </Panel>
+  );
+}
+function CatalogAdmin() {
+  const catalog = useQuery(api.produce.list.queryOptions({}));
+  const farms = useQuery(api.farms.list.queryOptions());
+  const [selected, setSelected] = useState('');
+  const item = catalog.data?.find((i) => i.id === selected);
+  const { act, busy, notice } = useAction();
+  if (catalog.isPending || farms.isPending) return <Loading />;
+  return (
+    <Panel title="Produce catalog">
+      {notice}
+      {catalog.isError && <ErrorState error={catalog.error} />}
+      <label>
+        Catalog item
+        <select
+          aria-label="Catalog item"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+        >
+          <option value="">Add produce</option>
+          {catalog.data?.map((i) => (
+            <option key={i.id} value={i.id}>
+              {i.name} · {i.farm.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <form
+        className="form-stack"
+        key={selected}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const form = e.currentTarget;
+          void act(async () => {
+            const input = {
+              name: value(form, 'name'),
+              description: value(form, 'description'),
+              category: value(form, 'category') as
+                'Vegetables' | 'Fruit' | 'Herbs',
+              unit: value(form, 'unit') as 'lb' | 'bunch' | 'basket' | 'each',
+              farmId: value(form, 'farmId'),
+            };
+            if (selected)
+              await rpc.admin.updateProduce.mutate({ id: selected, ...input });
+            else {
+              await rpc.admin.createProduce.mutate(input);
+              form.reset();
+            }
+          }, 'Catalog saved');
+        }}
+      >
+        <label>
+          Produce name
+          <input
+            name="name"
+            required
+            minLength={2}
+            maxLength={150}
+            defaultValue={item?.name}
+          />
+        </label>
+        <label>
+          Description
+          <textarea
+            name="description"
+            maxLength={500}
+            defaultValue={item?.description}
+          />
+        </label>
+        <label>
+          Category
+          <select
+            aria-label="Category"
+            name="category"
+            defaultValue={item?.category}
+          >
+            {['Vegetables', 'Fruit', 'Herbs'].map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Sale unit
+          <select aria-label="Sale unit" name="unit" defaultValue={item?.unit}>
+            {['lb', 'bunch', 'basket', 'each'].map((u) => (
+              <option key={u}>{u}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Farm
+          <select
+            aria-label="Catalog farm"
+            name="farmId"
+            required
+            defaultValue={item?.farm.id}
+          >
+            <option value="">Choose a farm</option>
+            {farms.data
+              ?.filter((f) => f.active || f.id === item?.farm.id)
+              .map((f) => (
+                <option key={f.id} value={f.id} disabled={!f.active}>
+                  {f.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <small>
+          Create farms in the Farms tab. Once stock exists, create a new catalog
+          item to change its farm or sale unit.
+        </small>
+        <button disabled={busy}>Save produce</button>
+      </form>
+    </Panel>
+  );
+}
+function OrdersAdmin() {
+  const [offset, setOffset] = useState(0);
+  const orders = useQuery(
+    api.admin.orders.queryOptions(
+      { limit: 25, offset },
+      { refetchInterval: 15000 },
+    ),
+  );
+  return (
+    <Panel title="Order fulfillment">
+      {orders.isError && <ErrorState error={orders.error} />}
+      <p>
+        Assign and recover individual orders. Coordinate groceries and cash
+        before replacing a shopper.
+      </p>
+      {orders.data?.map((order) => (
+        <article className="delivery-card" key={order.id}>
+          <h3>
+            Order {order.id.slice(0, 8)} · {order.customerName}
+          </h3>
+          <p>
+            {label(order.status)} · {order.address}
+          </p>
+          <p>
+            {order.items
+              .map((i) => `${i.quantity} ${i.unit} ${i.name}`)
+              .join(', ')}
+          </p>
+          <OrderDriverAssignment order={order} />
+        </article>
+      ))}
+      <div className="inline-actions">
+        <button
+          className="secondary"
+          disabled={!offset}
+          onClick={() => setOffset(Math.max(0, offset - 25))}
+        >
+          Previous
+        </button>
+        <button
+          className="secondary"
+          disabled={!orders.data || orders.data.length < 25}
+          onClick={() => setOffset(offset + 25)}
+        >
+          Next
+        </button>
+      </div>
     </Panel>
   );
 }

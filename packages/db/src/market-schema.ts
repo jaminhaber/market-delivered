@@ -15,7 +15,7 @@ import {
   doublePrecision,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth-schema.js';
-import { produce } from './schema.js';
+import { farms, produce } from './schema.js';
 const created = () =>
   timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
 // Store the entered address separately from the geocoder match; coordinates are approximate.
@@ -102,12 +102,10 @@ export const marketRuns = pgTable(
     }).notNull(),
     deliveryFeeCents: integer('delivery_fee_cents').notNull().default(0),
     status: runStatus('status').notNull().default('scheduled'),
-    driverId: text('driver_id').references(() => driverProfiles.userId),
     createdAt: created(),
   },
   (t) => [
     index('runs_schedule_idx').on(t.startsAt),
-    index('runs_driver_idx').on(t.driverId),
     check(
       'run_dates_valid',
       sql`${t.cutoffAt} <= ${t.startsAt} AND ${t.startsAt} < ${t.endsAt} AND ${t.deliveryStartAt} >= ${t.startsAt} AND ${t.deliveryEndAt} > ${t.deliveryStartAt}`,
@@ -141,6 +139,8 @@ export const inventory = pgTable(
 );
 export const orderStatus = pgEnum('order_status', [
   'placed',
+  'claimed',
+  'shopping',
   'ready',
   'out_for_delivery',
   'delivered',
@@ -159,6 +159,8 @@ export const orders = pgTable(
       .notNull()
       .references(() => marketRuns.id),
     requestId: uuid('request_id').notNull(),
+    driverId: text('driver_id').references(() => driverProfiles.userId),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
     status: orderStatus('status').notNull().default('placed'),
     customerName: text('customer_name').notNull(),
     phone: text('phone').notNull(),
@@ -178,6 +180,11 @@ export const orders = pgTable(
   (t) => [
     uniqueIndex('orders_customer_request_unique').on(t.customerId, t.requestId),
     index('orders_run_idx').on(t.runId),
+    index('orders_driver_idx').on(t.driverId),
+    check(
+      'order_assignment_valid',
+      sql`${t.status} NOT IN ('claimed', 'shopping', 'ready', 'out_for_delivery', 'delivery_failed', 'delivered') OR ${t.driverId} IS NOT NULL`,
+    ),
     index('orders_customer_idx').on(t.customerId),
     check(
       'order_cash_valid',
@@ -199,14 +206,24 @@ export const orderItems = pgTable(
     inventoryId: uuid('inventory_id')
       .notNull()
       .references(() => inventory.id),
+    farmId: uuid('farm_id')
+      .notNull()
+      .references(() => farms.id),
+    farmName: text('farm_name').notNull(),
+    farmLocation: text('farm_location').notNull(),
     name: text('name').notNull(),
     unit: text('unit').notNull(),
     quantity: integer('quantity').notNull(),
     priceCents: integer('price_cents').notNull(),
     fulfilledQuantity: integer('fulfilled_quantity'),
     actualCostCents: integer('actual_cost_cents'),
+    packedAt: timestamp('packed_at', { withTimezone: true }),
   },
   (t) => [
+    check(
+      'packed_item_valid',
+      sql`${t.packedAt} IS NULL OR (${t.fulfilledQuantity} IS NOT NULL AND ${t.fulfilledQuantity} > 0)`,
+    ),
     uniqueIndex('order_inventory_unique').on(t.orderId, t.inventoryId),
     index('order_items_inventory_idx').on(t.inventoryId),
     check(
@@ -218,9 +235,9 @@ export const orderItems = pgTable(
 export const purchases = pgTable(
   'purchases',
   {
-    inventoryId: uuid('inventory_id')
+    orderItemId: uuid('order_item_id')
       .primaryKey()
-      .references(() => inventory.id),
+      .references(() => orderItems.id),
     quantity: integer('quantity').notNull(),
     totalCostCents: integer('total_cost_cents').notNull(),
     recordedBy: text('recorded_by')
@@ -322,7 +339,7 @@ export const marketSchedules = pgTable(
     uniqueIndex('market_schedule_weekday_unique').on(t.marketId, t.weekday),
     check(
       'schedule_delivery_during_market',
-      sql`${t.deliveryDelayMinutes} + ${t.deliveryDurationMinutes} <= ${t.closesMinute} - ${t.opensMinute}`,
+      sql`${t.deliveryDelayMinutes} < ${t.closesMinute} - ${t.opensMinute}`,
     ),
     check(
       'market_schedule_valid',

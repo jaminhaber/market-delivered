@@ -21,6 +21,7 @@ import {
   marketInput,
   operations,
   produceInput,
+  farmInput,
   runInput,
   scheduleInput,
   scheduleInventoryInput,
@@ -35,6 +36,7 @@ export function registerMcp(
     method: ['GET', 'POST', 'DELETE'],
     url: '/mcp',
     async handler(request, reply) {
+      reply.header('Cache-Control', 'no-store');
       const origin = request.headers.origin;
       if (origin && origin !== webOrigin)
         return reply.code(403).send({ error: 'Origin not allowed' });
@@ -76,7 +78,7 @@ export function registerMcp(
       });
       const mcp = new McpServer({
         name: 'market-delivered-operations',
-        version: '1.0.0',
+        version: '2.0.0',
       });
       const result = (value: unknown) => ({
         content: [{ type: 'text' as const, text: JSON.stringify(value) }],
@@ -87,6 +89,10 @@ export function registerMcp(
         } catch (error) {
           return {
             ...result({
+              code:
+                error instanceof Error && 'code' in error
+                  ? error.code
+                  : 'INTERNAL_SERVER_ERROR',
               error:
                 error instanceof Error && 'code' in error
                   ? error.message
@@ -118,6 +124,78 @@ export function registerMcp(
           .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
           .where(eq(s.inventory.runId, runId));
       mcp.registerTool(
+        'list_farms',
+        {
+          description:
+            'List reusable farms/vendors, including archived records. Filter by name/location and active status. Create a farm first, then use its id as farmId in create_produce. Page with limit and offset.',
+          inputSchema: z.object({
+            ...pagination,
+            search: z.string().trim().max(150).default(''),
+            active: z.boolean().optional(),
+          }),
+          annotations: readOnly,
+        },
+        (input) =>
+          call(() =>
+            db
+              .select()
+              .from(s.farms)
+              .where(
+                and(
+                  input.search
+                    ? or(
+                        ilike(s.farms.name, `%${input.search}%`),
+                        ilike(s.farms.location, `%${input.search}%`),
+                      )
+                    : undefined,
+                  input.active === undefined
+                    ? undefined
+                    : eq(s.farms.active, input.active),
+                ),
+              )
+              .orderBy(asc(s.farms.name), asc(s.farms.id))
+              .limit(input.limit)
+              .offset(input.offset),
+          ),
+      );
+      mcp.registerTool(
+        'get_farm',
+        {
+          description:
+            'Read farm contact details and shopping notes. Use list_produce with farmId to inspect its catalog.',
+          inputSchema: z.object({ id: z.uuid() }),
+          annotations: readOnly,
+        },
+        (input) =>
+          call(async () => {
+            const [farm] = await db
+              .select()
+              .from(s.farms)
+              .where(eq(s.farms.id, input.id));
+            ensure(farm, 'Farm not found', 'NOT_FOUND');
+            return farm;
+          }),
+      );
+      mcp.registerTool(
+        'create_farm',
+        {
+          description:
+            'Create a reusable farm/vendor. Does not create a login or market-day inventory. Keep the returned id for create_produce.',
+          inputSchema: farmInput,
+        },
+        (input) => call(() => ops.createFarm(input)),
+      );
+      mcp.registerTool(
+        'update_farm',
+        {
+          description:
+            'Update a farm by id. Supply all fields. Set active=false to archive it and hide offerings from new orders. Existing orders retain their farm snapshots. No historical records are deleted.',
+          inputSchema: farmInput.extend({ id: z.uuid() }),
+          annotations: { idempotentHint: true },
+        },
+        ({ id, ...input }) => call(() => ops.updateFarm(id, input)),
+      );
+      mcp.registerTool(
         'list_orders',
         {
           description:
@@ -128,6 +206,7 @@ export function registerMcp(
               runId: z.uuid().optional(),
               marketId: z.uuid().optional(),
               customerId: z.string().min(1).max(200).optional(),
+              driverId: z.string().min(1).max(200).optional(),
               status: z.enum(s.orderStatus.enumValues).optional(),
               from: z.iso.datetime({ offset: true }).optional(),
               to: z.iso.datetime({ offset: true }).optional(),
@@ -152,6 +231,9 @@ export function registerMcp(
                   input.runId ? eq(s.orders.runId, input.runId) : undefined,
                   input.marketId
                     ? eq(s.marketRuns.marketId, input.marketId)
+                    : undefined,
+                  input.driverId
+                    ? eq(s.orders.driverId, input.driverId)
                     : undefined,
                   input.customerId
                     ? eq(s.orders.customerId, input.customerId)
@@ -316,12 +398,12 @@ export function registerMcp(
         'list_produce',
         {
           description:
-            'Search the produce catalog, including vendor metadata. Filter by category or source ID; page with limit and offset. Prices and quantities for a market day are in list_inventory.',
+            'Search the produce catalog, including vendor metadata. Filter by category or farmId; page with limit and offset. Prices and quantities for a market day are in list_inventory.',
           inputSchema: z.object({
             ...pagination,
             search: z.string().trim().max(150).default(''),
             category: z.enum(s.produceCategory.enumValues).optional(),
-            sourceId: z.uuid().optional(),
+            farmId: z.uuid().optional(),
           }),
           annotations: readOnly,
         },
@@ -346,9 +428,7 @@ export function registerMcp(
                   input.category
                     ? eq(s.produce.category, input.category)
                     : undefined,
-                  input.sourceId
-                    ? eq(s.produce.farmId, input.sourceId)
-                    : undefined,
+                  input.farmId ? eq(s.produce.farmId, input.farmId) : undefined,
                 ),
               )
               .orderBy(asc(s.produce.name), asc(s.produce.id))
@@ -461,7 +541,7 @@ export function registerMcp(
         'update_produce',
         {
           description:
-            'Update a catalog item and its source metadata. Supply all catalog fields. Existing order snapshots and run prices stay unchanged. A changed source is attached only to this item. Sale unit cannot change once inventory/defaults exist; create a new item instead.',
+            'Update a catalog item using an existing active farmId. Supply all catalog fields. Existing order snapshots and run prices stay unchanged. Farm and sale unit cannot change once inventory/defaults exist; create a new item instead.',
           inputSchema: produceInput.extend({ id: z.uuid() }),
         },
         ({ id, ...input }) => call(() => ops.updateProduce(id, input)),
@@ -470,7 +550,7 @@ export function registerMcp(
         'update_run',
         {
           description:
-            'Update an unbooked scheduled run before its cutoff. Supply all run fields. Cannot change market or move a recurring opening date; cancel and create a replacement for those changes. Deliveries must remain during market hours.',
+            'Update an unbooked scheduled run before its cutoff. Supply all run fields. Cannot change market or move a recurring opening date; cancel and create a replacement for those changes. Delivery windows may extend after market closing.',
           inputSchema: runInput.safeExtend({ id: z.uuid() }),
         },
         ({ id, ...input }) => call(() => ops.updateRun(id, input)),
@@ -505,7 +585,7 @@ export function registerMcp(
         'create_produce',
         {
           description:
-            'Create an inventory catalog item and vendor metadata. Does not create a farmer account.',
+            'Create a catalog item for an existing active farmId. Call create_farm or list_farms first. Then publish it using save_inventory or save_schedule_inventory. Does not create a farmer account.',
           inputSchema: produceInput,
         },
         (input) => call(() => ops.createProduce(input)),

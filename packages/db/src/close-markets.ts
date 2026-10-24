@@ -8,12 +8,7 @@ import {
   orders,
 } from './market-schema.js';
 
-export const pendingOrderStatuses = [
-  'placed',
-  'ready',
-  'out_for_delivery',
-  'delivery_failed',
-] as const;
+export const pendingOrderStatuses = ['placed', 'claimed'] as const;
 export async function closeExpiredMarkets(
   db: Pick<Database, 'transaction'>,
   asOf = new Date(),
@@ -26,12 +21,13 @@ export async function closeExpiredMarkets(
       .where(
         and(
           sql`${marketRuns.endsAt} <= ${asOf}`,
-          sql`(${marketRuns.status} IN ('scheduled','shopping','delivering') OR EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.runId} = ${marketRuns.id} AND ${orders.status} IN ('placed','ready','out_for_delivery','delivery_failed')))`,
+          sql`(${marketRuns.status} IN ('scheduled','shopping','delivering') OR EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.runId} = ${marketRuns.id} AND ${orders.status} IN ('placed','claimed')))`,
         ),
       )
       .orderBy(asc(marketRuns.id))
       .for('update');
     let ordersCancelled = 0;
+    let runsClosed = 0;
     for (const run of runs) {
       const cancelled = await tx
         .update(orders)
@@ -70,21 +66,33 @@ export async function closeExpiredMarkets(
             orderId,
             actorId: null,
             status: 'cancelled' as const,
-            note: 'Automatically cancelled: the market closed before delivery was completed.',
+            note: 'Automatically cancelled: the market closed before shopping started.',
             createdAt: asOf,
           })),
         );
       }
-      const [delivered] = await tx
+      const [active] = await tx
         .select({ id: orders.id })
         .from(orders)
-        .where(and(eq(orders.runId, run.id), eq(orders.status, 'delivered')))
+        .where(
+          and(
+            eq(orders.runId, run.id),
+            inArray(orders.status, [
+              'shopping',
+              'ready',
+              'out_for_delivery',
+              'delivery_failed',
+            ]),
+          ),
+        )
         .limit(1);
+      if (active) continue;
       await tx
         .update(marketRuns)
-        .set({ status: delivered ? 'completed' : 'cancelled' })
+        .set({ status: 'completed' })
         .where(eq(marketRuns.id, run.id));
+      runsClosed++;
     }
-    return { ordersCancelled, runsClosed: runs.length };
+    return { ordersCancelled, runsClosed };
   });
 }

@@ -2,26 +2,37 @@ import { initTRPC, TRPCError, type inferRouterOutputs } from '@trpc/server';
 import { and, asc, eq, ilike, or, sql, desc } from 'drizzle-orm';
 import * as s from '@market/db';
 import { z } from 'zod';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   ensure,
+  claimBatchInput,
+  combinedPurchaseInput,
+  customerProfileInput,
+  driverProfileInput,
   operations,
   marketInput,
   runInput,
   inventoryInput,
   produceInput,
+  farmInput,
   scheduleInput,
   scheduleInventoryInput,
   type Actor,
 } from './operations.js';
 import {
   addressInput,
-  formatAddress,
   geocodeAddress,
   suggestAddresses,
   resolveAddress,
 } from './addresses.js';
-import { myOrders, runDetail } from './queries.js';
+import {
+  driverOrderDetail,
+  driverOrderGroups,
+  driverShoppingList,
+  driverOrders,
+  myOrders,
+  runDetail,
+} from './queries.js';
 import { checkRateLimit } from './rate-limit.js';
 export type Context = {
   db: s.Database;
@@ -123,57 +134,8 @@ export const appRouter = t.router({
   }),
   profile: t.router({
     save: authenticated
-      .input(
-        z.object({
-          name: z.string().trim().min(2).max(100),
-          phone: z.string().trim().min(7).max(30),
-          ...addressInput.shape,
-          deliveryNotes: z.string().trim().max(500),
-        }),
-      )
-      .mutation(async ({ ctx, input }) =>
-        ctx.db.transaction(async (tx) => {
-          await tx
-            .update(s.user)
-            .set({ name: input.name })
-            .where(eq(s.user.id, ctx.actor.id));
-          const { name: _name, ...fields } = input;
-          const [previous] = await tx
-            .select()
-            .from(s.customerProfiles)
-            .where(eq(s.customerProfiles.userId, ctx.actor.id))
-            .for('update');
-          const changed =
-            !previous ||
-            Object.keys(addressInput.shape).some(
-              (key) =>
-                previous[key as keyof typeof fields] !==
-                fields[key as keyof typeof fields],
-            );
-          const profile = {
-            ...fields,
-            address: formatAddress(fields),
-            ...(changed
-              ? {
-                  googlePlaceId: null,
-                  latitude: null,
-                  longitude: null,
-                  geocodedAddress: null,
-                  geocodedAt: null,
-                  geocoder: null,
-                }
-              : {}),
-          };
-          await tx
-            .insert(s.customerProfiles)
-            .values({ userId: ctx.actor.id, ...profile })
-            .onConflictDoUpdate({
-              target: s.customerProfiles.userId,
-              set: profile,
-            });
-          return { success: true };
-        }),
-      ),
+      .input(customerProfileInput)
+      .mutation(({ ctx, input }) => ctx.ops.saveCustomerProfile(input)),
     locateAddress: addressProcedure.mutation(async ({ ctx }) => {
       const [profile] = await ctx.db
         .select()
@@ -183,66 +145,12 @@ export const appRouter = t.router({
       const address = addressInput.parse(profile);
       const match = await geocodeAddress(address, ctx.googleMapsKey);
       if (match.needsReview) return { success: false, ...match };
-      const [updated] = await ctx.db
-        .update(s.customerProfiles)
-        .set({
-          googlePlaceId: match.googlePlaceId,
-          latitude: null,
-          longitude: null,
-          geocodedAddress: null,
-          geocoder: 'google',
-          geocodedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(s.customerProfiles.userId, ctx.actor.id),
-            ...Object.keys(addressInput.shape).map((key) =>
-              eq(
-                s.customerProfiles[key as keyof typeof address],
-                address[key as keyof typeof address],
-              ),
-            ),
-          ),
-        )
-        .returning({ userId: s.customerProfiles.userId });
-      ensure(
-        updated,
-        'Your address changed during lookup. Try again.',
-        'CONFLICT',
-      );
+      await ctx.ops.saveAddressLocation(address, match.googlePlaceId);
       return { success: true, ...match };
     }),
     saveDriver: authenticated
-      .input(
-        z.object({
-          name: z.string().trim().min(2).max(100).optional(),
-          phone: z.string().trim().min(7).max(30),
-          vehicle: z.string().trim().min(2).max(200),
-        }),
-      )
-      .mutation(async ({ ctx, input }) =>
-        ctx.db.transaction(async (tx) => {
-          const [existing] = await tx
-            .select()
-            .from(s.driverProfiles)
-            .where(eq(s.driverProfiles.userId, ctx.actor.id));
-          ensure(
-            existing,
-            'Driver access is managed by the team.',
-            'FORBIDDEN',
-          );
-          await tx
-            .update(s.driverProfiles)
-            .set({ phone: input.phone, vehicle: input.vehicle })
-            .where(eq(s.driverProfiles.userId, ctx.actor.id));
-          if (input.name)
-            await tx
-              .update(s.user)
-              .set({ name: input.name })
-              .where(eq(s.user.id, ctx.actor.id));
-          return { success: true };
-        }),
-      ),
+      .input(driverProfileInput)
+      .mutation(({ ctx, input }) => ctx.ops.saveDriverProfile(input)),
   }),
   produce: t.router({
     categories: authenticated.query(() => s.produceCategory.enumValues),
@@ -307,7 +215,6 @@ export const appRouter = t.router({
           deliveryEndAt: s.marketRuns.deliveryEndAt,
           deliveryFeeCents: s.marketRuns.deliveryFeeCents,
           status: s.marketRuns.status,
-          claimed: sql<boolean>`${s.marketRuns.driverId} IS NOT NULL`,
         })
         .from(s.marketRuns)
         .innerJoin(s.markets, eq(s.marketRuns.marketId, s.markets.id))
@@ -337,7 +244,11 @@ export const appRouter = t.router({
         .innerJoin(s.produce, eq(s.produce.id, s.inventory.produceId))
         .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
         .where(
-          and(eq(s.inventory.runId, input.id), eq(s.inventory.active, true)),
+          and(
+            eq(s.inventory.runId, input.id),
+            eq(s.inventory.active, true),
+            eq(s.farms.active, true),
+          ),
         )
         .orderBy(asc(s.produce.name)),
     ),
@@ -375,51 +286,74 @@ export const appRouter = t.router({
       .mutation(({ ctx, input }) => ctx.ops.cancelOrder(input.id)),
   }),
   driver: t.router({
-    runs: authenticated.query(async ({ ctx }) => {
-      const [profile] = await ctx.db
-        .select()
-        .from(s.driverProfiles)
-        .where(eq(s.driverProfiles.userId, ctx.actor.id));
-      ensure(
-        profile?.status === 'approved',
-        'Approved driver access required',
-        'FORBIDDEN',
-      );
-      return ctx.db
-        .select({ run: s.marketRuns, market: s.markets })
-        .from(s.marketRuns)
-        .innerJoin(s.markets, eq(s.marketRuns.marketId, s.markets.id))
-        .where(
-          or(
-            eq(s.marketRuns.driverId, ctx.actor.id),
-            and(
-              eq(s.marketRuns.status, 'scheduled'),
-              sql`${s.marketRuns.driverId} IS NULL`,
-            ),
-          ),
-        )
-        .orderBy(
-          sql`CASE WHEN ${s.marketRuns.status} IN ('shopping', 'delivering') THEN 0
-            WHEN ${s.marketRuns.status} = 'scheduled' AND ${s.marketRuns.endsAt} > now() THEN 1
-            ELSE 2 END`,
-          asc(s.marketRuns.startsAt),
-        )
-        .limit(100);
-    }),
+    shoppingList: authenticated
+      .input(z.object({ runId: z.uuid() }))
+      .query(({ ctx, input }) =>
+        driverShoppingList(ctx.db, ctx.actor, input.runId),
+      ),
+    startShoppingBatch: authenticated
+      .input(z.object({ runId: z.uuid() }))
+      .mutation(({ ctx, input }) => ctx.ops.startShoppingBatch(input.runId)),
+    combinedPurchase: authenticated
+      .input(combinedPurchaseInput)
+      .mutation(({ ctx, input }) => ctx.ops.recordCombinedPurchase(input)),
+    finishShoppingBatch: authenticated
+      .input(z.object({ runId: z.uuid() }))
+      .mutation(({ ctx, input }) => ctx.ops.finishShoppingBatch(input.runId)),
+    setPacked: authenticated
+      .input(
+        z.object({
+          orderId: z.uuid(),
+          orderItemId: z.uuid(),
+          packed: z.boolean(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.ops.setPacked(input)),
+    orderGroups: authenticated
+      .input(
+        z
+          .object({
+            view: z.enum(['available', 'mine']).default('available'),
+            marketId: z.uuid().optional(),
+            limit: z.number().int().min(1).max(20).default(5),
+            offset: z.number().int().min(0).max(1000000).default(0),
+            orderLimit: z.number().int().min(1).max(100).default(25),
+          })
+          .default({ view: 'available', limit: 5, offset: 0, orderLimit: 25 }),
+      )
+      .query(({ ctx, input }) => driverOrderGroups(ctx.db, ctx.actor, input)),
+    orders: authenticated
+      .input(
+        z.object({
+          runId: z.uuid(),
+          view: z.enum(['available', 'mine']).default('available'),
+          limit: z.number().int().min(1).max(100).default(25),
+          offset: z.number().int().min(0).max(1000000).default(0),
+        }),
+      )
+      .query(({ ctx, input }) => driverOrders(ctx.db, ctx.actor, input)),
+    claimBatch: authenticated
+      .input(claimBatchInput)
+      .mutation(({ ctx, input }) => ctx.ops.claimBatch(input)),
     detail: authenticated
       .input(id)
-      .query(({ ctx, input }) => runDetail(ctx.db, input.id, ctx.actor)),
+      .query(({ ctx, input }) =>
+        driverOrderDetail(ctx.db, input.id, ctx.actor),
+      ),
     claim: authenticated
       .input(id)
-      .mutation(({ ctx, input }) => ctx.ops.claimRun(input.id)),
+      .mutation(({ ctx, input }) => ctx.ops.claimOrder(input.id)),
+    release: authenticated
+      .input(id)
+      .mutation(({ ctx, input }) => ctx.ops.releaseOrder(input.id)),
     start: authenticated
       .input(id)
       .mutation(({ ctx, input }) => ctx.ops.startShopping(input.id)),
     purchase: authenticated
       .input(
         z.object({
-          runId: z.uuid(),
-          inventoryId: z.uuid(),
+          orderId: z.uuid(),
+          orderItemId: z.uuid(),
           quantity: z.number().int().min(0).max(100000),
           totalCostCents: z.number().int().min(0).max(100000000),
         }),
@@ -438,7 +372,63 @@ export const appRouter = t.router({
       )
       .mutation(({ ctx, input }) => ctx.ops.deliver(input)),
   }),
+  farms: t.router({
+    list: authenticated.query(({ ctx }) =>
+      ctx.db.select().from(s.farms).orderBy(asc(s.farms.name), asc(s.farms.id)),
+    ),
+  }),
   admin: t.router({
+    createFarm: admin
+      .input(farmInput)
+      .mutation(({ ctx, input }) => ctx.ops.createFarm(input)),
+    updateFarm: admin
+      .input(farmInput.extend({ id: z.uuid() }))
+      .mutation(({ ctx, input: { id, ...input } }) =>
+        ctx.ops.updateFarm(id, input),
+      ),
+    updateProduce: admin
+      .input(produceInput.extend({ id: z.uuid() }))
+      .mutation(({ ctx, input: { id, ...input } }) =>
+        ctx.ops.updateProduce(id, input),
+      ),
+    orders: admin
+      .input(
+        z
+          .object({
+            runId: z.uuid().optional(),
+            limit: z.number().int().min(1).max(100).default(50),
+            offset: z.number().int().min(0).max(1000000).default(0),
+          })
+          .default({ limit: 50, offset: 0 }),
+      )
+      .query(async ({ ctx, input }) => {
+        const rows = await ctx.db
+          .select()
+          .from(s.orders)
+          .where(input.runId ? eq(s.orders.runId, input.runId) : undefined)
+          .orderBy(desc(s.orders.createdAt), desc(s.orders.id))
+          .limit(input.limit)
+          .offset(input.offset);
+        return (await import('./queries.js')).orderDetails(ctx.db, rows);
+      }),
+    inventory: admin.input(id).query(({ ctx, input }) =>
+      ctx.db
+        .select({
+          id: s.inventory.id,
+          produceId: s.inventory.produceId,
+          name: s.produce.name,
+          unit: s.produce.unit,
+          quantity: s.inventory.quantity,
+          reservedQuantity: s.inventory.reservedQuantity,
+          priceCents: s.inventory.priceCents,
+          active: s.inventory.active,
+          availableQuantity: sql<number>`${s.inventory.quantity} - ${s.inventory.reservedQuantity}`,
+        })
+        .from(s.inventory)
+        .innerJoin(s.produce, eq(s.produce.id, s.inventory.produceId))
+        .where(eq(s.inventory.runId, input.id))
+        .orderBy(asc(s.produce.name)),
+    ),
     jobs: admin.query(({ ctx }) =>
       ctx.db
         .select()
@@ -483,23 +473,10 @@ export const appRouter = t.router({
           role: z.enum(['customer', 'driver']),
         }),
       )
-      .mutation(async ({ ctx, input }) => {
-        const token = randomBytes(32).toString('hex');
-        await ctx.db.insert(s.invitations).values({
-          ...input,
-          createdBy: ctx.actor.id,
-          tokenHash: createHash('sha256').update(token).digest('hex'),
-          expiresAt: new Date(Date.now() + 7 * 86400000),
-        });
-        return { token };
-      }),
-    revokeInvite: admin.input(id).mutation(async ({ ctx, input }) => {
-      await ctx.db
-        .update(s.invitations)
-        .set({ revokedAt: new Date() })
-        .where(eq(s.invitations.id, input.id));
-      return { success: true };
-    }),
+      .mutation(({ ctx, input }) => ctx.ops.createInvitation(input)),
+    revokeInvite: admin
+      .input(id)
+      .mutation(({ ctx, input }) => ctx.ops.revokeInvitation(input.id)),
     createMarket: admin
       .input(marketInput)
       .mutation(({ ctx, input }) => ctx.ops.createMarket(input)),
@@ -553,7 +530,7 @@ export const appRouter = t.router({
       ),
     assignDriver: admin
       .input(
-        z.object({ runId: z.uuid(), driverId: z.string().min(1).nullable() }),
+        z.object({ orderId: z.uuid(), driverId: z.string().min(1).nullable() }),
       )
       .mutation(({ ctx, input }) => ctx.ops.assignDriver(input)),
     tokens: admin.query(({ ctx }) =>
@@ -570,29 +547,10 @@ export const appRouter = t.router({
     ),
     createToken: admin
       .input(z.object({ name: z.string().trim().min(2).max(100) }))
-      .mutation(async ({ ctx, input }) => {
-        const token = `md_${randomBytes(32).toString('hex')}`;
-        await ctx.db.insert(s.apiTokens).values({
-          userId: ctx.actor.id,
-          name: input.name,
-          tokenHash: createHash('sha256').update(token).digest('hex'),
-          lastFour: token.slice(-4),
-          expiresAt: new Date(Date.now() + 90 * 86400000),
-        });
-        return { token };
-      }),
-    revokeToken: admin.input(id).mutation(async ({ ctx, input }) => {
-      await ctx.db
-        .update(s.apiTokens)
-        .set({ revokedAt: new Date() })
-        .where(
-          and(
-            eq(s.apiTokens.id, input.id),
-            eq(s.apiTokens.userId, ctx.actor.id),
-          ),
-        );
-      return { success: true };
-    }),
+      .mutation(({ ctx, input }) => ctx.ops.createApiToken(input.name)),
+    revokeToken: admin
+      .input(id)
+      .mutation(({ ctx, input }) => ctx.ops.revokeApiToken(input.id)),
   }),
 });
 export type AppRouter = typeof appRouter;

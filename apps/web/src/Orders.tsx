@@ -54,6 +54,13 @@ export function Orders() {
               Delivery window: {when(order.run.deliveryStartAt)} –{' '}
               {when(order.run.deliveryEndAt)}
             </p>
+            {order.driver &&
+              !['cancelled', 'unavailable'].includes(order.status) && (
+                <p>
+                  Your shopper: <strong>{order.driver.name}</strong> ·{' '}
+                  <a href={`tel:${order.driver.phone}`}>{order.driver.phone}</a>
+                </p>
+              )}
             <div className="table-scroll">
               <table>
                 <thead>
@@ -68,7 +75,10 @@ export function Orders() {
                 <tbody>
                   {order.items.map((item) => (
                     <tr key={item.id}>
-                      <td>{item.name}</td>
+                      <td>
+                        {item.name}
+                        <small className="muted"> · {item.farmName}</small>
+                      </td>
                       <td>
                         {item.quantity} {item.unit}
                       </td>
@@ -111,7 +121,7 @@ export function Orders() {
               Prices are set when you order. You only pay for the quantity
               fulfilled, plus delivery.
             </p>
-            {order.status === 'placed' && (
+            {['placed', 'claimed'].includes(order.status) && (
               <button
                 className="secondary"
                 disabled={busy || new Date(order.run.cutoffAt) <= new Date()}

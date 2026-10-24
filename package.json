@@ -10,7 +10,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "dotenv -- concurrently -k -n api,web,jobs -c green,cyan,yellow \"npm run dev -w @market/api\" \"npm run dev -w @market/web\" \"tsx scripts/jobs-worker.ts\"",
+    "dev": "npm run db:migrate && dotenv -- concurrently -k -n api,web,jobs -c green,cyan,yellow \"npm run dev -w @market/api\" \"npm run dev -w @market/web\" \"tsx scripts/jobs-worker.ts\"",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces",
     "format": "prettier --write .",
@@ -29,7 +29,7 @@
     "jobs:run": "dotenv -- tsx scripts/run-jobs.ts",
     "jobs:worker": "dotenv -- tsx scripts/jobs-worker.ts",
     "dev:apps": "dotenv -- concurrently -k -n api,web -c green,cyan \"npm run dev -w @market/api\" \"npm run dev -w @market/web\"",
-    "db:reset:local": "npm run db:migrate && dotenv -- tsx scripts/reset-local-db.ts && npm run db:seed",
+    "db:reset:local": "dotenv -- tsx scripts/reset-local-db.ts && npm run db:migrate && npm run db:seed",
     "jobs:close": "dotenv -- tsx scripts/run-jobs.ts close-markets"
   },
   "devDependencies": {

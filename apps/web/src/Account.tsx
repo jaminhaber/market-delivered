@@ -180,8 +180,7 @@ export function AuthForm({ onDone }: { onDone: () => void }) {
       </div>
       {!invite && mode === 'signin' && (
         <p className="muted">
-          We’re invite-only while we get growing. Ask the team for an
-          invitation.
+          We’re invite-only. Ask the team for an invitation.
         </p>
       )}
     </Panel>
@@ -207,8 +206,10 @@ export function Profile() {
   return (
     <div className="page-grid">
       {me.data?.driver && (
+        <DriverProfile name={me.data.name} driver={me.data.driver} />
+      )}
+      {me.data?.driver && (
         <>
-          <DriverProfile name={me.data.name} driver={me.data.driver} />
           <section className="panel">
             <h2>Ordering for yourself?</h2>
             <p>
@@ -438,7 +439,8 @@ function DriverProfile({
         Driver access: <strong>{driver.status}</strong>
       </p>
       <p>
-        Save your contact details and vehicle to get ready for a market run.
+        Save your contact details and vehicle to claim individual orders, shop
+        at the market, and deliver to customers.
       </p>
       {notice}
       <form

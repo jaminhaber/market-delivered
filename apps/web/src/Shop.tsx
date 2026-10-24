@@ -142,7 +142,7 @@ export function Shop({
                 })}
                 <p className="market-days-intro">
                   Times are local to each market. Your order will be delivered
-                  while that market is open.
+                  in the selected delivery window.
                 </p>
               </fieldset>
             </details>

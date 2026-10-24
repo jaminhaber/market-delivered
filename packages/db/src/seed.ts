@@ -191,12 +191,7 @@ try {
       .from(orders)
       .where(eq(orders.runId, oldRunId))
       .limit(1);
-    if (
-      oldRun &&
-      oldRun.status === 'scheduled' &&
-      !oldRun.driverId &&
-      !oldOrders.length
-    ) {
+    if (oldRun && oldRun.status === 'scheduled' && !oldOrders.length) {
       await tx.delete(inventory).where(eq(inventory.runId, oldRunId));
       await tx.delete(marketRuns).where(eq(marketRuns.id, oldRunId));
       const otherRuns = await tx

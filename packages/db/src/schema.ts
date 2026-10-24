@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   index,
   integer,
@@ -26,6 +27,9 @@ export const farms = pgTable('farms', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
   location: text('location').notNull(),
+  contactPhone: text('contact_phone').notNull().default(''),
+  notes: text('notes').notNull().default(''),
+  active: boolean('active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),

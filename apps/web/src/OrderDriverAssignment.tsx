@@ -2,12 +2,21 @@ import { useQuery } from '@tanstack/react-query';
 import { api, rpc } from './api';
 import { ErrorState, useAction } from './ui';
 
-type Run = Awaited<ReturnType<typeof rpc.admin.runs.query>>[number]['run'];
+type Order = Awaited<ReturnType<typeof rpc.admin.orders.query>>[number];
 
-export function RunDriverAssignment({ run }: { run: Run }) {
+export function OrderDriverAssignment({ order }: { order: Order }) {
   const drivers = useQuery(api.admin.drivers.queryOptions());
   const { act, busy, notice } = useAction();
-  if (!['scheduled', 'shopping', 'delivering'].includes(run.status))
+  if (
+    ![
+      'placed',
+      'claimed',
+      'shopping',
+      'ready',
+      'out_for_delivery',
+      'delivery_failed',
+    ].includes(order.status)
+  )
     return null;
   return (
     <form
@@ -18,7 +27,7 @@ export function RunDriverAssignment({ run }: { run: Run }) {
           String(new FormData(event.currentTarget).get('driverId') ?? '') ||
           null;
         void act(
-          () => rpc.admin.assignDriver.mutate({ runId: run.id, driverId }),
+          () => rpc.admin.assignDriver.mutate({ orderId: order.id, driverId }),
           'Driver assignment updated',
         );
       }}
@@ -28,19 +37,24 @@ export function RunDriverAssignment({ run }: { run: Run }) {
         Assigned driver
         <select
           aria-label="Assigned driver"
-          key={run.driverId ?? 'unassigned'}
+          key={order.driverId ?? 'unassigned'}
           name="driverId"
-          defaultValue={run.driverId ?? ''}
-          required={run.status !== 'scheduled'}
+          defaultValue={order.driverId ?? ''}
+          required={!['placed', 'claimed'].includes(order.status)}
         >
-          <option value="" disabled={run.status !== 'scheduled'}>
-            {run.status === 'scheduled' ? 'Unassigned' : 'Choose a replacement'}
+          <option
+            value=""
+            disabled={!['placed', 'claimed'].includes(order.status)}
+          >
+            {['placed', 'claimed'].includes(order.status)
+              ? 'Unassigned'
+              : 'Choose a replacement'}
           </option>
           {drivers.data
             ?.filter(
               (d) =>
                 d.profile.status === 'approved' ||
-                d.profile.userId === run.driverId,
+                d.profile.userId === order.driverId,
             )
             .map((d) => (
               <option
@@ -57,7 +71,7 @@ export function RunDriverAssignment({ run }: { run: Run }) {
             ))}
         </select>
       </label>
-      {run.status !== 'scheduled' && (
+      {!['placed', 'claimed'].includes(order.status) && (
         <small>
           Coordinate the handoff of groceries and cash with both drivers before
           reassigning.

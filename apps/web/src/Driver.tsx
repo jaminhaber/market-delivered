@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api, rpc } from './api';
+import { api, queryClient, rpc } from './api';
+import { CombinedShopping } from './CombinedShopping';
 import {
   ErrorState,
   label,
@@ -10,125 +11,508 @@ import {
   useAction,
   when,
 } from './ui';
+
+type DriverMarketGroup = Awaited<
+  ReturnType<typeof rpc.driver.orderGroups.query>
+>['markets'][number];
+type DriverDateGroup = DriverMarketGroup['dates'][number];
+
 export function Driver() {
-  const runs = useQuery(
-    api.driver.runs.queryOptions(undefined, { refetchInterval: 60000 }),
-  );
-  const me = useQuery(api.me.queryOptions());
+  const [view, setView] = useState<'available' | 'mine'>('available');
+  const [offset, setOffset] = useState(0);
+  const [marketId, setMarketId] = useState('');
+  const markets = useQuery(api.markets.list.queryOptions());
   const [selected, setSelected] = useState('');
+  const [shoppingRunId, setShoppingRunId] = useState('');
+  const [checked, setChecked] = useState<string[]>([]);
+  const orders = useQuery(
+    api.driver.orderGroups.queryOptions(
+      {
+        view,
+        marketId: marketId || undefined,
+        limit: 5,
+        offset,
+        orderLimit: 25,
+      },
+      { refetchInterval: 15000 },
+    ),
+  );
+  useEffect(() => {
+    const total = orders.data?.totalGroups;
+    if (total !== undefined && offset > 0 && offset >= total) {
+      setOffset(Math.max(0, Math.floor((total - 1) / 5) * 5));
+      setChecked([]);
+    }
+  }, [orders.data?.totalGroups, offset]);
   const { act, busy, notice } = useAction();
+  function changePage(next: number) {
+    setOffset(next);
+    setChecked([]);
+  }
+  function toggle(ids: string[], on: boolean) {
+    setChecked((current) =>
+      on
+        ? [...new Set([...current, ...ids])]
+        : current.filter((id) => !ids.includes(id)),
+    );
+  }
+  function claimSelected(runId: string, orderIds: string[]) {
+    void act(
+      async () => {
+        const { results } = await rpc.driver.claimBatch.mutate({
+          runId,
+          orderIds,
+        });
+        const claimed = results
+          .filter((result) => result.status !== 'failed')
+          .map((result) => result.orderId);
+        setChecked((current) => current.filter((id) => !claimed.includes(id)));
+        const failures = results.filter((result) => result.status === 'failed');
+        if (failures.length) {
+          await queryClient.invalidateQueries();
+          throw new Error(
+            `Claimed ${claimed.length} of ${orderIds.length} orders. ${failures.length} could not be claimed. ${failures[0]!.message}`,
+          );
+        }
+      },
+      `${orderIds.length} ${orderIds.length === 1 ? 'order' : 'orders'} claimed. Open My orders to start shopping.`,
+    );
+  }
+  function claimOne(id: string) {
+    void act(async () => {
+      await rpc.driver.claim.mutate({ id });
+      setView('mine');
+      changePage(0);
+      setSelected(id);
+    }, 'Order claimed');
+  }
+  const groups = orders.data?.markets ?? [];
+  if (shoppingRunId)
+    return (
+      <CombinedShopping
+        runId={shoppingRunId}
+        onBack={() => setShoppingRunId('')}
+      />
+    );
   return (
     <div className="workspace">
       <div className="page-heading">
-        <p className="eyebrow">ONE TRIP, MANY GOOD THINGS</p>
+        <p className="eyebrow">SHOP LOCAL, DELIVER WITH CARE</p>
         <h1>Driver dashboard</h1>
+        <p>
+          Choose a market, select the orders you can deliver, and claim them
+          together.
+        </p>
       </div>
+      <div className="subnav">
+        {(['available', 'mine'] as const).map((v) => (
+          <button
+            key={v}
+            className={view === v ? '' : 'secondary'}
+            aria-pressed={view === v}
+            disabled={busy}
+            onClick={() => {
+              setView(v);
+              changePage(0);
+              setSelected('');
+            }}
+          >
+            {v === 'available' ? 'Available orders' : 'My orders'}
+          </button>
+        ))}
+      </div>
+      <label className="driver-market-filter">
+        Filter by market
+        <select
+          aria-label="Filter by market"
+          value={marketId}
+          onChange={(event) => {
+            setMarketId(event.target.value);
+            changePage(0);
+            setSelected('');
+          }}
+          disabled={busy || markets.isPending}
+        >
+          <option value="">All markets</option>
+          {markets.data?.map((market) => (
+            <option key={market.id} value={market.id}>
+              {market.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {markets.isError && <ErrorState error={markets.error} />}
       {notice}
-      {runs.isPending ? (
+      {orders.isPending ? (
         <Loading />
-      ) : runs.isError ? (
-        <ErrorState error={runs.error} />
+      ) : orders.isError ? (
+        <ErrorState error={orders.error} />
       ) : (
-        <div className="driver-layout">
-          <div className="run-cards">
-            {!runs.data.length && <p>No market runs are available yet.</p>}
-            {runs.data.map(({ run, market }) => (
-              <article
-                className={`run-card ${selected === run.id ? 'selected' : ''}`}
-                key={run.id}
+        <div className={view === 'mine' ? 'driver-layout' : 'driver-browse'}>
+          <div className="driver-market-list">
+            {!groups.length && (
+              <Panel
+                title={
+                  view === 'available'
+                    ? 'No orders available'
+                    : 'No orders on this page'
+                }
               >
-                <span className="badge">{label(run.status)}</span>
-                <h3>{market.name}</h3>
-                <p>{when(run.startsAt, market.timezone)}</p>
-                <p>{market.address}</p>
-                {run.driverId === me.data?.id ? (
-                  <button
-                    className="secondary"
-                    onClick={() => setSelected(run.id)}
-                  >
-                    Open run
-                  </button>
-                ) : !run.driverId && run.status === 'scheduled' ? (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void act(async () => {
-                        await rpc.driver.claim.mutate({ id: run.id });
-                        setSelected(run.id);
-                      }, 'Run claimed')
-                    }
-                  >
-                    Claim run
-                  </button>
-                ) : null}
-              </article>
+                <p>
+                  {view === 'available'
+                    ? 'Check back soon for orders from your local markets.'
+                    : 'Claim orders from the Available orders tab to build your market trip.'}
+                </p>
+              </Panel>
+            )}
+            {groups.map(({ market, dates, orderCount }) => (
+              <section
+                className="driver-market"
+                key={market.id}
+                aria-labelledby={`driver-market-${market.id}`}
+              >
+                <header className="driver-market-heading">
+                  <div>
+                    <p className="eyebrow">MARKET PICKUP</p>
+                    <h2 id={`driver-market-${market.id}`}>{market.name}</h2>
+                    <p>{market.address}</p>
+                  </div>
+                  <span className="badge">
+                    {orderCount} {orderCount === 1 ? 'order' : 'orders'} across
+                    these dates
+                  </span>
+                </header>
+                {dates.map((date) => (
+                  <DriverDate
+                    key={`${view}-${date.run.id}`}
+                    market={market}
+                    date={date}
+                    view={view}
+                    checked={checked}
+                    selected={selected}
+                    busy={busy}
+                    onToggle={toggle}
+                    onOpen={setSelected}
+                    onClaim={claimOne}
+                    onClaimBatch={claimSelected}
+                    onShopping={setShoppingRunId}
+                  />
+                ))}
+              </section>
             ))}
-          </div>
-          {selected ? (
-            <DriverRun key={selected} id={selected} />
-          ) : (
-            <Panel title="Your market route">
-              <p>
-                Claim a run or open one of your runs to see the shopping list
-                and deliveries.
+            <div className="driver-pagination">
+              <p className="muted">
+                {orders.data.totalGroups} market dates · Up to 5 dates per page.
+                Browse more orders within each date.
               </p>
-            </Panel>
-          )}
+              <div className="inline-actions">
+                <button
+                  className="secondary"
+                  disabled={busy || offset === 0}
+                  onClick={() => changePage(Math.max(0, offset - 5))}
+                >
+                  Previous
+                </button>
+                <button
+                  className="secondary"
+                  disabled={busy || !orders.data.hasMore}
+                  onClick={() => changePage(orders.data.nextOffset!)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+          {view === 'mine' &&
+            (selected ? (
+              <DriverOrder key={selected} id={selected} />
+            ) : (
+              <Panel title="Your market trip">
+                <p>
+                  Open an order to see its shopping list and delivery details.
+                  Your orders are grouped by market and date.
+                </p>
+              </Panel>
+            ))}
         </div>
       )}
     </div>
   );
 }
-function DriverRun({ id }: { id: string }) {
-  const detail = useQuery(
-    api.driver.detail.queryOptions({ id }, { refetchInterval: 60000 }),
+function DriverDate({
+  market,
+  date,
+  view,
+  checked,
+  selected,
+  busy,
+  onToggle,
+  onOpen,
+  onClaim,
+  onClaimBatch,
+  onShopping,
+}: {
+  market: DriverMarketGroup['market'];
+  date: DriverDateGroup;
+  view: 'available' | 'mine';
+  checked: string[];
+  selected: string;
+  busy: boolean;
+  onToggle: (ids: string[], on: boolean) => void;
+  onOpen: (id: string) => void;
+  onClaim: (id: string) => void;
+  onClaimBatch: (runId: string, ids: string[]) => void;
+  onShopping: (runId: string) => void;
+}) {
+  const [offset, setOffset] = useState(0);
+  const run = date.run;
+  const pageQuery = useQuery(
+    api.driver.orders.queryOptions(
+      { runId: run.id, view, limit: 25, offset },
+      { enabled: offset > 0, refetchInterval: 15000 },
+    ),
   );
-  const { act, busy, notice } = useAction();
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  if (detail.isPending) return <Loading />;
-  if (detail.isError) return <ErrorState error={detail.error} />;
-  const { run, orders, shopping } = detail.data;
+  const page = offset === 0 ? date.page : pageQuery.data;
+  useEffect(() => {
+    const total = page?.total;
+    if (total !== undefined && offset > 0 && offset >= total)
+      setOffset(Math.max(0, Math.floor((total - 1) / 25) * 25));
+  }, [page?.total, offset]);
+  const items = page?.items ?? [];
+  const ids = items.map((order) => order.id);
+  const chosen = items.filter((order) => checked.includes(order.id));
+  const all = items.length > 0 && chosen.length === items.length;
+  function changePage(next: number) {
+    onToggle(ids, false);
+    setOffset(next);
+  }
   return (
-    <div>
-      {notice}
-      <Panel title="Run progress">
-        <span className="badge">{label(run.status)}</span>
-        <p>Cutoff: {when(run.cutoffAt)}</p>
-        {run.status === 'scheduled' && (
-          <>
+    <section
+      className="driver-market-date"
+      key={run.id}
+      aria-label={`${market.name} on ${when(run.startsAt, market.timezone)}`}
+    >
+      <div className="driver-date-heading">
+        <div>
+          <h3>{when(run.startsAt, market.timezone)}</h3>
+          <p>
+            {page?.total ?? date.page.total}{' '}
+            {(page?.total ?? date.page.total) === 1 ? 'order' : 'orders'} ·{' '}
+            {items.length
+              ? `${offset + 1}–${offset + items.length} shown`
+              : 'No orders on this page'}
+          </p>
+          <p>
+            Delivery: {when(run.deliveryStartAt, market.timezone)} –{' '}
+            {when(run.deliveryEndAt, market.timezone)}
+          </p>
+        </div>
+        {view === 'mine' && (
+          <button className="secondary" onClick={() => onShopping(run.id)}>
+            Combined shopping list
+          </button>
+        )}
+        {view === 'available' && (
+          <label className="driver-select-all">
+            <input
+              type="checkbox"
+              disabled={busy}
+              checked={all}
+              ref={(element) => {
+                if (element) element.indeterminate = chosen.length > 0 && !all;
+              }}
+              onChange={(event) => onToggle(ids, event.target.checked)}
+            />
+            Select all shown orders
+          </label>
+        )}
+      </div>
+      {offset > 0 && pageQuery.isPending ? (
+        <Loading />
+      ) : offset > 0 && pageQuery.isError ? (
+        <ErrorState error={pageQuery.error} />
+      ) : (
+        <div className="driver-order-list">
+          {items.map((order) => (
+            <article
+              className={`run-card driver-order-row ${selected === order.id ? 'selected' : ''}`}
+              key={order.id}
+            >
+              {view === 'available' && (
+                <input
+                  className="driver-order-checkbox"
+                  type="checkbox"
+                  aria-label={`Select order ${order.id.slice(0, 8)}`}
+                  disabled={busy}
+                  checked={checked.includes(order.id)}
+                  onChange={(event) =>
+                    onToggle([order.id], event.target.checked)
+                  }
+                />
+              )}
+              <div className="driver-order-summary">
+                <div className="split-line">
+                  <h4>Order {order.id.slice(0, 8)}</h4>
+                  {view === 'mine' && (
+                    <span className="badge">{label(order.status)}</span>
+                  )}
+                </div>
+                <p>
+                  Deliver to{' '}
+                  <strong>
+                    {order.city} {order.postalCode}
+                  </strong>
+                </p>
+                <p>
+                  {order.itemCount} {order.itemCount === 1 ? 'unit' : 'units'} ·
+                  Order estimate {money(order.estimatedTotalCents)} · Delivery
+                  fee {money(order.deliveryFeeCents)}
+                </p>
+              </div>
+              {view === 'mine' ? (
+                <button className="secondary" onClick={() => onOpen(order.id)}>
+                  Open order
+                </button>
+              ) : (
+                <button
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => onClaim(order.id)}
+                >
+                  Claim order
+                </button>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+      {view === 'available' && (
+        <div className="driver-claim-bar">
+          <div>
+            <strong>{chosen.length} selected</strong>
             <p>
-              Shopping starts when the market opens and ordering has closed.
+              {chosen.length
+                ? `${chosen.reduce((n, order) => n + (order.itemCount ?? 0), 0)} units · Delivery fees ${money(chosen.reduce((n, order) => n + order.deliveryFeeCents, 0))}`
+                : 'Select orders to combine your market trip.'}
             </p>
+          </div>
+          <div className="inline-actions">
+            {chosen.length > 0 && (
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() => onToggle(ids, false)}
+              >
+                Clear selection
+              </button>
+            )}
             <button
-              disabled={
-                busy ||
-                new Date(run.startsAt) > new Date() ||
-                new Date(run.cutoffAt) > new Date()
-              }
+              disabled={busy || !chosen.length}
               onClick={() =>
-                void act(
-                  () => rpc.driver.start.mutate({ id }),
-                  'Shopping started',
+                onClaimBatch(
+                  run.id,
+                  chosen.map((order) => order.id),
                 )
               }
             >
-              Start shopping
+              Claim selected ({chosen.length})
             </button>
-          </>
-        )}
-        {run.status === 'shopping' && (
+          </div>
+        </div>
+      )}
+      {(offset > 0 || page?.hasMore) && (
+        <div className="driver-date-pagination">
+          <button
+            className="secondary"
+            disabled={busy || offset === 0}
+            onClick={() => changePage(Math.max(0, offset - 25))}
+          >
+            Previous orders
+          </button>
+          <button
+            className="secondary"
+            disabled={
+              busy || !page?.hasMore || (pageQuery.isFetching && offset > 0)
+            }
+            onClick={() => changePage(page!.nextOffset!)}
+          >
+            More orders
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+function DriverOrder({ id }: { id: string }) {
+  const detail = useQuery(
+    api.driver.detail.queryOptions({ id }, { refetchInterval: 15000 }),
+  );
+  const { act, busy, notice } = useAction();
+  const [note, setNote] = useState('');
+  if (detail.isPending) return <Loading />;
+  if (detail.isError) return <ErrorState error={detail.error} />;
+  const order = detail.data;
+  return (
+    <div>
+      {notice}
+      <Panel title={`Order ${id.slice(0, 8)}`}>
+        <span className="badge">{label(order.status)}</span>
+        <h3>{order.market.name}</h3>
+        <p>{order.market.address}</p>
+        <p>
+          Market hours: {when(order.run.startsAt, order.market.timezone)} –{' '}
+          {when(order.run.endsAt, order.market.timezone)}
+        </p>
+        {order.status === 'claimed' && (
           <>
             <p>
-              Record every item, including unavailable items at zero quantity
-              and cost. Shortages go to orders in placement order. Review before
-              finishing; allocation is final.
+              Start shopping when the market opens. Release the order if you
+              cannot fulfill it.
+            </p>
+            <div className="inline-actions">
+              <button
+                disabled={
+                  busy ||
+                  new Date(order.run.startsAt) > new Date() ||
+                  new Date(order.run.endsAt) <= new Date()
+                }
+                onClick={() =>
+                  void act(
+                    () => rpc.driver.start.mutate({ id }),
+                    'Shopping started',
+                  )
+                }
+              >
+                Start shopping
+              </button>
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() =>
+                  void act(
+                    () => rpc.driver.release.mutate({ id }),
+                    'Order released',
+                  )
+                }
+              >
+                Release order
+              </button>
+            </div>
+          </>
+        )}
+        {order.status === 'shopping' && (
+          <>
+            <p>
+              Record what you bought for this customer. For an unavailable item,
+              enter zero quantity and zero cost. Review each item before
+              finishing.
             </p>
             <button
               disabled={busy}
               onClick={() =>
                 void act(
                   () => rpc.driver.finish.mutate({ id }),
-                  'Shopping complete; deliveries are ready',
+                  'Shopping complete; order is ready',
                 )
               }
             >
@@ -136,133 +520,132 @@ function DriverRun({ id }: { id: string }) {
             </button>
           </>
         )}
-        {run.status === 'completed' && <p>All deliveries are complete.</p>}
+        {order.status === 'delivered' && <p>Delivery complete. Thank you!</p>}
+        {order.status === 'unavailable' && (
+          <p>No items were available. No payment is due.</p>
+        )}
       </Panel>
-      {run.status === 'shopping' && (
-        <Panel title="Combined shopping list">
-          {!shopping.length && (
-            <p>No produce to buy. Finish shopping to close this run.</p>
-          )}
-          {shopping.map((item) => (
-            <PurchaseRow key={item.inventory.id} runId={id} item={item} />
-          ))}
-        </Panel>
-      )}
-      <Panel title="Deliveries">
-        {!orders.length && <p>No customer orders for this run.</p>}
-        {orders.map((order) => (
-          <article className="delivery-card" key={order.id}>
-            <div className="split-line">
-              <h3>
-                {order.customerName} · {order.id.slice(0, 8)}
-              </h3>
-              <span className="badge">{label(order.status)}</span>
-            </div>
-            <p>{order.address}</p>
-            <p>
-              <a href={`tel:${order.phone}`}>{order.phone}</a> ·{' '}
-              {order.deliveryNotes}
-            </p>
-            <ul>
-              {order.items.map((i) => (
-                <li key={i.id}>
-                  {i.name}: {i.fulfilledQuantity ?? i.quantity} / {i.quantity}{' '}
-                  {i.unit}
-                  {i.actualCostCents !== null &&
-                    ` · purchase cost ${money(i.actualCostCents)}`}
-                </li>
-              ))}
-            </ul>
-            {order.actualTotalCents !== null && <CashRecord order={order} />}
-            {run.status === 'delivering' && (
-              <div className="form-stack">
-                {['ready', 'delivery_failed'].includes(order.status) && (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void act(
-                        () =>
-                          rpc.driver.deliver.mutate({
-                            orderId: order.id,
-                            status: 'out_for_delivery',
-                            note: '',
-                          }),
-                        'Delivery started',
-                      )
-                    }
-                  >
-                    {order.status === 'delivery_failed'
-                      ? 'Retry delivery'
-                      : 'Start delivery'}
-                  </button>
-                )}
-                {order.status === 'out_for_delivery' && (
-                  <>
-                    <label>
-                      Delivery note
-                      <input
-                        aria-label={`Delivery note for ${order.id.slice(0, 8)}`}
-                        value={notes[order.id] ?? ''}
-                        onChange={(e) =>
-                          setNotes({ ...notes, [order.id]: e.target.value })
-                        }
-                      />
-                    </label>
-                    <div className="inline-actions">
-                      <button
-                        disabled={busy}
-                        onClick={() =>
-                          void act(
-                            () =>
-                              rpc.driver.deliver.mutate({
-                                orderId: order.id,
-                                status: 'delivered',
-                                note: notes[order.id] ?? '',
-                              }),
-                            'Delivery completed',
-                          )
-                        }
-                      >
-                        Mark delivered
-                      </button>
-                      <button
-                        className="secondary"
-                        disabled={busy || !notes[order.id]?.trim()}
-                        onClick={() =>
-                          void act(
-                            () =>
-                              rpc.driver.deliver.mutate({
-                                orderId: order.id,
-                                status: 'delivery_failed',
-                                note: notes[order.id] ?? '',
-                              }),
-                            'Delivery issue recorded',
-                          )
-                        }
-                      >
-                        Report failed delivery
-                      </button>
-                    </div>
-                  </>
-                )}
+      <Panel title="Shopping list">
+        {order.items.map((item) =>
+          order.status === 'shopping' ? (
+            <PurchaseRow key={item.id} orderId={id} item={item} />
+          ) : (
+            <article className="list-row" key={item.id}>
+              <div>
+                <strong>{item.name}</strong>
+                <p>
+                  {item.farmName} · {item.farmLocation}
+                </p>
+                <p>
+                  {item.fulfilledQuantity === null
+                    ? `${item.quantity} ${item.unit} requested`
+                    : `${item.fulfilledQuantity} / ${item.quantity} ${item.unit} purchased`}
+                </p>
               </div>
-            )}
-          </article>
-        ))}
+            </article>
+          ),
+        )}
+      </Panel>
+      <Panel title="Customer delivery">
+        <h3>{order.customerName}</h3>
+        <p>{order.address}</p>
+        <p>
+          <a href={`tel:${order.phone}`}>{order.phone}</a>
+        </p>
+        <p>{order.deliveryNotes}</p>
+        <p>
+          Delivery window:{' '}
+          {when(order.run.deliveryStartAt, order.market.timezone)} –{' '}
+          {when(order.run.deliveryEndAt, order.market.timezone)}
+        </p>
+        {order.actualTotalCents !== null && <CashRecord order={order} />}
+        {['ready', 'delivery_failed'].includes(order.status) && (
+          <button
+            disabled={busy}
+            onClick={() =>
+              void act(
+                () =>
+                  rpc.driver.deliver.mutate({
+                    orderId: id,
+                    status: 'out_for_delivery',
+                    note: '',
+                  }),
+                'Delivery started',
+              )
+            }
+          >
+            {order.status === 'delivery_failed'
+              ? 'Retry delivery'
+              : 'Start delivery'}
+          </button>
+        )}
+        {order.status === 'out_for_delivery' && (
+          <div className="form-stack">
+            <label>
+              Delivery note
+              <input
+                maxLength={500}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            </label>
+            <div className="inline-actions">
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void act(
+                    () =>
+                      rpc.driver.deliver.mutate({
+                        orderId: id,
+                        status: 'delivered',
+                        note,
+                      }),
+                    'Delivery completed',
+                  )
+                }
+              >
+                Mark delivered
+              </button>
+              <button
+                className="secondary"
+                disabled={busy || !note.trim()}
+                onClick={() =>
+                  void act(
+                    () =>
+                      rpc.driver.deliver.mutate({
+                        orderId: id,
+                        status: 'delivery_failed',
+                        note,
+                      }),
+                    'Delivery issue recorded',
+                  )
+                }
+              >
+                Report failed delivery
+              </button>
+            </div>
+          </div>
+        )}
       </Panel>
     </div>
   );
 }
 type ShoppingItem = Awaited<
   ReturnType<typeof rpc.driver.detail.query>
->['shopping'][number];
-function PurchaseRow({ runId, item }: { runId: string; item: ShoppingItem }) {
+>['items'][number];
+function PurchaseRow({
+  orderId,
+  item,
+}: {
+  orderId: string;
+  item: ShoppingItem;
+}) {
   const [quantity, setQuantity] = useState(
-      item.purchase?.quantity ?? item.inventory.reservedQuantity,
-    ),
-    [cost, setCost] = useState(
-      item.purchase ? String(item.purchase.totalCostCents / 100) : '',
-    );
+    item.purchase?.quantity ?? item.quantity,
+  );
+  const [cost, setCost] = useState(
+    item.purchase ? String(item.purchase.totalCostCents / 100) : '',
+  );
   const { act, busy, notice } = useAction();
   return (
     <form
@@ -272,8 +655,8 @@ function PurchaseRow({ runId, item }: { runId: string; item: ShoppingItem }) {
         void act(
           () =>
             rpc.driver.purchase.mutate({
-              runId,
-              inventoryId: item.inventory.id,
+              orderId,
+              orderItemId: item.id,
               quantity,
               totalCostCents: Math.round(Number(cost) * 100),
             }),
@@ -282,28 +665,41 @@ function PurchaseRow({ runId, item }: { runId: string; item: ShoppingItem }) {
       }}
     >
       <div>
-        <h3>{item.produce.name}</h3>
+        <h3>{item.name}</h3>
         <p>
-          Need {item.inventory.reservedQuantity} {item.produce.unit}{' '}
+          {item.farmName} · {item.farmLocation}
+        </p>
+        <p>
+          {item.farmContactPhone && (
+            <a href={`tel:${item.farmContactPhone}`}>{item.farmContactPhone}</a>
+          )}{' '}
+          {item.farmNotes}
+        </p>
+        <p>
+          Need {item.quantity} {item.unit}{' '}
           {item.purchase && <span className="badge">Recorded</span>}
         </p>
       </div>
       <label>
         Purchased quantity
         <input
-          aria-label={`Purchased quantity for ${item.produce.name}`}
+          aria-label={`Purchased quantity for ${item.name}`}
           type="number"
           required
           min={0}
-          max={item.inventory.reservedQuantity}
+          max={item.quantity}
           value={quantity}
-          onChange={(e) => setQuantity(Number(e.target.value))}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            setQuantity(n);
+            if (n === 0) setCost('0');
+          }}
         />
       </label>
       <label>
         Total cost ($)
         <input
-          aria-label={`Total cost for ${item.produce.name}`}
+          aria-label={`Total cost for ${item.name}`}
           type="number"
           required
           min={0}
@@ -322,7 +718,7 @@ function PurchaseRow({ runId, item }: { runId: string; item: ShoppingItem }) {
 function CashRecord({
   order,
 }: {
-  order: Awaited<ReturnType<typeof rpc.driver.detail.query>>['orders'][number];
+  order: Awaited<ReturnType<typeof rpc.driver.detail.query>>;
 }) {
   const { act, busy, notice } = useAction();
   if (['cancelled', 'unavailable'].includes(order.status))
