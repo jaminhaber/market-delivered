@@ -68,8 +68,7 @@ when settings are saved, and stores the ZIP with its latitude/longitude. Unchang
 ZIP codes reuse the saved center; lookup failures leave all settings unchanged.
 No API key or new Google API needs to be configured. This biases suggestions, without
 restricting delivery eligibility. Without a search center, autocomplete uses its
-default US search. The network migration initializes Ojai defaults; newly created
-operators have no location-specific defaults.
+default US search. New operators have no location-specific defaults; configure them explicitly.
 
 Invitations, verification emails, and password resets automatically use the app
 name in their subject and sender display name. Sending still uses the configured,

@@ -25,7 +25,6 @@ import {
   networks,
   farms,
   produce,
-  OJAI_NETWORK_ID,
   withNetwork,
   networkWhere,
   networkValues,
@@ -52,6 +51,7 @@ import { parseEnvironment } from '../../apps/api/src/config.js';
 import { checkRateLimit } from '../../apps/api/src/rate-limit.js';
 import { rateLimit } from '../../packages/db/src/index.js';
 const baseURL = 'http://localhost:5180';
+const TEST_NETWORK_ID = '00000000-0000-4000-8000-000000000001';
 const databaseURL =
   process.env.E2E_DATABASE_URL ??
   'postgresql://market:market@localhost:5433/market_delivered_e2e';
@@ -63,11 +63,11 @@ test.afterAll(async () => {
 });
 const password = 'A-long-market-password-123!';
 const unique = (prefix: string) => `${prefix}-${randomUUID().slice(0, 8)}`;
-function api(request: APIRequestContext, network?: string) {
+function api(request: APIRequestContext, network?: string, origin = baseURL) {
   return createTRPCClient<AppRouter>({
     links: [
       httpBatchLink({
-        url: baseURL + '/trpc',
+        url: origin + '/trpc',
         headers: network ? { 'x-network-id': network } : undefined,
         fetch: async (url, options) => {
           const response = await request.fetch(String(url), {
@@ -89,6 +89,7 @@ async function invite(email: string, role = 'customer') {
   const [row] = await db
     .insert(invitations)
     .values({
+      networkId: TEST_NETWORK_ID,
       email,
       role,
       tokenHash: createHash('sha256').update(token).digest('hex'),
@@ -123,7 +124,7 @@ async function actor(role: 'customer' | 'driver' | 'admin' = 'customer') {
       .where(
         and(
           eq(networkMemberships.userId, me!.id),
-          eq(networkMemberships.networkId, OJAI_NETWORK_ID),
+          eq(networkMemberships.networkId, TEST_NETWORK_ID),
         ),
       );
   await rpc.profile.save.mutate({
@@ -504,7 +505,7 @@ test('admin UI creates market, schedule, catalog, inventory, invitations, and MC
     .where(
       and(
         eq(networkMemberships.userId, current!.id),
-        eq(networkMemberships.networkId, OJAI_NETWORK_ID),
+        eq(networkMemberships.networkId, TEST_NETWORK_ID),
       ),
     );
   await admin.page.reload();
@@ -1517,7 +1518,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
     .where(
       and(
         eq(networkMemberships.userId, admin.id),
-        eq(networkMemberships.networkId, OJAI_NETWORK_ID),
+        eq(networkMemberships.networkId, TEST_NETWORK_ID),
       ),
     );
   expect(
@@ -1906,7 +1907,7 @@ test('operations UI edits a weekly schedule and MCP exposes persisted recurrence
     .where(
       and(
         eq(networkMemberships.userId, current!.id),
-        eq(networkMemberships.networkId, OJAI_NETWORK_ID),
+        eq(networkMemberships.networkId, TEST_NETWORK_ID),
       ),
     );
   const market = await admin.rpc.admin.createMarket.mutate({
@@ -3070,14 +3071,7 @@ test('order claims are atomic, different drivers shop the same date independentl
   for (const person of [customer, a, b, admin]) await person.request.dispose();
 });
 
-test('one network migration upgrades the committed schema and preserves existing operations on retries', async () => {
-  const { readFile, mkdtemp, mkdir, writeFile, rm } =
-    await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
-  const temporary = await mkdtemp(
-    join(tmpdir(), 'market-committed-migrations-'),
-  );
+test('fresh migrations create no network or implicit business ownership and remain retryable', async () => {
   const { fileURLToPath } = await import('node:url');
   const { runMigrations } = await import('../../packages/db/src/migrations.js');
   const name = `market_migration_${randomUUID().replaceAll('-', '')}_e2e`;
@@ -3089,212 +3083,19 @@ test('one network migration upgrades the committed schema and preserves existing
     const folder = fileURLToPath(
       new URL('../../packages/db/drizzle', import.meta.url),
     );
-    const journal = JSON.parse(
-      await readFile(folder + '/meta/_journal.json', 'utf8'),
-    ) as { entries: { tag: string }[] };
-    expect(journal.entries.map((entry) => entry.tag)).toEqual([
-      '0000_auth_and_basics',
-      '0001_orders_and_fulfillment',
-      '0002_shopping_packing',
-      '0003_networks',
-    ]);
-    await mkdir(join(temporary, 'meta'));
-    await writeFile(
-      join(temporary, 'meta/_journal.json'),
-      JSON.stringify({ ...journal, entries: journal.entries.slice(0, 3) }),
-    );
-    for (const entry of journal.entries.slice(0, 3))
-      await writeFile(
-        join(temporary, entry.tag + '.sql'),
-        await readFile(join(folder, entry.tag + '.sql')),
-      );
-    await runMigrations(fresh.db, temporary);
-    await fresh.pool.query(`
-      INSERT INTO users(id,name,email) VALUES ('baseline-user','Baseline User','baseline@example.test');
-      INSERT INTO user_roles(user_id,role) VALUES ('baseline-user','admin');
-      INSERT INTO customer_profiles(user_id,phone,address) VALUES ('baseline-user','8055550101','Original address');
-      INSERT INTO driver_profiles(user_id,phone,vehicle,status) VALUES ('baseline-user','8055550101','Original vehicle','approved');
-      INSERT INTO markets(name,address) VALUES ('Baseline Market','Ojai');
-      INSERT INTO farms(name,location) VALUES ('Legacy farm','Ojai');
-      INSERT INTO produce(farm_id,name,description,category,unit,price_cents,available_quantity) SELECT id,'Original carrots','','Vegetables','each',250,10 FROM farms;
-      INSERT INTO market_runs(market_id,starts_at,ends_at,cutoff_at,delivery_start_at,delivery_end_at) SELECT id,now()+interval '1 day',now()+interval '2 days',now(),now()+interval '1 day',now()+interval '2 days' FROM markets;
-      INSERT INTO inventory(run_id,produce_id,price_cents,quantity,reserved_quantity) SELECT r.id,p.id,250,10,1 FROM market_runs r CROSS JOIN produce p;
-      INSERT INTO orders(customer_id,driver_id,run_id,request_id,status,customer_name,phone,address,delivery_notes,delivery_fee_cents,estimated_total_cents) SELECT 'baseline-user','baseline-user',id,gen_random_uuid(),'claimed','Original name','8055550101','Original address','Original note',500,750 FROM market_runs;
-      INSERT INTO order_items(order_id,inventory_id,farm_id,farm_name,farm_location,name,unit,quantity,price_cents) SELECT o.id,i.id,f.id,f.name,f.location,p.name,p.unit,1,250 FROM orders o CROSS JOIN inventory i CROSS JOIN produce p CROSS JOIN farms f;
-      INSERT INTO api_tokens(user_id,name,token_hash,last_four,expires_at) VALUES ('baseline-user','Original token','baseline-token-hash','hash',now()+interval '30 days');
-    `);
     await Promise.all([
       runMigrations(fresh.db, folder),
       runMigrations(fresh.db, folder),
     ]);
-    const tables = (
-      await fresh.pool.query(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema='public'",
-      )
-    ).rows.map((row) => row.table_name);
-    for (const table of [
-      'users',
-      'auth_sessions',
-      'customer_profiles',
-      'driver_profiles',
-      'farms',
-      'produce',
-      'markets',
-      'market_runs',
-      'inventory',
-      'orders',
-      'order_items',
-      'purchases',
-      'market_schedules',
-      'schedule_inventory',
-      'order_events',
-      'background_job_runs',
-      'api_tokens',
-      'network_memberships',
-      'networks',
-    ])
-      expect(tables).toContain(table);
-    expect(tables).not.toContain('legacy_run_purchases');
+    expect(await fresh.db.select().from(networks)).toEqual([]);
+    expect(await fresh.db.select().from(farms)).toEqual([]);
     expect(
       (
         await fresh.pool.query(
-          "SELECT column_name FROM information_schema.columns WHERE table_name='networks'",
-        )
-      ).rows.map((row) => row.column_name),
-    ).toEqual(
-      expect.arrayContaining([
-        'branding',
-        'deleted_at',
-        'support_email',
-        'support_phone',
-        'contact_url',
-        'location',
-        'email_reply_to',
-        'email_key_encrypted',
-      ]),
-    );
-    expect(
-      (
-        await fresh.pool.query(
-          "SELECT column_name FROM information_schema.columns WHERE table_name='order_items' AND column_name='packed_at'",
+          "SELECT table_name FROM information_schema.columns WHERE column_name='network_id' AND column_default IS NOT NULL AND table_schema='public'",
         )
       ).rows,
-    ).toHaveLength(1);
-    expect(
-      (
-        await fresh.pool.query(
-          "SELECT conname FROM pg_constraint WHERE conname='packed_item_valid'",
-        )
-      ).rows,
-    ).toHaveLength(1);
-    const { resolveNetwork } = await import('../../apps/api/src/networks.js');
-    expect(await resolveNetwork(fresh.db)).toMatchObject({
-      slug: 'ojai',
-      location: {
-        city: 'Ojai',
-        region: 'CA',
-        postalCode: '93023',
-        autocompleteBias: {
-          latitude: 34.448,
-          longitude: -119.243,
-          radiusMeters: 30000,
-        },
-      },
-    });
-    expect(
-      (await fresh.pool.query('SELECT role FROM user_roles')).rows,
-    ).toEqual([{ role: 'global_admin' }]);
-    expect(
-      (
-        await fresh.pool.query(
-          'SELECT network_id, role FROM network_memberships',
-        )
-      ).rows,
-    ).toEqual([{ network_id: OJAI_NETWORK_ID, role: 'network_admin' }]);
-    for (const table of [
-      'customer_profiles',
-      'driver_profiles',
-      'markets',
-      'farms',
-      'produce',
-      'market_runs',
-      'inventory',
-      'orders',
-      'order_items',
-      'api_tokens',
-    ]) {
-      expect(
-        (await fresh.pool.query(`SELECT DISTINCT network_id FROM ${table}`))
-          .rows,
-      ).toEqual([{ network_id: OJAI_NETWORK_ID }]);
-    }
-    expect(
-      (
-        await fresh.pool.query(
-          'SELECT address, estimated_total_cents, status FROM orders',
-        )
-      ).rows,
-    ).toEqual([
-      {
-        address: 'Original address',
-        estimated_total_cents: 750,
-        status: 'claimed',
-      },
-    ]);
-    expect(
-      (await fresh.pool.query('SELECT quantity, price_cents FROM order_items'))
-        .rows,
-    ).toEqual([{ quantity: 1, price_cents: 250 }]);
-    const farm = await withNetwork(
-      fresh.db,
-      OJAI_NETWORK_ID,
-      'baseline-user',
-      async (scoped) =>
-        (
-          await scoped
-            .insert(farms)
-            .values({ name: 'Local farm', location: 'Ojai' })
-            .returning()
-        )[0]!,
-    );
-    const [other] = await fresh.db
-      .insert(networks)
-      .values({ name: 'Another operator', slug: 'another' })
-      .returning();
-    await fresh.db
-      .insert(farms)
-      .values({ networkId: other!.id, name: 'Other farm', location: 'Sonoma' });
-    expect(
-      await withNetwork(
-        fresh.db,
-        OJAI_NETWORK_ID,
-        'baseline-user',
-        async (scoped) =>
-          scoped
-            .select()
-            .from(farms)
-            .where(networkWhere(scoped, farms, eq(farms.id, farm.id))),
-      ),
-    ).toEqual([farm]);
-    await fresh.pool.query(
-      "INSERT INTO networks(name,slug,created_at,deleted_at) VALUES ('Retired','retired','2000-01-01',now())",
-    );
-    expect((await resolveNetwork(fresh.db)).slug).toBe('ojai');
-    await fresh.pool.query(
-      'UPDATE networks SET deleted_at=now() WHERE slug=$1',
-      ['ojai'],
-    );
-    expect((await resolveNetwork(fresh.db)).slug).toBe('another');
-    await expect(resolveNetwork(fresh.db, 'ojai')).rejects.toThrow(
-      'Network not found',
-    );
-    await expect(resolveNetwork(fresh.db, 'retired')).rejects.toThrow(
-      'Network not found',
-    );
-    await Promise.all([
-      runMigrations(fresh.db, folder),
-      runMigrations(fresh.db, folder),
-    ]);
+    ).toEqual([]);
     expect(
       (
         await fresh.pool.query(
@@ -3302,14 +3103,23 @@ test('one network migration upgrades the committed schema and preserves existing
         )
       ).rows[0]!.count,
     ).toBe(4);
-    expect((await fresh.pool.query('SELECT id FROM users')).rows).toEqual([
-      { id: 'baseline-user' },
-    ]);
-    expect((await fresh.db.select().from(farms)).length).toBe(3);
+    const [network] = await fresh.db
+      .insert(networks)
+      .values({ name: 'First operator', slug: 'first' })
+      .returning();
+    await expect(
+      fresh.pool.query(
+        "INSERT INTO farms(name,location) VALUES ('Missing owner','Somewhere')",
+      ),
+    ).rejects.toThrow('null value');
+    const { resolveNetwork } = await import('../../apps/api/src/networks.js');
+    expect((await resolveNetwork(fresh.db)).id).toBe(network!.id);
+    await expect(resolveNetwork(fresh.db, 'ojai')).rejects.toThrow(
+      'Network not found',
+    );
   } finally {
     await fresh.pool.end();
     await pool.query(`DROP DATABASE "${name}"`);
-    await rm(temporary, { recursive: true, force: true });
   }
 });
 
@@ -3349,6 +3159,116 @@ test('network migration and scoped operations work without role administration p
         )
       ).rows,
     ).toEqual([]);
+    expect(await fresh.db.select().from(networks)).toEqual([]);
+    const { bootstrapGlobalAdmin } =
+      await import('../../apps/api/src/bootstrap.js');
+    // Preload Fastify's CommonJS graph before Playwright's dynamic ESM loader.
+    createRequire(new URL('../../apps/api/package.json', import.meta.url))(
+      'fastify',
+    );
+    const { createServer } = await import('../../apps/api/src/server.js');
+    const ownerEmail = 'first-owner@example.test';
+    await bootstrapGlobalAdmin(fresh.db, ownerEmail, password);
+    const ordinary = await bootstrapGlobalAdmin(
+      fresh.db,
+      'non-admin@example.test',
+      password,
+    );
+    await fresh.db.delete(userRoles).where(eq(userRoles.userId, ordinary.id));
+    const server = await createServer(fresh.db, {
+      secret: 'empty-platform-test-secret-at-least-32-characters',
+      baseURL,
+      webOrigin: baseURL,
+      cronSecret: 'empty-platform-test-cron-secret-at-least-32-characters',
+    });
+    const address = await server.listen({ host: '127.0.0.1', port: 0 });
+    const request = await requestFactory.newContext({ baseURL: address });
+    try {
+      const rpc = api(request, undefined, address);
+      await rejectCode(rpc.markets.list.query(), 'NOT_FOUND');
+      expect(
+        (
+          await request.post('/api/auth/sign-in/email', {
+            data: { email: 'non-admin@example.test', password },
+          })
+        ).status(),
+      ).toBe(404);
+      expect(
+        (
+          await request.post('/api/auth/sign-in/email', {
+            data: { email: ownerEmail, password },
+          })
+        ).status(),
+      ).toBe(200);
+      expect(await rpc.me.query()).toMatchObject({
+        globalAdmin: true,
+        network: null,
+        customer: null,
+        driver: null,
+      });
+      expect(await rpc.networks.list.query()).toEqual([]);
+      await rejectCode(rpc.markets.list.query(), 'NOT_FOUND');
+      await rejectCode(rpc.networks.current.query(), 'NOT_FOUND');
+      const token = await rpc.networks.createToken.mutate({
+        name: 'Initial platform token',
+      });
+      expect(await rpc.networks.tokens.query()).toHaveLength(1);
+      expect(await fresh.db.select().from(backgroundJobRuns)).toEqual([]);
+      const closing = await request.get('/internal/jobs/close-markets', {
+        headers: {
+          Authorization:
+            'Bearer empty-platform-test-cron-secret-at-least-32-characters',
+        },
+      });
+      expect(await closing.json()).toMatchObject({
+        id: null,
+        status: 'skipped',
+        runsClosed: 0,
+      });
+      const client = new Client({ name: 'platform-bootstrap', version: '1' });
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(address + '/mcp'), {
+          requestInit: { headers: { Authorization: `Bearer ${token.token}` } },
+        }),
+      );
+      try {
+        expect(
+          (await client.listTools()).tools.map((t) => t.name).sort(),
+        ).toEqual(['create_network', 'list_networks']);
+        expect(
+          (
+            await client.callTool({
+              name: 'create_network',
+              arguments: {
+                name: 'Manual first operator',
+                slug: 'manual-first',
+              },
+            })
+          ).isError,
+        ).toBeFalsy();
+      } finally {
+        await client.close();
+      }
+      expect(await rpc.networks.list.query()).toMatchObject([
+        { name: 'Manual first operator', location: {} },
+      ]);
+      await rpc.networks.create.mutate({
+        name: 'Second manual operator',
+        slug: 'manual-second',
+      });
+      expect(await rpc.networks.list.query()).toHaveLength(2);
+      await expect(
+        Promise.resolve().then(() => networkWhere(fresh.db, farms)),
+      ).rejects.toThrow('network-scoped database');
+    } finally {
+      await request.dispose();
+      await server.close();
+    }
+    await fresh.db.insert(networks).values({
+      id: TEST_NETWORK_ID,
+      name: 'Local test operator',
+      slug: 'local',
+    });
     const [person] = await fresh.db
       .insert(user)
       .values({
@@ -3380,7 +3300,7 @@ test('network migration and scoped operations work without role administration p
           active: true,
         }),
     );
-    await withNetwork(fresh.db, OJAI_NETWORK_ID, admin.id, async (scoped) => {
+    await withNetwork(fresh.db, TEST_NETWORK_ID, admin.id, async (scoped) => {
       expect(
         await scoped.select().from(farms).where(networkWhere(scoped, farms)),
       ).toEqual([]);
@@ -4579,8 +4499,9 @@ test('networks isolate records, memberships, profiles, and MCP tokens while glob
   expect((await otherRpc.farms.list.query())[0]!.name).toBe('Shared farm name');
   // Foreign keys enforce network ownership even if application validation is bypassed.
   await expect(
-    withNetwork(db, OJAI_NETWORK_ID, admin.id, async (scoped) => {
+    withNetwork(db, TEST_NETWORK_ID, admin.id, async (scoped) => {
       await scoped.insert(produce).values({
+        networkId: TEST_NETWORK_ID,
         farmId: remoteFarm.id,
         name: 'Bad link',
         description: '',
@@ -4592,7 +4513,7 @@ test('networks isolate records, memberships, profiles, and MCP tokens while glob
     }),
   ).rejects.toThrow();
   await expect(
-    withNetwork(db, OJAI_NETWORK_ID, admin.id, async (scoped) => {
+    withNetwork(db, TEST_NETWORK_ID, admin.id, async (scoped) => {
       await scoped.insert(farms).values(
         networkValues(scoped, {
           networkId: other!.id,
@@ -4940,7 +4861,7 @@ test('MCP edits every Configure setting and administrator role with encrypted, i
       emailFrom: 'app@example.test',
     });
     expect(
-      await networkEmailConfig(db, OJAI_NETWORK_ID, defaults),
+      await networkEmailConfig(db, TEST_NETWORK_ID, defaults),
     ).toMatchObject({
       resendKey: 'platform-key',
       emailFrom: 'platform@example.test',

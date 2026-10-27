@@ -44,10 +44,11 @@ The existing `/mcp` endpoint supports both token types:
 - Tokens from **Global administration → Global MCP access** require a current
   `global_admin` owner. They expose `list_networks` and `create_network`. Select a
   network with `/mcp?network=sonoma` (or `X-Network-Id`) to use operations tools in
-  that network; the default is the first non-deleted network (currently Ojai). Global tokens never combine records from
+  that network; the default is the first non-deleted network (once one exists). Global tokens never combine records from
   different networks in an operational query.
 
-Both support `get_network`, `update_network`, `list_network_members`, and
+With no networks, global tokens expose only `list_networks` and `create_network`.
+Once a network is selected, both token types support `get_network`, `update_network`, `list_network_members`, and
 `set_network_member`, alongside the existing market, vendor, inventory, schedule,
 and order tools. `invite_user` also accepts `role: "network_admin"`. No invitation
 or network tool can grant `global_admin`.

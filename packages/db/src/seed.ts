@@ -1,12 +1,13 @@
-import { and, eq } from 'drizzle-orm';
-import { orders } from './index.js';
+import { networkValues } from './network-scope.js';
+import { createHash } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import {
   createDatabase,
+  networks,
+  networkDatabase,
   farms,
   produce,
   markets,
-  marketRuns,
-  inventory,
   marketSchedules,
   scheduleInventory,
   runMarketRunsJob,
@@ -15,12 +16,25 @@ import {
 if (process.env.NODE_ENV === 'production')
   throw new Error('Demo seeding is disabled in production.');
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
-const { db, pool } = createDatabase(process.env.DATABASE_URL);
-const farmIds = [
-  '00000000-0000-4000-8000-000000000001',
-  '00000000-0000-4000-8000-000000000002',
-  '00000000-0000-4000-8000-000000000003',
-] as const;
+const { db: rootDb, pool } = createDatabase(process.env.DATABASE_URL);
+const slug = process.argv[2];
+const [network] = slug
+  ? await rootDb.select().from(networks).where(eq(networks.slug, slug))
+  : [];
+if (!network || network.deletedAt) {
+  await pool.end();
+  throw new Error(
+    'Create a network first, then use npm run db:seed -- network-slug',
+  );
+}
+const db = networkDatabase(rootDb, network.id, '');
+function demoId(key: string) {
+  const hex = createHash('sha256')
+    .update(`${network!.id}:${key}`)
+    .digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+const farmIds = [demoId('farm-1'), demoId('farm-2'), demoId('farm-3')] as const;
 const items = [
   [
     'Heirloom tomatoes',
@@ -135,80 +149,55 @@ try {
   await db.transaction(async (tx) => {
     await tx
       .insert(farms)
-      .values([
-        { id: farmIds[0], name: 'Willow Creek Farm', location: 'Ojai, CA' },
-        {
-          id: farmIds[1],
-          name: 'Sunstone Orchard',
-          location: 'Ojai, CA',
-        },
-        {
-          id: farmIds[2],
-          name: 'Little Sprout Gardens',
-          location: 'Ojai, CA',
-        },
-      ])
+      .values(
+        networkValues(tx, [
+          { id: farmIds[0], name: 'Willow Creek Farm', location: 'Ojai, CA' },
+          {
+            id: farmIds[1],
+            name: 'Sunstone Orchard',
+            location: 'Ojai, CA',
+          },
+          {
+            id: farmIds[2],
+            name: 'Little Sprout Gardens',
+            location: 'Ojai, CA',
+          },
+        ]),
+      )
       .onConflictDoUpdate({ target: farms.id, set: { location: 'Ojai, CA' } });
     await tx
       .insert(produce)
       .values(
-        items.map(
-          (
-            [
+        networkValues(
+          tx,
+          items.map(
+            (
+              [
+                name,
+                description,
+                category,
+                unit,
+                priceCents,
+                availableQuantity,
+                farm,
+              ],
+              i,
+            ) => ({
+              id: demoId(`produce-${i}`),
+              farmId: farmIds[farm],
               name,
               description,
               category,
               unit,
               priceCents,
               availableQuantity,
-              farm,
-            ],
-            i,
-          ) => ({
-            id: `00000000-0000-4000-8001-${String(i + 1).padStart(12, '0')}`,
-            farmId: farmIds[farm],
-            name,
-            description,
-            category,
-            unit,
-            priceCents,
-            availableQuantity,
-          }),
+            }),
+          ),
         ),
       )
       .onConflictDoNothing();
   });
   await db.transaction(async (tx) => {
-    // Retire only the original, unbooked Sonoma demo. Never move a booked run.
-    const oldRunId = '00000000-0000-4000-8003-000000000001';
-    const [oldRun] = await tx
-      .select()
-      .from(marketRuns)
-      .where(eq(marketRuns.id, oldRunId))
-      .for('update');
-    const oldOrders = await tx
-      .select({ id: orders.id })
-      .from(orders)
-      .where(eq(orders.runId, oldRunId))
-      .limit(1);
-    if (oldRun && oldRun.status === 'scheduled' && !oldOrders.length) {
-      await tx.delete(inventory).where(eq(inventory.runId, oldRunId));
-      await tx.delete(marketRuns).where(eq(marketRuns.id, oldRunId));
-      const otherRuns = await tx
-        .select({ id: marketRuns.id })
-        .from(marketRuns)
-        .where(eq(marketRuns.marketId, oldRun.marketId))
-        .limit(1);
-      if (!otherRuns.length)
-        await tx
-          .delete(markets)
-          .where(
-            and(
-              eq(markets.id, oldRun.marketId),
-              eq(markets.name, 'Sonoma Neighborhood Market'),
-            ),
-          );
-    }
     // These are different operators and locations, not one market with two days.
     // Sources checked 2026-10-21:
     // https://www.ojaicommunityfarmersmarket.com/location
@@ -233,16 +222,18 @@ try {
       },
     ];
     for (const schedule of schedules) {
-      const marketId = `00000000-0000-4000-8002-${schedule.key}`;
-      const scheduleId = `00000000-0000-4000-8004-${schedule.key}`;
+      const marketId = demoId(`market-${schedule.key}`);
+      const scheduleId = demoId(`schedule-${schedule.key}`);
       await tx
         .insert(markets)
-        .values({
-          id: marketId,
-          name: schedule.name,
-          address: schedule.address,
-          timezone: 'America/Los_Angeles',
-        })
+        .values(
+          networkValues(tx, {
+            id: marketId,
+            name: schedule.name,
+            address: schedule.address,
+            timezone: 'America/Los_Angeles',
+          }),
+        )
         .onConflictDoUpdate({
           target: markets.id,
           set: {
@@ -253,27 +244,32 @@ try {
         });
       await tx
         .insert(marketSchedules)
-        .values({
-          id: scheduleId,
-          marketId,
-          weekday: schedule.weekday,
-          opensMinute: schedule.opens * 60,
-          closesMinute: schedule.closes * 60,
-          cutoffMinutes: 720,
-          deliveryDurationMinutes: (schedule.closes - schedule.opens) * 60,
-          deliveryFeeCents: 500,
-          skipThanksgiving: schedule.weekday === 4,
-        })
+        .values(
+          networkValues(tx, {
+            id: scheduleId,
+            marketId,
+            weekday: schedule.weekday,
+            opensMinute: schedule.opens * 60,
+            closesMinute: schedule.closes * 60,
+            cutoffMinutes: 720,
+            deliveryDurationMinutes: (schedule.closes - schedule.opens) * 60,
+            deliveryFeeCents: 500,
+            skipThanksgiving: schedule.weekday === 4,
+          }),
+        )
         .onConflictDoNothing();
       await tx
         .insert(scheduleInventory)
         .values(
-          items.map((item, i) => ({
-            scheduleId,
-            produceId: `00000000-0000-4000-8001-${String(i + 1).padStart(12, '0')}`,
-            priceCents: item[4],
-            quantity: item[5],
-          })),
+          networkValues(
+            tx,
+            items.map((item, i) => ({
+              scheduleId,
+              produceId: demoId(`produce-${i}`),
+              priceCents: item[4],
+              quantity: item[5],
+            })),
+          ),
         )
         .onConflictDoNothing();
     }

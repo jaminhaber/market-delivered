@@ -31,7 +31,8 @@
     "dev:apps": "dotenv -- concurrently -k -n api,web -c green,cyan \"npm run dev -w @market/api\" \"npm run dev -w @market/web\"",
     "db:reset:local": "dotenv -- tsx scripts/reset-local-db.ts && npm run db:setup",
     "jobs:close": "dotenv -- tsx scripts/run-jobs.ts close-markets",
-    "db:setup": "npm run db:migrate && npm run db:seed"
+    "db:setup": "npm run db:migrate",
+    "admin:bootstrap": "dotenv -- tsx scripts/bootstrap-admin.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

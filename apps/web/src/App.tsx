@@ -36,13 +36,12 @@ export function App() {
     }
   }
   const tabs = [
-    'Market',
+    ...(me.data?.globalAdmin && !me.data.network ? [] : ['Market']),
     ...(me.data
       ? [
-          'Orders',
-          'Profile',
+          ...(me.data.network ? ['Orders', 'Profile'] : []),
           ...(me.data.driver?.status === 'approved' ? ['Driver'] : []),
-          ...(me.data.admin ? ['Operations'] : []),
+          ...(me.data.admin && me.data.network ? ['Operations'] : []),
           ...(me.data.globalAdmin ? ['Global administration'] : []),
         ]
       : []),
@@ -50,7 +49,9 @@ export function App() {
   const [urlPage, setPage] = useUrlState(
     'page',
     [...tabs, 'Account'],
-    'Market',
+    me.data?.globalAdmin && !me.data.network
+      ? 'Global administration'
+      : 'Market',
   );
   const params = new URLSearchParams(location.search);
   const page =
@@ -135,7 +136,7 @@ export function App() {
         {signOutError != null && <ErrorState error={signOutError} />}
         {me.isPending ? (
           <Loading />
-        ) : me.isError ? (
+        ) : me.isError && me.error.data?.code !== 'NOT_FOUND' ? (
           <ErrorState error={me.error} />
         ) : !me.data || page === 'Account' ? (
           <div className="account-page">

@@ -34,12 +34,9 @@ export type NetworkLocation = {
   } | null;
 };
 
-export const OJAI_NETWORK_ID = '00000000-0000-4000-8000-000000000001';
-// Trusted CLI/seed inserts default to Ojai; application writes supply ownership explicitly.
 export const networkIdColumn = () =>
   uuid('network_id')
     .notNull()
-    .default(sql`'${sql.raw(OJAI_NETWORK_ID)}'::uuid`)
     .references(() => networks.id);
 export const networks = pgTable('networks', {
   id: uuid('id').defaultRandom().primaryKey(),

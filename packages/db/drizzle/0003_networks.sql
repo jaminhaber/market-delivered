@@ -1,7 +1,7 @@
 -- Network ownership, isolation, branding, support, location and email settings.
--- Upgrade from the existing 0000–0002 migration history without recreating tables.
+-- Apply after 0000–0002 to a fresh database. No network or business data is seeded.
 CREATE TABLE "network_memberships" (
-	"network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL,
+	"network_id" uuid NOT NULL,
 	"user_id" text NOT NULL,
 	"role" text DEFAULT 'member' NOT NULL,
 	CONSTRAINT "network_memberships_network_id_user_id_pk" PRIMARY KEY("network_id","user_id"),
@@ -25,11 +25,6 @@ CREATE TABLE "networks" (
 	CONSTRAINT "networks_slug_unique" UNIQUE("slug")
 );
 --> statement-breakpoint
--- Existing operational rows receive this network through the new column defaults.
-INSERT INTO networks (id, name, slug, location)
-VALUES ('00000000-0000-4000-8000-000000000001', 'Ojai', 'ojai',
-'{"city":"Ojai","region":"CA","postalCode":"93023","timezone":"America/Los_Angeles","autocompleteBias":{"latitude":34.448,"longitude":-119.243,"radiusMeters":30000}}'::jsonb);
---> statement-breakpoint
 ALTER TABLE "invitations" DROP CONSTRAINT "invitation_role_valid";
 --> statement-breakpoint
 ALTER TABLE "orders" DROP CONSTRAINT "orders_customer_id_customer_profiles_user_id_fk";
@@ -42,39 +37,39 @@ ALTER TABLE "customer_profiles" DROP CONSTRAINT "customer_profiles_pkey";
 --> statement-breakpoint
 ALTER TABLE "driver_profiles" DROP CONSTRAINT "driver_profiles_pkey";
 --> statement-breakpoint
-ALTER TABLE "farms" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "farms" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "produce" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "produce" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "api_tokens" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid;
+ALTER TABLE "api_tokens" ADD COLUMN "network_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "audit_events" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "audit_events" ADD COLUMN "network_id" uuid;
 --> statement-breakpoint
-ALTER TABLE "background_job_runs" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "background_job_runs" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "customer_profiles" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "customer_profiles" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "driver_profiles" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "driver_profiles" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "inventory" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "inventory" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invitations" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "invitations" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "market_runs" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "market_runs" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "market_schedules" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "market_schedules" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "markets" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "markets" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "order_events" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "order_events" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "order_items" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "order_items" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "orders" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "orders" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "purchases" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "purchases" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "schedule_inventory" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
+ALTER TABLE "schedule_inventory" ADD COLUMN "network_id" uuid NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "customer_profiles" ADD CONSTRAINT "customer_profiles_network_id_user_id_pk" PRIMARY KEY("network_id","user_id");
 --> statement-breakpoint
@@ -175,10 +170,6 @@ CREATE UNIQUE INDEX "orders_customer_request_unique" ON "orders" USING btree ("n
 ALTER TABLE "invitations" ADD CONSTRAINT "invitation_role_valid" CHECK ("invitations"."role" IN ('customer','driver','network_admin'));
 --> statement-breakpoint
 -- Preserve existing access while making administrator scope explicit.
-INSERT INTO network_memberships (network_id, user_id, role)
-SELECT '00000000-0000-4000-8000-000000000001', u.id,
-  CASE WHEN EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = 'admin') THEN 'network_admin' ELSE 'member' END
-FROM users u;
 INSERT INTO user_roles (user_id, role) SELECT user_id, 'global_admin' FROM user_roles WHERE role = 'admin' ON CONFLICT DO NOTHING;
 DELETE FROM user_roles WHERE role = 'admin';
 --> statement-breakpoint

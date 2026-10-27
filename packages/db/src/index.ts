@@ -37,4 +37,5 @@ export {
   networkWhere,
   networkValues,
   databaseNetworkId,
+  requireNetworkId,
 } from './network-scope.js';

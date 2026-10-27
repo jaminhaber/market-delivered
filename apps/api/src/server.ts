@@ -1,15 +1,21 @@
-import type { TRPCError } from '@trpc/server';
+import { TRPCError } from '@trpc/server';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
 import { fromNodeHeaders } from 'better-auth/node';
 import { sql, eq, asc, and, isNull } from 'drizzle-orm';
-import { networkMemberships, networks, type Database } from '@market/db';
+import {
+  networkMemberships,
+  networks,
+  user,
+  verification,
+  type Database,
+} from '@market/db';
 import { appRouter } from './router.js';
 import { createAuth, type AuthConfig } from './auth.js';
 import {
   permissions,
-  resolveNetwork,
+  findNetwork,
   networkOperations,
   networkEmailConfig,
   publicNetworkColumns,
@@ -76,11 +82,36 @@ export async function createServer(
     url: '/api/auth/*',
     async handler(request, reply) {
       const selector = request.headers['x-network-id'];
-      const network = await resolveNetwork(
+      const network = await findNetwork(
         db,
         typeof selector === 'string' ? selector : undefined,
       );
-      const email = await networkEmailConfig(db, network.id, config);
+      if (!network) {
+        const current = await auth.api.getSession({
+          headers: fromNodeHeaders(request.headers),
+        });
+        const body = request.body as
+          { email?: string; token?: string } | undefined;
+        let userId = current?.user.id;
+        if (typeof body?.email === 'string') {
+          const [person] = await db
+            .select({ id: user.id })
+            .from(user)
+            .where(eq(user.email, body.email.toLowerCase()));
+          userId = person?.id;
+        } else if (typeof body?.token === 'string') {
+          const [reset] = await db
+            .select()
+            .from(verification)
+            .where(eq(verification.identifier, `reset-password:${body.token}`));
+          userId = reset?.value;
+        }
+        if (!userId || !(await permissions(db, userId)).globalAdmin)
+          return reply.code(404).send({ error: 'No network configured' });
+      }
+      const email = network
+        ? await networkEmailConfig(db, network.id, config)
+        : config;
       const networkAuth = createAuth(db, { ...config, ...email });
       const response = await networkAuth.handler(
         new Request(new URL(request.url, config.baseURL), {
@@ -121,13 +152,18 @@ export async function createServer(
           headers: fromNodeHeaders(req.headers),
         });
         const selector = req.headers['x-network-id'];
-        const network = await resolveNetwork(
+        const network = await findNetwork(
           db,
           typeof selector === 'string' ? selector : undefined,
         );
         const access = current
-          ? await permissions(db, current.user.id, network.id)
+          ? await permissions(db, current.user.id, network?.id)
           : { globalAdmin: false, networkAdmin: false, member: false };
+        if (!network && !access.globalAdmin)
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'No network configured',
+          });
         const actor = current
           ? {
               id: current.user.id,
@@ -145,12 +181,14 @@ export async function createServer(
           networkOps: networkOperations(
             db,
             actor || { id: '' },
-            network.id,
+            network?.id ?? null,
             config.secret,
           ),
           accessibleNetworks: async () =>
             !actor
-              ? [{ id: network.id, name: network.name, slug: network.slug }]
+              ? network
+                ? [{ id: network.id, name: network.name, slug: network.slug }]
+                : []
               : actor.globalAdmin
                 ? db
                     .select(publicNetworkColumns)

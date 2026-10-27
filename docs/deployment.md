@@ -40,15 +40,19 @@ Remove the old `API_ORIGIN` setting and leave `VITE_API_URL` and `VITE_AUTH_URL`
 
 To test service routing locally, run `vercel dev` from the repository root (or `vercel dev -L` without cloud authentication). Start PostgreSQL first and supply the API's required environment variables. Set `WEB_ORIGIN` and `BETTER_AUTH_URL` to the local Vercel URL (typically `http://localhost:3000`), not Vite's underlying port. Do not run `npm run dev` simultaneously: Vercel starts both services itself. Cron is not scheduled locally; invoke the protected endpoint or `npm run jobs:run` manually.
 
-API startup applies migrations automatically. After the first successful API request (for example, `/ready`), bootstrap the catalog and account from the workspace root with deployment variables exported in the shell:
+API startup applies migrations automatically. After the first successful API request (for example, `/ready`), bootstrap the global administrator from the workspace root with deployment variables exported in the shell:
 
 ```sh
-npm run db:seed         # Optional: fictional Ojai catalog and schedules for testing
-npm run jobs:run
-npm run invite:create -- you@example.com customer
-# Create and verify your account through the printed frontend invitation URL.
-npm run admin:grant -- you@example.com
+# Set ADMIN_BOOTSTRAP_PASSWORD in this shell (12–128 characters).
+npm run admin:bootstrap -- you@example.com
 ```
+
+Unset the bootstrap password after use. Sign in and create your first network in
+**Global administration** (or create a global MCP token there and use
+`create_network`). Open the new operator to configure markets and invite members.
+Setup and deployment never create an Ojai network or demo data. Protected cron
+requests safely skip execution until a network exists. To prepare dates after
+configuring schedules, run `npm run jobs:run`.
 
 Shell-exported deployment variables take precedence over the local `.env`. Do not overwrite local development settings with production credentials or run database resets against a hosted database. API startup migrates automatically on all hosts. For database setup before standalone CLI tools or a manual migration retry, use `npm run db:migrate` with the target database credentials.
 

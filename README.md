@@ -19,18 +19,15 @@ npm run db:setup
 npm run dev
 ```
 
-Open <http://localhost:5173>. Setup seeds the Ojai network with fictional catalog data and market schedules, but creates no accounts.
+Open <http://localhost:5173>. Setup creates an empty database with no networks, accounts, or catalog data.
 
-Bootstrap an administrator:
+Bootstrap a global administrator by setting `ADMIN_BOOTSTRAP_PASSWORD` in your shell (12–128 characters), then run:
 
 ```sh
-npm run invite:create -- you@example.com customer
-# Open the printed invitation URL and create your account.
-npm run admin:grant -- you@example.com
-# Refresh the app to see Operations.
+npm run admin:bootstrap -- you@example.com
 ```
 
-See [local setup](docs/getting-started.md) for seed details and invitation behavior.
+Sign in and use **Global administration** to create your first network, then open it to configure operations and invite members. See [local setup](docs/getting-started.md) for details.
 
 ## Documentation
 

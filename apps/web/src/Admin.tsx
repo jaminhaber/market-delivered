@@ -359,7 +359,7 @@ function PeopleAdmin() {
                   'customer' | 'driver' | 'network_admin',
               });
               setLink(
-                `${location.origin}/?network=${encodeURIComponent(me.data!.network.slug)}&invite=${result.token}`,
+                `${location.origin}/?network=${encodeURIComponent(me.data!.network!.slug)}&invite=${result.token}`,
               );
             }, 'Invitation created. Share the link with the intended person.');
           }}

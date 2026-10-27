@@ -392,9 +392,7 @@ export const orderEvents = pgTable(
 export const apiTokens = pgTable(
   'api_tokens',
   {
-    networkId: uuid('network_id').default(
-      sql`'00000000-0000-4000-8000-000000000001'::uuid`,
-    ),
+    networkId: uuid('network_id'),
     id: uuid('id').defaultRandom().primaryKey(),
     userId: text('user_id')
       .notNull()
@@ -421,7 +419,7 @@ export const apiTokens = pgTable(
   ],
 );
 export const auditEvents = pgTable('audit_events', {
-  networkId: networkIdColumn(),
+  networkId: uuid('network_id').references(() => networks.id),
   id: uuid('id').defaultRandom().primaryKey(),
   actorId: text('actor_id')
     .notNull()

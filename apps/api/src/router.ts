@@ -45,7 +45,7 @@ export type Context = {
   db: s.Database;
   actor: Actor | null;
   googleMapsKey?: string;
-  network: Awaited<ReturnType<typeof resolveNetwork>>;
+  network: Awaited<ReturnType<typeof resolveNetwork>> | null;
   networkOps: ReturnType<typeof networkOperations>;
   accessibleNetworks: () => Promise<
     { id: string; name: string; slug: string }[]
@@ -63,14 +63,16 @@ const t = initTRPC.context<Context>().create({
     };
   },
 });
-const publicProcedure = t.procedure.use(({ ctx, next }) =>
-  next({
+const publicProcedure = t.procedure.use(({ ctx, next }) => {
+  ensure(ctx.network, 'Network not found', 'NOT_FOUND');
+  return next({
     ctx: {
       ...ctx,
+      network: ctx.network,
       db: s.networkDatabase(ctx.db, ctx.network.id, ctx.actor?.id || ''),
     },
-  }),
-);
+  });
+});
 const authenticated = publicProcedure.use(({ ctx, next }) => {
   if (!ctx.actor)
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Please sign in' });
@@ -97,7 +99,7 @@ const addressProcedure = authenticated.use(async ({ ctx, next, path }) => {
   return next();
 });
 const id = z.object({ id: z.uuid() });
-const networkAdmin = t.procedure.use(({ ctx, next }) => {
+const networkAdmin = publicProcedure.use(({ ctx, next }) => {
   ensure(
     ctx.actor?.admin,
     'Network administrator access required',
@@ -116,12 +118,12 @@ const globalAdmin = t.procedure.use(({ ctx, next }) => {
 export const appRouter = t.router({
   networks: t.router({
     branding: t.procedure.query(({ ctx }) => ({
-      name: ctx.network.name,
-      branding: ctx.network.branding,
-      supportEmail: ctx.network.supportEmail,
-      supportPhone: ctx.network.supportPhone,
-      contactUrl: ctx.network.contactUrl,
-      location: ctx.network.location,
+      name: ctx.network?.name ?? 'Market Delivered',
+      branding: ctx.network?.branding ?? {},
+      supportEmail: ctx.network?.supportEmail ?? null,
+      supportPhone: ctx.network?.supportPhone ?? null,
+      contactUrl: ctx.network?.contactUrl ?? null,
+      location: ctx.network?.location ?? {},
     })),
     available: t.procedure.query(({ ctx }) => ctx.accessibleNetworks()),
     current: networkAdmin.query(({ ctx }) => ctx.networkOps.get()),
@@ -147,13 +149,9 @@ export const appRouter = t.router({
         })
         .from(s.apiTokens)
         .where(
-          s.networkWhere(
-            ctx.db,
-            s.apiTokens,
-            and(
-              eq(s.apiTokens.userId, ctx.actor!.id),
-              sql`${s.apiTokens.networkId} IS NULL`,
-            ),
+          and(
+            eq(s.apiTokens.userId, ctx.actor!.id),
+            sql`${s.apiTokens.networkId} IS NULL`,
           ),
         ),
     ),
@@ -166,24 +164,27 @@ export const appRouter = t.router({
       .input(z.object({ id: z.uuid() }))
       .mutation(({ ctx, input }) => ctx.networkOps.revokeGlobalToken(input.id)),
   }),
-  me: publicProcedure.query(async ({ ctx }) => {
+  me: t.procedure.query(async ({ ctx }) => {
     if (!ctx.actor) return null;
-    const [customer] = await ctx.db
+    if (!ctx.network)
+      return { ...ctx.actor, network: null, customer: null, driver: null };
+    const db = s.networkDatabase(ctx.db, ctx.network.id, ctx.actor.id);
+    const [customer] = await db
       .select()
       .from(s.customerProfiles)
       .where(
         s.networkWhere(
-          ctx.db,
+          db,
           s.customerProfiles,
           eq(s.customerProfiles.userId, ctx.actor.id),
         ),
       );
-    const [driver] = await ctx.db
+    const [driver] = await db
       .select()
       .from(s.driverProfiles)
       .where(
         s.networkWhere(
-          ctx.db,
+          db,
           s.driverProfiles,
           eq(s.driverProfiles.userId, ctx.actor.id),
         ),
@@ -224,7 +225,7 @@ export const appRouter = t.router({
       ensure(invite, 'This invitation is invalid or expired.', 'NOT_FOUND');
       return invite;
     }),
-  acceptInvitation: t.procedure
+  acceptInvitation: publicProcedure
     .input(z.object({ token: z.string().min(32).max(256) }))
     .mutation(async ({ ctx, input }) => {
       ensure(ctx.actor, 'Please sign in', 'FORBIDDEN');

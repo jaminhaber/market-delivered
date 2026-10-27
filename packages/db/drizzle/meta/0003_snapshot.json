@@ -12,8 +12,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -102,8 +101,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -723,8 +721,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": false
         },
         "id": {
           "name": "id",
@@ -871,8 +868,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": false
         },
         "id": {
           "name": "id",
@@ -950,8 +946,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -1105,8 +1100,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "user_id": {
           "name": "user_id",
@@ -1265,8 +1259,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "user_id": {
           "name": "user_id",
@@ -1353,8 +1346,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -1545,8 +1537,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -1717,8 +1708,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -1981,8 +1971,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -2156,8 +2145,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -2232,8 +2220,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -2363,8 +2350,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -2615,8 +2601,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "id": {
           "name": "id",
@@ -3211,8 +3196,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "order_item_id": {
           "name": "order_item_id",
@@ -3322,8 +3306,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "schedule_id": {
           "name": "schedule_id",
@@ -3525,8 +3508,7 @@
           "name": "network_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
+          "notNull": true
         },
         "user_id": {
           "name": "user_id",

@@ -209,7 +209,7 @@ export const networkColumns = {
 export async function permissions(
   db: s.Database,
   userId: string,
-  networkId: string,
+  networkId?: string,
 ) {
   const [global] = await db
     .select()
@@ -217,22 +217,24 @@ export async function permissions(
     .where(
       and(eq(s.userRoles.userId, userId), eq(s.userRoles.role, 'global_admin')),
     );
-  const [membership] = await db
-    .select()
-    .from(s.networkMemberships)
-    .where(
-      and(
-        eq(s.networkMemberships.userId, userId),
-        eq(s.networkMemberships.networkId, networkId),
-      ),
-    );
+  const [membership] = networkId
+    ? await db
+        .select()
+        .from(s.networkMemberships)
+        .where(
+          and(
+            eq(s.networkMemberships.userId, userId),
+            eq(s.networkMemberships.networkId, networkId),
+          ),
+        )
+    : [];
   return {
     globalAdmin: !!global,
     networkAdmin: membership?.role === 'network_admin',
     member: !!membership,
   };
 }
-export async function resolveNetwork(db: s.Database, selector?: string) {
+export async function findNetwork(db: s.Database, selector?: string) {
   const [network] = await db
     .select(networkColumns)
     .from(s.networks)
@@ -248,6 +250,11 @@ export async function resolveNetwork(db: s.Database, selector?: string) {
     )
     .orderBy(asc(s.networks.createdAt), asc(s.networks.id))
     .limit(1);
+  if (selector) ensure(network, 'Network not found', 'NOT_FOUND');
+  return network ?? null;
+}
+export async function resolveNetwork(db: s.Database, selector?: string) {
+  const network = await findNetwork(db, selector);
   ensure(network, 'Network not found', 'NOT_FOUND');
   return network;
 }
@@ -313,15 +320,17 @@ export async function networkEmailConfig(
 export function networkOperations(
   db: s.Database,
   actor: { id: string; globalAdmin?: boolean; networkAdmin?: boolean },
-  networkId: string,
+  selectedNetworkId: string | null,
   secret: string,
 ) {
   function admin() {
+    ensure(selectedNetworkId, 'Network not found', 'NOT_FOUND');
     ensure(
       actor.globalAdmin || actor.networkAdmin,
       'Network administrator access required',
       'FORBIDDEN',
     );
+    return selectedNetworkId;
   }
   function global() {
     ensure(
@@ -331,9 +340,12 @@ export function networkOperations(
     );
   }
   async function audit(tx: s.Database, action: string, targetId: string) {
-    await tx
-      .insert(s.auditEvents)
-      .values({ networkId, actorId: actor.id, action, targetId });
+    await tx.insert(s.auditEvents).values({
+      networkId: selectedNetworkId,
+      actorId: actor.id,
+      action,
+      targetId,
+    });
   }
   return {
     async createGlobalToken(name: string) {
@@ -407,11 +419,11 @@ export function networkOperations(
       });
     },
     async get() {
-      admin();
+      const networkId = admin();
       return resolveNetwork(db, networkId);
     },
     async update(input: z.infer<typeof networkSettingsInput>) {
-      admin();
+      const networkId = admin();
       const { autocompleteBias: bias, ...locationDefaults } =
         input.location || {};
       let location: Partial<s.NetworkLocation> | null | undefined =
@@ -489,7 +501,7 @@ export function networkOperations(
       });
     },
     async members() {
-      admin();
+      const networkId = admin();
       return db
         .select({
           userId: s.user.id,
@@ -502,7 +514,7 @@ export function networkOperations(
         .where(eq(s.networkMemberships.networkId, networkId));
     },
     async setMember(input: z.infer<typeof membershipInput>) {
-      admin();
+      const networkId = admin();
       return db.transaction(async (tx) => {
         // Serialize membership changes so concurrent demotions cannot remove every admin.
         await tx.execute(

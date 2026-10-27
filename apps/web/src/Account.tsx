@@ -294,14 +294,14 @@ export function Profile() {
     [street, setStreet] = useState(me.data?.customer?.street ?? ''),
     [unit, setUnit] = useState(me.data?.customer?.unit ?? ''),
     [city, setCity] = useState(
-      me.data?.customer?.city || me.data?.network.location.city || '',
+      me.data?.customer?.city || me.data?.network?.location.city || '',
     ),
     [region, setRegion] = useState(
-      me.data?.customer?.region || me.data?.network.location.region || '',
+      me.data?.customer?.region || me.data?.network?.location.region || '',
     ),
     [postalCode, setPostalCode] = useState(
       me.data?.customer?.postalCode ||
-        me.data?.network.location.postalCode ||
+        me.data?.network?.location.postalCode ||
         '',
     ),
     [notes, setNotes] = useState(me.data?.customer?.deliveryNotes ?? '');
@@ -388,7 +388,7 @@ export function Profile() {
                     setStreet(address.street);
                     setCity(address.city);
                     setRegion(
-                      address.region || me.data?.network.location.region || '',
+                      address.region || me.data?.network?.location.region || '',
                     );
                     setPostalCode(address.postalCode);
                     setLookup(null);

@@ -8,10 +8,10 @@ MCP tokens, audit records, and job history. Customers and drivers share a platfo
 sign-in identity, with independent profiles, driver approvals, and memberships in
 each network. Vendor relationships and inventory are never copied between networks.
 
-Migration `0003_networks` creates **Ojai** (`ojai`) as the first network with its
-local address defaults and assigns all existing operational data to it. Existing
-`admin` users become `global_admin` users and Ojai `network_admin` members;
-existing MCP tokens become Ojai-only tokens.
+Setup creates no default network. A global administrator creates the first
+operator through **Global administration** or the global MCP `create_network` tool.
+Every business record requires explicit network ownership; the database provides
+no fallback ID. Global tokens and platform audit events can have no network.
 
 ## Administrator roles
 
@@ -25,11 +25,12 @@ existing MCP tokens become Ojai-only tokens.
   last-administrator restriction. Global role grants use the trusted CLI.
 
 Without an explicit selector, the app uses the first non-deleted network ordered
-by creation time and ID (currently Ojai). There is no network dropdown. Global
+by creation time and ID (once one exists). There is no network dropdown. Global
 administrators can still open a specific network from **Global administration**;
 invitation links and MCP clients can also select a network using `?network=ojai`
 or the API's `X-Network-Id` header (slug or UUID). Deleted networks cannot be
-selected. A selector does not grant access. Opening another network reloads the
+selected. When no network exists, ordinary requests fail; only global administration can
+operate without one. A selector does not grant access. Opening another network reloads the
 app to discard the previous network's cached data. Invitation and password-reset
 links preserve the network selection. Existing users can sign in and accept an
 invitation to another network using the same email.
@@ -62,7 +63,7 @@ from referencing another network. No custom PostgreSQL roles, `SET ROLE`, row-le
 security policies, or `CREATEROLE` permission are required. The database login needs
 normal schema migration and application read/write permissions.
 
-The unreleased `0003_networks` migration now uses application scoping. Recreate the
+The staging `0003_networks` migration uses application scoping and creates no network. Recreate the
 disposable staging database before deploying this version; an already-applied copy
 of that migration is not rerun. Keep the merged `0000`–`0002` history unchanged.
 

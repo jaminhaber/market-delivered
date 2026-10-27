@@ -17,7 +17,7 @@ export async function runMarketRunsJob(
   source: 'cron' | 'cli' | 'admin' | 'worker',
   asOf = new Date(),
 ): Promise<{
-  id: string;
+  id: string | null;
   status: 'skipped' | 'succeeded';
   schedulesProcessed: number;
   runsCreated: number;
@@ -38,7 +38,7 @@ export async function runMarketRunsJob(
         ),
       );
     return {
-      ...results[0]!,
+      id: results[0]?.id ?? null,
       status: results.some((result) => result.status === 'succeeded')
         ? 'succeeded'
         : 'skipped',
@@ -114,7 +114,7 @@ export async function runCloseMarketsJob(
   source: 'cron' | 'cli' | 'worker',
   asOf = new Date(),
 ): Promise<{
-  id: string;
+  id: string | null;
   status: 'skipped' | 'succeeded';
   ordersCancelled: number;
   runsClosed: number;
@@ -135,7 +135,7 @@ export async function runCloseMarketsJob(
         ),
       );
     return {
-      ...results[0]!,
+      id: results[0]?.id ?? null,
       status: results.some((result) => result.status === 'succeeded')
         ? 'succeeded'
         : 'skipped',

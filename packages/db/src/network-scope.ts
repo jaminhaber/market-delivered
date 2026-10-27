@@ -6,22 +6,30 @@ import type { Database } from './index.js';
 // explicitly use networkWhere/networkValues; no database roles or session state.
 const scopes = new WeakMap<object, string>();
 export const databaseNetworkId = (db: object) => scopes.get(db);
+export function requireNetworkId(db: object) {
+  const id = databaseNetworkId(db);
+  if (!id) throw new Error('A network-scoped database is required');
+  return id;
+}
 
 export function networkWhere(
   db: object,
   table: { networkId: AnyPgColumn },
   condition?: SQL,
 ) {
-  const networkId = databaseNetworkId(db);
-  return and(condition, networkId ? eq(table.networkId, networkId) : undefined);
+  return and(condition, eq(table.networkId, requireNetworkId(db)));
 }
 
-export function networkValues<T extends object | object[]>(
+export function networkValues<T extends object>(
+  db: object,
+  values: T[],
+): (T & { networkId: string })[];
+export function networkValues<T extends object>(
   db: object,
   values: T,
-): T {
-  const networkId = databaseNetworkId(db);
-  if (!networkId) return values; // Trusted CLI/platform operations pass ownership explicitly.
+): T & { networkId: string };
+export function networkValues(db: object, values: object | object[]) {
+  const networkId = requireNetworkId(db);
   function owned(value: object) {
     if (
       'networkId' in value &&
@@ -31,7 +39,7 @@ export function networkValues<T extends object | object[]>(
       throw new Error('Cannot write data belonging to another network');
     return { ...value, networkId };
   }
-  return (Array.isArray(values) ? values.map(owned) : owned(values)) as T;
+  return Array.isArray(values) ? values.map(owned) : owned(values);
 }
 
 export function networkDatabase(
@@ -39,6 +47,7 @@ export function networkDatabase(
   networkId: string,
   _userId: string,
 ): Database {
+  if (!networkId) throw new Error('A network ID is required');
   const scoped = new Proxy(db, {
     get(target, property) {
       if (property === 'transaction')

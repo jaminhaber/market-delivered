@@ -2,7 +2,11 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 
-import { createDatabase, runMigrations } from '../packages/db/src/index.js';
+import {
+  createDatabase,
+  runMigrations,
+  networks,
+} from '../packages/db/src/index.js';
 const databaseURL =
   process.env.E2E_DATABASE_URL ??
   'postgresql://market:market@localhost:5433/market_delivered_e2e';
@@ -26,6 +30,23 @@ try {
     db,
     fileURLToPath(new URL('../packages/db/drizzle', import.meta.url)),
   );
+  // Explicit test fixture only; application migrations create no networks.
+  await db.insert(networks).values({
+    id: '00000000-0000-4000-8000-000000000001',
+    name: 'Ojai',
+    slug: 'ojai',
+    location: {
+      city: 'Ojai',
+      region: 'CA',
+      postalCode: '93023',
+      timezone: 'America/Los_Angeles',
+      autocompleteBias: {
+        latitude: 34.448,
+        longitude: -119.243,
+        radiusMeters: 30000,
+      },
+    },
+  });
 } finally {
   await pool.end();
 }

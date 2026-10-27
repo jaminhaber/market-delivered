@@ -27,21 +27,17 @@ The committed migration history is preserved unchanged:
 **Migration `0003_networks.sql` introduces the network layer**:
 ownership and isolation, branding, support contacts, location defaults, and email
 identity. The new networks table includes all configuration columns from the start.
-Existing accounts, vendors, schedules, inventory, orders, and tokens move into Ojai;
-legacy administrators retain global access and gain Ojai administrator membership.
-The upgrade preserves application data and the `0000`–`0002` migration files.
+It targets a fresh database and does not seed Ojai or assign implicit ownership.
+The `0000`–`0002` migration files remain unchanged.
 
-`npm run db:setup` applies the migration history and seeds Ojai for a new database.
-For a database without the network migration, `npm run db:migrate` applies it;
-the API also migrates on startup. Recreate disposable staging databases that already
-applied the earlier role-based `0003` version; see [network setup](networks.md#network-isolation-and-database-setup).
+`npm run db:setup` applies migrations only. Recreate disposable staging databases
+that applied an earlier `0003` version before deploying this change. Bootstrap a
+global administrator, then create the first network manually; see [local setup](getting-started.md).
 Future released changes should use subsequent migrations.
-The destructive `npm run db:reset:local` command remains available only for
-explicitly resetting disposable local data; it is not required for this upgrade.
 
 ## Writing network queries
 
-Request handlers and jobs receive an application-scoped database. The scope follows
+Business request handlers and per-network jobs receive an application-scoped database. The scope follows
 transactions, but queries must explicitly call `networkWhere` for reads, updates,
 join conditions, and upsert `setWhere` clauses, and `networkValues` for inserts:
 
@@ -53,8 +49,8 @@ await scoped.insert(farms).values(networkValues(scoped, input));
 These helpers live in [network-scope.ts](../packages/db/src/network-scope.ts).
 Preserve existing authorization and business conditions when adding the network
 predicate. Global administration, authentication, and trusted CLI code use the
-platform connection and explicit ownership where applicable. Raw SQL does not gain
-an automatic network filter.
+platform connection and explicit ownership where applicable. Scope helpers throw if called without a network; platform queries must use explicit
+authorization and ownership conditions instead. Raw SQL does not gain an automatic network filter.
 
 ## Checks and E2E tests
 
@@ -71,7 +67,13 @@ npm run test:e2e
 
 Tests start their own web/API servers on ports 5180/3101 and use a separate PostgreSQL container on port 5433 with a temporary filesystem. Override `E2E_DATABASE_URL` only with an isolated database whose name ends in `_e2e`; the runner refuses other names. Tests recreate only this isolated test database’s application schema and migration ledger at startup, create uniquely named fixtures, and never truncate development data. Failure screenshots, traces, and an HTML report are ignored by Git.
 
-The migration test installs the committed schema, creates representative existing data, then applies the network migration and verifies ownership, administrator roles, order snapshots, isolation, and concurrent retries without losing data. It uses a disposable database and requires `CREATEDB` on the isolated test PostgreSQL role. A separate regression test uses a temporary non-superuser login without `CREATEROLE` to verify migrations and scoped operations need no role administration. The test runner needs `CREATEROLE` to create that disposable login; the bundled Docker/CI setup provides both privileges. Application deployments do not need them.
+Migration tests verify fresh setup is empty, ownership has no database default,
+and retries are safe. A non-superuser regression test covers platform bootstrap,
+global administration and MCP before the first network, cron behavior with no
+networks, and scoped operations after manual creation. The isolated test runner
+needs `CREATEDB` and `CREATEROLE` to create disposable databases and login fixtures;
+the bundled Docker/CI setup provides them. Application deployments need neither.
+The standard E2E server explicitly creates its Ojai test fixture after migration.
 
 The suite covers production verification/resend with a stubbed email provider, secure session cookies, production configuration validation, atomic address request limits, administrator driver reassignment, invitation-only signup and sessions, profile persistence, administrator UI, customer checkout, driver shopping and delivery (including shortages and retry), concurrent stock reservation, idempotency, cancellation, cutoff enforcement, authorization, immutable order snapshots, and authenticated MCP tools/token lifecycle. GitHub Actions runs these checks against PostgreSQL and Chromium.
 

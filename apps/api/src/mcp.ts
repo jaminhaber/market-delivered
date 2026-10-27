@@ -1,6 +1,6 @@
 import {
   permissions,
-  resolveNetwork,
+  findNetwork,
   networkOperations,
   networkEmailConfig,
   networkInput,
@@ -63,22 +63,14 @@ export function registerMcp(
         .select()
         .from(s.apiTokens)
         .where(
-          s.networkWhere(
-            rootDb,
-            s.apiTokens,
-            and(
-              eq(s.apiTokens.tokenHash, hash),
-              isNull(s.apiTokens.revokedAt),
-              gt(s.apiTokens.expiresAt, new Date()),
-            ),
+          and(
+            eq(s.apiTokens.tokenHash, hash),
+            isNull(s.apiTokens.revokedAt),
+            gt(s.apiTokens.expiresAt, new Date()),
           ),
         );
       const access = token
-        ? await permissions(
-            rootDb,
-            token.userId,
-            token.networkId || s.OJAI_NETWORK_ID,
-          )
+        ? await permissions(rootDb, token.userId, token.networkId ?? undefined)
         : null;
       if (
         !token ||
@@ -102,7 +94,7 @@ export function registerMcp(
       const selector =
         request.headers['x-network-id'] ||
         new URL(request.url, webOrigin).searchParams.get('network');
-      const network = await resolveNetwork(
+      const network = await findNetwork(
         rootDb,
         token.networkId ||
           (typeof selector === 'string' ? selector : undefined),
@@ -110,8 +102,8 @@ export function registerMcp(
       if (
         token.networkId &&
         selector &&
-        selector !== network.id &&
-        selector !== network.slug
+        selector !== network!.id &&
+        selector !== network!.slug
       )
         return reply
           .code(403)
@@ -128,10 +120,14 @@ export function registerMcp(
       const networkOps = networkOperations(
         rootDb,
         actor,
-        network.id,
+        network?.id ?? null,
         defaults.secret || '',
       );
-      const db = s.networkDatabase(rootDb, network.id, person!.id);
+      if (!network && !globalAdmin)
+        return reply.code(404).send({ error: 'Network not found' });
+      const db = network
+        ? s.networkDatabase(rootDb, network.id, person!.id)
+        : rootDb;
       const ops = operations(db, actor);
       const mcp = new McpServer({
         name: 'market-delivered-operations',
@@ -164,6 +160,31 @@ export function registerMcp(
         offset: z.number().int().min(0).max(1000000).default(0),
       };
       const readOnly = { readOnlyHint: true, destructiveHint: false };
+      if (globalAdmin) {
+        mcp.registerTool(
+          'list_networks',
+          {
+            description:
+              'Global admin: list all networks. Set the MCP endpoint query network=<slug> to operate a different network.',
+            inputSchema: {},
+            annotations: readOnly,
+          },
+          () => call(() => networkOps.list()),
+        );
+        mcp.registerTool(
+          'create_network',
+          {
+            description:
+              'Global admin: create an independent delivery network. Existing vendors and stock are not copied.',
+            inputSchema: networkInput,
+          },
+          (input) => call(() => networkOps.create(input)),
+        );
+      }
+      if (!network) {
+        await respond();
+        return;
+      }
       mcp.registerTool(
         'get_network',
         {
@@ -201,27 +222,6 @@ export function registerMcp(
         },
         (input) => call(() => networkOps.setMember(input)),
       );
-      if (globalAdmin) {
-        mcp.registerTool(
-          'list_networks',
-          {
-            description:
-              'Global admin: list all networks. Set the MCP endpoint query network=<slug> to operate a different network.',
-            inputSchema: {},
-            annotations: readOnly,
-          },
-          () => call(() => networkOps.list()),
-        );
-        mcp.registerTool(
-          'create_network',
-          {
-            description:
-              'Global admin: create an independent delivery network. Existing vendors and stock are not copied.',
-            inputSchema: networkInput,
-          },
-          (input) => call(() => networkOps.create(input)),
-        );
-      }
       const stockRows = (runId: string) =>
         db
           .select({
@@ -944,17 +944,20 @@ export function registerMcp(
               .limit(20),
           ),
       );
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
-      });
-      reply.hijack();
-      reply.raw.on('close', () => {
-        void transport.close();
-        void mcp.close();
-      });
-      await mcp.connect(transport);
-      await transport.handleRequest(request.raw, reply.raw, request.body);
+      await respond();
+      async function respond() {
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+        reply.hijack();
+        reply.raw.on('close', () => {
+          void transport.close();
+          void mcp.close();
+        });
+        await mcp.connect(transport);
+        await transport.handleRequest(request.raw, reply.raw, request.body);
+      }
     },
   });
 }
