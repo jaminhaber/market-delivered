@@ -728,6 +728,66 @@ small {
   max-width: 100%;
   overflow-x: auto;
 }
+.mcp-client-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  border-bottom: 1px solid var(--brand-border, #e0e5d8);
+}
+.mcp-client-tabs button {
+  padding: 12px 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--brand-muted-text, #70786c);
+  cursor: pointer;
+}
+.mcp-client-tabs button[aria-pressed='true'] {
+  border-bottom-color: var(--brand-primary, #2d513c);
+  color: var(--brand-primary, #2d513c);
+}
+.mcp-client-tabs button:focus-visible {
+  outline: 2px solid var(--brand-primary, #2d513c);
+  outline-offset: 2px;
+}
+.mcp-copy-block {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--brand-border, #e0e5d8);
+  border-radius: 8px;
+  background: var(--brand-background, #fbfaf6);
+}
+.mcp-copy-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+}
+.mcp-copy-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-copy-block pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mcp-copy-block [role='status'] {
+  font-size: 12px;
+}
+.mcp-new-token {
+  margin: 20px 0;
+}
+.mcp-new-token button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .form-stack {
   display: grid;
   gap: 17px;

@@ -1,5 +1,6 @@
 import { SupportSettings, LocationSettings } from './AppSettings';
 import { BrandingAdmin } from './Branding';
+import { McpSetupInstructions, NewMcpToken } from './McpSetupInstructions';
 import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, rpc } from './api';
@@ -228,23 +229,7 @@ export function GlobalAdmin() {
           </p>
         </Panel>
         <Panel title="Global MCP access">
-          <p>
-            Global tokens can create and manage every network. Network tokens
-            created in Operations remain restricted to that network, even for
-            global administrators.
-          </p>
-          <p>
-            Endpoint:{' '}
-            <code>
-              {
-                new URL(
-                  '/mcp',
-                  new URL(import.meta.env.VITE_API_URL || '/', location.origin),
-                ).href
-              }
-            </code>
-            . To work in another network, append <code>?network=its-slug</code>.
-          </p>
+          <McpSetupInstructions global />
           <form
             className="form-stack"
             onSubmit={(e) => {
@@ -268,14 +253,12 @@ export function GlobalAdmin() {
             <button disabled={busy}>Create global token</button>
           </form>
           {token && (
-            <label>
-              Global token (shown once)
-              <input
-                readOnly
-                value={token}
-                onFocus={(e) => e.target.select()}
-              />
-            </label>
+            <NewMcpToken
+              key={token}
+              token={token}
+              label="Global token (shown once)"
+              global
+            />
           )}
           {tokens.error && <ErrorState error={tokens.error} />}
           {tokens.data?.map((t) => (
