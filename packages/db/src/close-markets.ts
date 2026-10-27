@@ -63,6 +63,7 @@ export async function closeExpiredMarkets(
             .where(eq(inventory.id, row.inventoryId));
         await tx.insert(orderEvents).values(
           ids.map((orderId) => ({
+            networkId: run.networkId,
             orderId,
             actorId: null,
             status: 'cancelled' as const,

@@ -1,3 +1,4 @@
+import type { NetworkLocation } from '@market/db';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
@@ -200,6 +201,7 @@ export async function suggestAddresses(
   sessionToken: string,
   apiKey: string | undefined,
   request: typeof fetch = fetch,
+  location: NetworkLocation = {},
 ) {
   const data = await placesRequest(
     'https://places.googleapis.com/v1/places:autocomplete',
@@ -216,12 +218,19 @@ export async function suggestAddresses(
         sessionToken,
         includedRegionCodes: ['us'],
         languageCode: 'en',
-        locationBias: {
-          circle: {
-            center: { latitude: 34.448, longitude: -119.243 },
-            radius: 30000,
-          },
-        },
+        ...(location.autocompleteBias
+          ? {
+              locationBias: {
+                circle: {
+                  center: {
+                    latitude: location.autocompleteBias.latitude,
+                    longitude: location.autocompleteBias.longitude,
+                  },
+                  radius: location.autocompleteBias.radiusMeters,
+                },
+              },
+            }
+          : {}),
       }),
     },
     request,

@@ -1,3 +1,4 @@
+import { NetworkAdmin } from './Networks';
 import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, rpc } from './api';
@@ -7,11 +8,21 @@ import { useUrlState } from './navigation';
 const value = (form: HTMLFormElement, name: string) =>
   String(new FormData(form).get(name) ?? '');
 export function Admin() {
-  const [tab, setTab] = useUrlState(
+  const [selectedTab, setTab] = useUrlState(
     'tab',
-    ['Markets', 'Farms', 'Inventory', 'Orders', 'People', 'MCP access'],
+    [
+      'Markets',
+      'Farms',
+      'Inventory',
+      'Orders',
+      'People',
+      'Configure',
+      'Network',
+      'MCP access',
+    ],
     'Markets',
   );
+  const tab = selectedTab === 'Network' ? 'Configure' : selectedTab;
   return (
     <div className="workspace">
       <div className="page-heading">
@@ -25,6 +36,7 @@ export function Admin() {
           'Inventory',
           'Orders',
           'People',
+          'Configure',
           'MCP access',
         ].map((t) => (
           <button
@@ -44,6 +56,8 @@ export function Admin() {
         <FarmsAdmin />
       ) : tab === 'Orders' ? (
         <OrdersAdmin />
+      ) : tab === 'Configure' ? (
+        <NetworkAdmin />
       ) : tab === 'People' ? (
         <PeopleAdmin />
       ) : (
@@ -53,6 +67,7 @@ export function Admin() {
   );
 }
 function MarketsAdmin() {
+  const appSettings = useQuery(api.networks.branding.queryOptions());
   const markets = useQuery(api.markets.list.queryOptions()),
     runs = useQuery(api.admin.runs.queryOptions());
   const { act, busy, notice } = useAction();
@@ -103,7 +118,11 @@ function MarketsAdmin() {
               <input
                 name="timezone"
                 required
-                defaultValue="America/Los_Angeles"
+                key={appSettings.data?.location.timezone || 'device'}
+                defaultValue={
+                  appSettings.data?.location.timezone ||
+                  Intl.DateTimeFormat().resolvedOptions().timeZone
+                }
               />
             </label>
             <button disabled={busy}>Create market</button>
@@ -318,6 +337,7 @@ function InventoryAdmin() {
   );
 }
 function PeopleAdmin() {
+  const me = useQuery(api.me.queryOptions());
   const invites = useQuery(api.admin.invitations.queryOptions()),
     drivers = useQuery(api.admin.drivers.queryOptions());
   const { act, busy, notice } = useAction();
@@ -334,9 +354,12 @@ function PeopleAdmin() {
             void act(async () => {
               const result = await rpc.admin.invite.mutate({
                 email: value(form, 'email'),
-                role: value(form, 'role') as 'customer' | 'driver',
+                role: value(form, 'role') as
+                  'customer' | 'driver' | 'network_admin',
               });
-              setLink(`${location.origin}/?invite=${result.token}`);
+              setLink(
+                `${location.origin}/?network=${encodeURIComponent(me.data!.network.slug)}&invite=${result.token}`,
+              );
             }, 'Invitation created. Share the link with the intended person.');
           }}
         >
@@ -349,6 +372,7 @@ function PeopleAdmin() {
             <select aria-label="Profile" name="role">
               <option value="customer">Customer</option>
               <option value="driver">Approved driver</option>
+              <option value="network_admin">Administrator</option>
             </select>
           </label>
           <button disabled={busy}>Create invitation</button>
@@ -487,13 +511,13 @@ function TokensAdmin() {
         </code>
       </pre>
       <p>
-        Tokens can manage farms, catalog items, markets, schedules, and
-        inventory with your administrator privileges, and read customer orders
-        and delivery details. They can also email customer or approved-driver
-        signup invitations with the invite_user tool. Order changes and
-        fulfillment use the app. Share tokens only with trusted clients. Tokens
-        expire after 90 days; revoke unused or exposed tokens below and create
-        replacements as needed.
+        Tokens are restricted to this app. They can manage farms, catalog items,
+        markets, schedules, and inventory with your administrator privileges,
+        and read customer orders and delivery details. They can also email
+        customer or approved-driver signup invitations with the invite_user
+        tool. Order changes and fulfillment use the app. Share tokens only with
+        trusted clients. Tokens expire after 90 days; revoke unused or exposed
+        tokens below and create replacements as needed.
       </p>
       <details>
         <summary>Connection troubleshooting</summary>

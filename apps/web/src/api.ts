@@ -12,6 +12,10 @@ export const rpc = createTRPCClient<AppRouter>({
   links: [
     httpBatchLink({
       url: import.meta.env.VITE_API_URL || '/trpc',
+      headers: () => {
+        const network = new URLSearchParams(location.search).get('network');
+        return network ? { 'x-network-id': network } : {};
+      },
       fetch: (url, options) =>
         fetch(url, { ...options, credentials: 'include' }),
     }),

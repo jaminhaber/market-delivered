@@ -116,14 +116,6 @@ export async function myOrders(db: s.Database, userId: string) {
       .limit(100),
   );
 }
-export async function isAdmin(db: s.Database, userId: string) {
-  const [role] = await db
-    .select()
-    .from(s.userRoles)
-    .where(and(eq(s.userRoles.userId, userId), eq(s.userRoles.role, 'admin')));
-  return !!role;
-}
-
 export type DriverView = 'available' | 'mine';
 type ReadDb = Pick<s.Database, 'select'>;
 const driverSummaryColumns = (actor: Actor) => ({
@@ -167,7 +159,7 @@ async function requireDriver(db: ReadDb, actor: Actor) {
     .from(s.driverProfiles)
     .where(eq(s.driverProfiles.userId, actor.id));
   ensure(
-    profile?.status === 'approved',
+    actor.globalAdmin || profile?.status === 'approved',
     'Approved driver access required',
     'FORBIDDEN',
   );

@@ -1,3 +1,4 @@
+import { SupportContact } from './AppSettings';
 import { AddressAutocomplete } from './AddressAutocomplete';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -35,6 +36,9 @@ export function AuthForm({
     retry: false,
     staleTime: 0,
   });
+  const networkQuery = params.get('network')
+    ? `?network=${encodeURIComponent(params.get('network')!)}`
+    : '';
   const signupEmail = invitation.data?.email ?? '';
   const { act, busy, notice } = useAction();
   const linkNotice = linkError && (
@@ -63,14 +67,17 @@ export function AuthForm({
                     email: signupEmail,
                     password,
                     name,
-                    callbackURL: location.origin + '/',
+                    callbackURL: location.origin + '/' + networkQuery,
                   },
                   { headers: { 'x-invite-token': invite } },
                 )
               : mode === 'forgot'
                 ? await authClient.requestPasswordReset({
                     email,
-                    redirectTo: location.origin + '/?reset=1',
+                    redirectTo:
+                      location.origin +
+                      '/' +
+                      (networkQuery ? networkQuery + '&reset=1' : '?reset=1'),
                   })
                 : await authClient.resetPassword({
                     newPassword: password,
@@ -120,11 +127,25 @@ export function AuthForm({
         <p>You’re signed in as {currentUser.email}.</p>
         {invite && (
           <p>
-            Invitations create a new account. To use this invitation for another
-            account, sign out first. Your invitation link will be kept.
+            Accept this invitation using the signed-in email, or sign out to use
+            a different account.
           </p>
         )}
         <div className="inline-actions">
+          {invite && (
+            <button
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  await rpc.acceptInvitation.mutate({ token: invite });
+                  updateSearch({ invite: null }, true);
+                  onDone();
+                }, 'Invitation accepted')
+              }
+            >
+              Accept network invitation
+            </button>
+          )}
           <button onClick={onDone} disabled={busy}>
             Continue to your profile
           </button>
@@ -228,7 +249,7 @@ export function AuthForm({
               void act(async () => {
                 const response = await authClient.sendVerificationEmail({
                   email,
-                  callbackURL: location.origin + '/',
+                  callbackURL: location.origin + '/' + networkQuery,
                 });
                 if (response.error) throw new Error(response.error.message);
               }, 'If your account needs verification, a new link has been sent.')
@@ -272,14 +293,21 @@ export function Profile() {
     [phone, setPhone] = useState(me.data?.customer?.phone ?? ''),
     [street, setStreet] = useState(me.data?.customer?.street ?? ''),
     [unit, setUnit] = useState(me.data?.customer?.unit ?? ''),
-    [city, setCity] = useState(me.data?.customer?.city || 'Ojai'),
-    [region, setRegion] = useState(me.data?.customer?.region || 'CA'),
+    [city, setCity] = useState(
+      me.data?.customer?.city || me.data?.network.location.city || '',
+    ),
+    [region, setRegion] = useState(
+      me.data?.customer?.region || me.data?.network.location.region || '',
+    ),
     [postalCode, setPostalCode] = useState(
-      me.data?.customer?.postalCode || '93023',
+      me.data?.customer?.postalCode ||
+        me.data?.network.location.postalCode ||
+        '',
     ),
     [notes, setNotes] = useState(me.data?.customer?.deliveryNotes ?? '');
   return (
     <div className="page-grid">
+      <SupportContact />
       {me.data?.driver && (
         <DriverProfile name={me.data.name} driver={me.data.driver} />
       )}
@@ -359,7 +387,9 @@ export function Profile() {
                   onSelect={(address) => {
                     setStreet(address.street);
                     setCity(address.city);
-                    setRegion(address.region || 'CA');
+                    setRegion(
+                      address.region || me.data?.network.location.region || '',
+                    );
                     setPostalCode(address.postalCode);
                     setLookup(null);
                   }}
@@ -387,10 +417,12 @@ export function Profile() {
                   State
                   <select
                     required
+                    aria-label="State"
                     autoComplete="address-level1"
                     value={region}
                     onChange={(e) => setRegion(e.target.value)}
                   >
+                    <option value="">Choose a state</option>
                     {'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'
                       .split(' ')
                       .map((state) => (

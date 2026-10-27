@@ -1,3 +1,6 @@
+import { SupportContact } from './AppSettings';
+import { useNetworkBranding } from './Branding';
+import { GlobalAdmin } from './Networks';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Sprout } from 'lucide-react';
@@ -11,6 +14,14 @@ import { Admin } from './Admin';
 import { ErrorState, Loading } from './ui';
 import { useUrlState } from './navigation';
 export function App() {
+  const networkBrand = useNetworkBranding();
+  const headerDisplay = networkBrand?.branding.headerDisplay || 'logo';
+  const headerLogo =
+    headerDisplay !== 'text' ? networkBrand?.branding.logoUrl : null;
+  const selectedNetwork = new URLSearchParams(location.search).get('network');
+  const homeHref = selectedNetwork
+    ? `/?network=${encodeURIComponent(selectedNetwork)}`
+    : '/';
   const me = useQuery(api.me.queryOptions());
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<unknown>(null);
@@ -32,6 +43,7 @@ export function App() {
           'Profile',
           ...(me.data.driver?.status === 'approved' ? ['Driver'] : []),
           ...(me.data.admin ? ['Operations'] : []),
+          ...(me.data.globalAdmin ? ['Global administration'] : []),
         ]
       : []),
   ];
@@ -54,16 +66,47 @@ export function App() {
         Skip to content
       </a>
       <header className="site-header">
-        <a className="brand" href="/" aria-label="Market Delivered home">
-          <span className="brand-icon">
-            <Sprout size={24} />
-          </span>
-          market<span className="brand-light">delivered</span>
-          <span className="brand-dot">.</span>
+        <a
+          className="brand"
+          href={homeHref}
+          aria-label={
+            networkBrand ? `${networkBrand.name} home` : 'Market Delivered home'
+          }
+        >
+          {networkBrand ? (
+            <span className="network-identity">
+              {headerLogo && (
+                <img
+                  className="network-logo"
+                  src={headerLogo}
+                  alt={headerDisplay === 'logo-text' ? '' : networkBrand.name}
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              {(!headerLogo || headerDisplay === 'logo-text') && (
+                <span>{networkBrand.name}</span>
+              )}
+            </span>
+          ) : (
+            <>
+              <span className="brand-icon">
+                <Sprout size={24} />
+              </span>
+              market<span className="brand-light">delivered</span>
+              <span className="brand-dot">.</span>
+            </>
+          )}
         </a>
         {me.data && (
           <div className="account-controls">
-            <span>{me.data.name}</span>
+            <span>
+              {me.data.name} ·{' '}
+              {me.data.globalAdmin
+                ? 'Global administrator'
+                : me.data.networkAdmin
+                  ? 'Administrator'
+                  : 'Member'}
+            </span>
             <button
               className="secondary"
               disabled={signingOut}
@@ -100,6 +143,7 @@ export function App() {
               currentUser={me.data}
               onDone={() => setPage('Profile', true)}
             />
+            <SupportContact />
           </div>
         ) : page === 'Market' ? (
           <Shop
@@ -118,16 +162,19 @@ export function App() {
           <Orders />
         ) : page === 'Driver' ? (
           <Driver />
+        ) : page === 'Global administration' && me.data.globalAdmin ? (
+          <GlobalAdmin />
         ) : page === 'Operations' && me.data.admin ? (
           <Admin />
         ) : null}
       </main>
       <footer>
-        <a className="footer-brand" href="/">
-          market delivered.
+        <a className="footer-brand" href={homeHref}>
+          {networkBrand?.name || 'market delivered.'}
         </a>
         <span>One market trip. A neighborhood of good food.</span>
         <span>Made for local.</span>
+        <SupportContact />
       </footer>
     </>
   );

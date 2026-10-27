@@ -3,11 +3,17 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
 import { fromNodeHeaders } from 'better-auth/node';
-import { sql } from 'drizzle-orm';
-import type { Database } from '@market/db';
+import { sql, eq, asc, and, isNull } from 'drizzle-orm';
+import { networkMemberships, networks, type Database } from '@market/db';
 import { appRouter } from './router.js';
 import { createAuth, type AuthConfig } from './auth.js';
-import { isAdmin } from './queries.js';
+import {
+  permissions,
+  resolveNetwork,
+  networkOperations,
+  networkEmailConfig,
+  publicNetworkColumns,
+} from './networks.js';
 import { registerJobs } from './jobs.js';
 import { registerMcp } from './mcp.js';
 import { webOrigins } from './origins.js';
@@ -32,6 +38,7 @@ export async function createServer(
         'req.headers.authorization',
         'req.headers.cookie',
         'req.headers.x-invite-token',
+        'req.body',
         'res.headers["set-cookie"]',
       ],
     },
@@ -68,7 +75,14 @@ export async function createServer(
     method: ['GET', 'POST'],
     url: '/api/auth/*',
     async handler(request, reply) {
-      const response = await auth.handler(
+      const selector = request.headers['x-network-id'];
+      const network = await resolveNetwork(
+        db,
+        typeof selector === 'string' ? selector : undefined,
+      );
+      const email = await networkEmailConfig(db, network.id, config);
+      const networkAuth = createAuth(db, { ...config, ...email });
+      const response = await networkAuth.handler(
         new Request(new URL(request.url, config.baseURL), {
           method: request.method,
           headers: fromNodeHeaders(request.headers),
@@ -106,17 +120,57 @@ export async function createServer(
         const current = await auth.api.getSession({
           headers: fromNodeHeaders(req.headers),
         });
+        const selector = req.headers['x-network-id'];
+        const network = await resolveNetwork(
+          db,
+          typeof selector === 'string' ? selector : undefined,
+        );
+        const access = current
+          ? await permissions(db, current.user.id, network.id)
+          : { globalAdmin: false, networkAdmin: false, member: false };
+        const actor = current
+          ? {
+              id: current.user.id,
+              name: current.user.name,
+              email: current.user.email,
+              ...access,
+              admin: access.globalAdmin || access.networkAdmin,
+            }
+          : null;
         return {
           db,
+          network,
+          actor,
           googleMapsKey: config.googleMapsKey,
-          actor: current
-            ? {
-                id: current.user.id,
-                name: current.user.name,
-                email: current.user.email,
-                admin: await isAdmin(db, current.user.id),
-              }
-            : null,
+          networkOps: networkOperations(
+            db,
+            actor || { id: '' },
+            network.id,
+            config.secret,
+          ),
+          accessibleNetworks: async () =>
+            !actor
+              ? [{ id: network.id, name: network.name, slug: network.slug }]
+              : actor.globalAdmin
+                ? db
+                    .select(publicNetworkColumns)
+                    .from(networks)
+                    .where(isNull(networks.deletedAt))
+                    .orderBy(asc(networks.name))
+                : db
+                    .select(publicNetworkColumns)
+                    .from(networkMemberships)
+                    .innerJoin(
+                      networks,
+                      eq(networkMemberships.networkId, networks.id),
+                    )
+                    .where(
+                      and(
+                        eq(networkMemberships.userId, actor.id),
+                        isNull(networks.deletedAt),
+                      ),
+                    )
+                    .orderBy(asc(networks.name)),
         };
       },
       onError({ error, path }: { error: TRPCError; path: string | undefined }) {

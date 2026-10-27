@@ -11,8 +11,7 @@ npm install
 cp .env.example .env
 # Replace BETTER_AUTH_SECRET with a cryptographically random secret, at least 32 characters.
 npm run db:up
-npm run db:migrate
-npm run db:seed
+npm run db:setup
 npm run dev
 ```
 
@@ -183,14 +182,24 @@ Database constraints enforce foreign keys, unique reservations/items/request key
 
 To change the schema, edit the files under `packages/db/src`, run `npm run db:generate`, review the SQL and metadata, and run `npm run db:migrate`. Drizzle maintains ORM update timestamps; direct SQL writers must maintain those fields themselves. The API applies pending migrations at startup before accepting requests. The manual command remains useful for database setup before seeding or running standalone CLI tools.
 
-The schema starts from two fresh-database migrations:
+The committed migration history is preserved unchanged:
 
-1. `0000_auth_and_basics.sql`: users, auth accounts/sessions/verifications/rate limits, customer and driver profiles, roles, invitations, MCP tokens, audit events, farms, produce catalog and market locations.
-2. `0001_orders_and_fulfillment.sql`: weekly schedules, dated market runs, inventory/defaults, orders, order-item snapshots, per-order purchases, order history and background job history.
+1. `0000_auth_and_basics.sql`: authentication, profiles, catalog, and market locations.
+2. `0001_orders_and_fulfillment.sql`: schedules, dated runs, orders, purchases, and history.
+3. `0002_shopping_packing.sql`: packing timestamps and checks.
 
-Both files create the final schema directly. There is no legacy run-assignment conversion or archived purchase table. Drizzle snapshots match each migration. The additive `0002_shopping_packing.sql` migration adds nullable packing timestamps and a constraint preventing unavailable items from being marked packed. Existing two-baseline databases apply this migration automatically on API startup, without a reset.
+**One follow-up migration, `0003_networks.sql`, contains all network changes**:
+ownership and isolation, branding, support contacts, location defaults, and email
+identity. The new networks table includes all configuration columns from the start.
+Existing accounts, vendors, schedules, inventory, orders, and tokens move into Ojai;
+legacy administrators retain global access and gain Ojai administrator membership.
+No application data or merged migration files are replaced.
 
-This replaces the previous pre-release migration history and requires an empty database, including a fresh Drizzle migration ledger. For the local `market_delivered` database, stop dev and run `npm run db:reset:local`: it drops the application schema and migration ledger, applies both baselines, and seeds Ojai. This deletes all local accounts and orders. For other disposable environments, recreate the database before running `npm run db:migrate`; truncating rows alone does not reset migration history. Stop old API instances and job workers during the reset, then migrate, optionally seed, and restart. Existing databases are not upgraded by these replacement baselines.
+`npm run db:setup` applies the migration history and seeds Ojai for a new database.
+For an existing installation, `npm run db:migrate` applies only the network upgrade;
+the API also migrates on startup. Future changes should use subsequent migrations.
+The destructive `npm run db:reset:local` command remains available only for
+explicitly resetting disposable local data; it is not required for this upgrade.
 
 ## Checks and E2E tests
 
@@ -205,9 +214,9 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Tests start their own web/API servers on ports 5180/3101 and use a separate PostgreSQL container on port 5433 with a temporary filesystem. Override `E2E_DATABASE_URL` only with an isolated database whose name ends in `_e2e`; the runner refuses other names. Tests reset only this isolated test database at startup, create uniquely named fixtures, and never truncate development data. Failure screenshots, traces, and an HTML report are ignored by Git.
+Tests start their own web/API servers on ports 5180/3101 and use a separate PostgreSQL container on port 5433 with a temporary filesystem. Override `E2E_DATABASE_URL` only with an isolated database whose name ends in `_e2e`; the runner refuses other names. Tests recreate only this isolated test database’s application schema and migration ledger at startup, create uniquely named fixtures, and never truncate development data. Failure screenshots, traces, and an HTML report are ignored by Git.
 
-The migration test applies auth/basic setup independently, then adds order fulfillment, and checks concurrent migration retries without duplicating the ledger or losing basic data. It uses a disposable database and requires `CREATEDB` on the isolated test PostgreSQL role (provided by the bundled Docker/CI setup).
+The migration test installs the committed schema, creates representative existing data, then applies the network migration and verifies ownership, administrator roles, order snapshots, isolation, and concurrent retries without losing data. It uses a disposable database and requires `CREATEDB` on the isolated test PostgreSQL role (provided by the bundled Docker/CI setup).
 
 The suite covers production verification/resend with a stubbed email provider, secure session cookies, production configuration validation, atomic address request limits, administrator driver reassignment, invitation-only signup and sessions, profile persistence, administrator UI, customer checkout, driver shopping and delivery (including shortages and retry), concurrent stock reservation, idempotency, cancellation, cutoff enforcement, authorization, immutable order snapshots, and authenticated MCP tools/token lifecycle. GitHub Actions runs these checks against PostgreSQL and Chromium.
 
@@ -269,10 +278,194 @@ Local checks validate code and isolated database behavior; hosted email delivery
 
 Before a larger launch, define delivery service areas, address validation, pricing/fee rules, notifications, and operational procedures for driver handoffs. Orders from the same date can already be claimed by different drivers. Routing optimization, automatic payment settlement, fractional weights, and receipt uploads remain future work. Driver order lists prioritize active work and support pagination; the Operations order list and MCP lists also support pagination. Market-date and catalog UI lists currently cap at 100 records and should gain pagination as those catalogs grow.
 
-To rebuild the local database and reseed Ojai, stop the dev processes and run `npm run db:reset:local`, then restart `npm run dev`. This drops and recreates the `public` schema and removes the Drizzle migration ledger before applying the two migrations; all local users, sessions, invitations, orders and catalog data are deleted. The reset refuses production mode, remote hosts and database names other than `market_delivered`. Create a new invitation/account afterward and grant your administrator role again if needed; existing accounts and invitation links are removed.
+To rebuild the local database and reseed Ojai, stop the dev processes and run `npm run db:reset:local`, then restart `npm run dev`. This drops and recreates the `public` schema and removes the Drizzle migration ledger before applying the migration history; all local users, sessions, invitations, orders and catalog data are deleted. The reset refuses production mode, remote hosts and database names other than `market_delivered`. Create a new invitation/account afterward and grant your administrator role again if needed; existing accounts and invitation links are removed.
 
 ### Unfulfilled orders at market closing
 
 The `close-expired-markets` job uses the stored market closing time. It cancels only orders that have not started shopping (`placed` or `claimed`), releases their reservations, and adds one system event. Repeated/overlapping jobs do not duplicate cancellation events. A closed market cannot accept new claims or shopping starts.
 
 Orders already `shopping`, `ready`, `out_for_delivery`, or `delivery_failed` remain active. Drivers can finish recording purchases, finalize shopping, deliver and retry after closing. Market dates become completed after closing once no active fulfillment remains. Delivery windows may extend past market closing; the recurring schedule's delivery start must still fall within market hours. Unresolved shopping or failed deliveries remain visible for manual recovery rather than silently discarding purchased food.
+
+## Networks and administrator roles
+
+Each independently operated delivery business is a **network**. The network owns
+its farms, catalog, market locations and schedules, inventory, orders, invitations,
+MCP tokens, audit records, and job history. Customers and drivers share a platform
+sign-in identity, with independent profiles, driver approvals, and memberships in
+each network. Vendor relationships and inventory are never copied between networks.
+
+Migration `0003_networks` creates **Ojai** (`ojai`) as the first network with its
+local address defaults and assigns all existing operational data to it. Existing
+`admin` users become `global_admin` users and Ojai `network_admin` members;
+existing MCP tokens become Ojai-only tokens.
+
+- **network_admin** manages operations, invitations, members, email settings, and
+  MCP access within its network. It can grant `network_admin` to existing members
+  or invite new network administrators. It cannot create networks or grant global
+  access. A network administrator cannot demote the network's last administrator.
+- **global_admin** has all network administrator permissions in every network,
+  regardless of membership, plus platform network creation and global MCP access.
+  Global administrators can add existing accounts to a network and override the
+  last-administrator restriction. Global role grants use the trusted CLI.
+
+Without an explicit selector, the app uses the first non-deleted network ordered
+by creation time and ID (currently Ojai). There is no network dropdown. Global
+administrators can still open a specific network from **Global administration**;
+invitation links and MCP clients can also select a network using `?network=ojai`
+or the API's `X-Network-Id` header (slug or UUID). Deleted networks cannot be
+selected. A selector does not grant access. Opening another network reloads the
+app to discard the previous network's cached data. Invitation and password-reset
+links preserve the network selection. Existing users can sign in and accept an
+invitation to another network using the same email.
+
+**Operations → Configure** manages network settings and network administrators.
+**Global administration** lists and creates independent networks and issues global
+MCP tokens. After creating a network, open it and use **People** to invite its first
+network administrator, or **Configure** to assign an existing account.
+
+```sh
+npm run db:migrate
+npm run admin:grant -- owner@example.com global_admin
+npm run admin:grant -- operator@example.com network_admin ojai
+npm run invite:create -- operator@example.com network_admin ojai
+```
+
+The CLI defaults to the first non-deleted network for invitations and network-role
+grants, and to `global_admin` for admin grants.
+
+### Network isolation and database setup
+
+Browser operations and MCP queries use a restricted PostgreSQL `market_network`
+role with row-level security. Each standalone query or domain transaction sets its
+network and actor with transaction-local settings, including when using transaction
+poolers. Composite foreign keys also prevent records from referencing inventory,
+profiles, markets, or vendors in another network. The restricted role cannot read
+authentication secrets or network email credentials. Platform administration, auth,
+and migrations use the trusted application connection. Background workers dispatch
+separately per network, keeping each network's job history private.
+
+On first install, the migration needs `CREATEROLE` to create the `NOLOGIN`,
+`NOBYPASSRLS` role, and permission to grant that role to the application database
+user. On hosted databases that disallow role creation, a database administrator
+must provision `market_network` with those attributes and grant membership to the
+application/migration user first. Do not give the restricted role ownership of the
+application tables, superuser privileges, or `BYPASSRLS`.
+
+### Network MCP management
+
+The existing `/mcp` endpoint supports both token types:
+
+- Tokens from **Operations → MCP access** always operate in their own network.
+  A global administrator's network token still cannot access other networks or
+  platform tools. Every request rechecks the owner's current permissions.
+- Tokens from **Global administration → Global MCP access** require a current
+  `global_admin` owner. They expose `list_networks` and `create_network`. Select a
+  network with `/mcp?network=sonoma` (or `X-Network-Id`) to use operations tools in
+  that network; the default is the first non-deleted network (currently Ojai). Global tokens never combine records from
+  different networks in an operational query.
+
+Both support `get_network`, `update_network`, `list_network_members`, and
+`set_network_member`, alongside the existing market, vendor, inventory, schedule,
+and order tools. `invite_user` also accepts `role: "network_admin"`. No invitation
+or network tool can grant `global_admin`.
+
+### Email overrides
+
+**Operations → Configure**, or MCP `update_network`, can override `emailFrom` and
+`emailKey` (Resend) independently. Missing overrides inherit `EMAIL_FROM` and
+`RESEND_API_KEY`. Set a field to `null` to clear it; omitting it preserves its
+current value. Keys are write-only, encrypted with AES-256-GCM using a key derived
+from `BETTER_AUTH_SECRET` and bound to the network ID. Responses expose only
+`hasEmailKey`, never the key or ciphertext. Re-enter stored network keys after
+rotating `BETTER_AUTH_SECRET`. Sender addresses must be verified in the selected
+Resend account.
+
+Overrides apply to MCP invitation mail and verification/password-reset mail
+initiated from that network. Platform email defaults are still required for
+production authentication. Database URLs, auth secrets, trusted origins, and cron
+secrets remain platform configuration. Custom domains and DNS are not part of this layer.
+
+### Network branding
+
+Use **Operations → Configure → Branding** to set primary, accent, background,
+and text colors, choose a font preset, and upload a PNG/JPEG/WebP logo (up to 200 KB)
+or supply an HTTPS image URL. The theme applies to the sign-in page, storefront,
+and dashboards. Fonts use the existing DM Sans/DM Serif pair or installed Arial,
+Georgia, or Trebuchet fonts; no custom CSS or font downloads are accepted.
+**Header display** selects Logo, Text (the network name), or Logo + text.
+Logo modes fall back to the network name when no logo is configured.
+**Branding edits preview immediately in your browser** without changing the saved
+app. **Save branding** publishes them; **Cancel changes** restores saved settings.
+Leaving Configure discards unsaved edits. **Reset branding** previews the default
+theme and logo; save to publish that reset.
+
+MCP `get_network` returns branding. `update_network` accepts a `branding` object
+with `primaryColor`, `accentColor`, `backgroundColor`, `textColor` (six-digit hex),
+`font` (`default`, `modern`, `editorial`, `rounded`), and `logoUrl`, plus `headerDisplay` (`logo`, `text`, `logo-text`). Supplied fields
+merge with saved branding. Set individual fields to `null` to restore their defaults,
+or set `branding: null` to reset everything. Network administrators manage their
+own branding; global administrators can manage any network. Public branding reads
+contain no email settings or secrets.
+
+### Configure through MCP
+
+Every control under **Operations → Configure** is available through MCP:
+
+| Configure control                    | MCP tool                                                              |
+| ------------------------------------ | --------------------------------------------------------------------- |
+| App name and email overrides         | `update_network` (`name`, `emailFrom`, write-only `emailKey`)         |
+| Colors, font, logo, header display   | `update_network` (`branding`)                                         |
+| Read saved configuration             | `get_network`                                                         |
+| View administrators and members      | `list_network_members`                                                |
+| Grant or remove administrator access | `set_network_member` (`email`, `role: "network_admin"` or `"member"`) |
+
+For example, call `update_network` with:
+
+```json
+{
+  "name": "Ojai Harvest",
+  "emailFrom": "hello@example.com",
+  "branding": {
+    "primaryColor": "#3B245C",
+    "accentColor": "#B68D4C",
+    "backgroundColor": "#FBFAF6",
+    "textColor": "#283E32",
+    "font": "editorial",
+    "logoUrl": "https://example.com/logo.png",
+    "headerDisplay": "logo-text"
+  }
+}
+```
+
+To supply an uploaded logo, pass its PNG/JPEG/WebP base64 data URL as `logoUrl`.
+To change the email key, supply `emailKey`; it is never returned by read tools.
+Omit settings to keep them unchanged. Use `branding: null` to reset the theme,
+and `emailKey: null` / `emailFrom: null` to restore the platform email defaults.
+
+### Support, location defaults, and email identity
+
+**Operations → Configure** includes support email, support phone, and an HTTPS
+contact link. Configured contacts appear on account/profile and order pages and
+in the shared footer. Blank contacts are hidden. These details are public; email
+provider credentials and the reply-to override are not exposed by public reads.
+
+Location defaults include city, US state, ZIP, and IANA timezone. They prefill
+new delivery profiles and new markets; saved addresses and market timezones stay
+unchanged. Address autocomplete can optionally use a manually entered latitude,
+longitude, and radius in meters (1–50,000). This biases suggestions, without
+restricting delivery eligibility. Without a search center, autocomplete uses its
+default US search. The network migration initializes Ojai defaults; newly created
+operators have no location-specific defaults.
+
+Invitations, verification emails, and password resets automatically use the app
+name in their subject and sender display name. Sending still uses the configured,
+verified sender email address and Resend account. **Email reply-to address** can
+override where replies go; otherwise the support email is used when configured.
+
+MCP `get_network` and `update_network` support `supportEmail`, `supportPhone`,
+`contactUrl`, `emailReplyTo`, and `location`. Location fields are `city`, `region`,
+`postalCode`, `timezone`, and `autocompleteBias: { latitude, longitude,
+radiusMeters }`. Partial location updates merge with saved values. Set individual
+fields to `null` to clear them, or `location: null` to clear all location defaults.
+The supported address format remains US/USD; these settings do not introduce
+international address or currency support.

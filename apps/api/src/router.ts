@@ -1,3 +1,10 @@
+import {
+  networkInput,
+  networkSettingsInput,
+  membershipInput,
+  type networkOperations,
+  type resolveNetwork,
+} from './networks.js';
 import { initTRPC, TRPCError, type inferRouterOutputs } from '@trpc/server';
 import { and, asc, eq, ilike, or, sql, desc } from 'drizzle-orm';
 import * as s from '@market/db';
@@ -38,6 +45,11 @@ export type Context = {
   db: s.Database;
   actor: Actor | null;
   googleMapsKey?: string;
+  network: Awaited<ReturnType<typeof resolveNetwork>>;
+  networkOps: ReturnType<typeof networkOperations>;
+  accessibleNetworks: () => Promise<
+    { id: string; name: string; slug: string }[]
+  >;
 };
 const t = initTRPC.context<Context>().create({
   errorFormatter({ shape, error }) {
@@ -51,10 +63,22 @@ const t = initTRPC.context<Context>().create({
     };
   },
 });
-const publicProcedure = t.procedure;
-const authenticated = t.procedure.use(({ ctx, next }) => {
+const publicProcedure = t.procedure.use(({ ctx, next }) =>
+  next({
+    ctx: {
+      ...ctx,
+      db: s.networkDatabase(ctx.db, ctx.network.id, ctx.actor?.id || ''),
+    },
+  }),
+);
+const authenticated = publicProcedure.use(({ ctx, next }) => {
   if (!ctx.actor)
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Please sign in' });
+  ensure(
+    ctx.actor.globalAdmin || ctx.actor.member,
+    'You are not a member of this network',
+    'FORBIDDEN',
+  );
   return next({
     ctx: { ...ctx, actor: ctx.actor, ops: operations(ctx.db, ctx.actor) },
   });
@@ -66,14 +90,78 @@ const admin = authenticated.use(({ ctx, next }) => {
 const addressProcedure = authenticated.use(async ({ ctx, next, path }) => {
   await checkRateLimit(
     ctx.db,
-    `address:${path}:${ctx.actor.id}`,
+    `address:${ctx.network.id}:${path}:${ctx.actor.id}`,
     path === 'addresses.suggest' ? 60 : 10,
     60_000,
   );
   return next();
 });
 const id = z.object({ id: z.uuid() });
+const networkAdmin = t.procedure.use(({ ctx, next }) => {
+  ensure(
+    ctx.actor?.admin,
+    'Network administrator access required',
+    'FORBIDDEN',
+  );
+  return next();
+});
+const globalAdmin = t.procedure.use(({ ctx, next }) => {
+  ensure(
+    ctx.actor?.globalAdmin,
+    'Global administrator access required',
+    'FORBIDDEN',
+  );
+  return next();
+});
 export const appRouter = t.router({
+  networks: t.router({
+    branding: t.procedure.query(({ ctx }) => ({
+      name: ctx.network.name,
+      branding: ctx.network.branding,
+      supportEmail: ctx.network.supportEmail,
+      supportPhone: ctx.network.supportPhone,
+      contactUrl: ctx.network.contactUrl,
+      location: ctx.network.location,
+    })),
+    available: t.procedure.query(({ ctx }) => ctx.accessibleNetworks()),
+    current: networkAdmin.query(({ ctx }) => ctx.networkOps.get()),
+    update: networkAdmin
+      .input(networkSettingsInput)
+      .mutation(({ ctx, input }) => ctx.networkOps.update(input)),
+    members: networkAdmin.query(({ ctx }) => ctx.networkOps.members()),
+    setMember: networkAdmin
+      .input(membershipInput)
+      .mutation(({ ctx, input }) => ctx.networkOps.setMember(input)),
+    list: globalAdmin.query(({ ctx }) => ctx.networkOps.list()),
+    create: globalAdmin
+      .input(networkInput)
+      .mutation(({ ctx, input }) => ctx.networkOps.create(input)),
+    tokens: globalAdmin.query(({ ctx }) =>
+      ctx.db
+        .select({
+          id: s.apiTokens.id,
+          name: s.apiTokens.name,
+          lastFour: s.apiTokens.lastFour,
+          expiresAt: s.apiTokens.expiresAt,
+          revokedAt: s.apiTokens.revokedAt,
+        })
+        .from(s.apiTokens)
+        .where(
+          and(
+            eq(s.apiTokens.userId, ctx.actor!.id),
+            sql`${s.apiTokens.networkId} IS NULL`,
+          ),
+        ),
+    ),
+    createToken: globalAdmin
+      .input(z.object({ name: z.string().trim().min(2).max(100) }))
+      .mutation(({ ctx, input }) =>
+        ctx.networkOps.createGlobalToken(input.name),
+      ),
+    revokeToken: globalAdmin
+      .input(z.object({ id: z.uuid() }))
+      .mutation(({ ctx, input }) => ctx.networkOps.revokeGlobalToken(input.id)),
+  }),
   me: publicProcedure.query(async ({ ctx }) => {
     if (!ctx.actor) return null;
     const [customer] = await ctx.db
@@ -84,7 +172,17 @@ export const appRouter = t.router({
       .select()
       .from(s.driverProfiles)
       .where(eq(s.driverProfiles.userId, ctx.actor.id));
-    return { ...ctx.actor, customer: customer ?? null, driver: driver ?? null };
+    return {
+      ...ctx.actor,
+      network: {
+        id: ctx.network.id,
+        name: ctx.network.name,
+        slug: ctx.network.slug,
+        location: ctx.network.location,
+      },
+      customer: customer ?? null,
+      driver: driver ?? null,
+    };
   }),
   invitation: publicProcedure
     .input(z.object({ token: z.string().min(32).max(256) }))
@@ -106,6 +204,62 @@ export const appRouter = t.router({
       ensure(invite, 'This invitation is invalid or expired.', 'NOT_FOUND');
       return invite;
     }),
+  acceptInvitation: t.procedure
+    .input(z.object({ token: z.string().min(32).max(256) }))
+    .mutation(async ({ ctx, input }) => {
+      ensure(ctx.actor, 'Please sign in', 'FORBIDDEN');
+      return ctx.db.transaction(async (tx) => {
+        const [invite] = await tx
+          .update(s.invitations)
+          .set({ usedAt: new Date(), usedBy: ctx.actor!.id })
+          .where(
+            and(
+              eq(s.invitations.networkId, ctx.network.id),
+              eq(s.invitations.email, ctx.actor!.email.toLowerCase()),
+              eq(
+                s.invitations.tokenHash,
+                createHash('sha256').update(input.token).digest('hex'),
+              ),
+              sql`${s.invitations.expiresAt} > now() AND ${s.invitations.usedAt} IS NULL AND ${s.invitations.revokedAt} IS NULL`,
+            ),
+          )
+          .returning();
+        ensure(invite, 'This invitation is invalid or expired.', 'NOT_FOUND');
+        await tx
+          .insert(s.networkMemberships)
+          .values({
+            networkId: invite.networkId,
+            userId: ctx.actor!.id,
+            role: invite.role === 'network_admin' ? 'network_admin' : 'member',
+          })
+          .onConflictDoUpdate({
+            target: [
+              s.networkMemberships.networkId,
+              s.networkMemberships.userId,
+            ],
+            set:
+              invite.role === 'network_admin'
+                ? { role: 'network_admin' }
+                : { userId: ctx.actor!.id },
+          });
+        await tx
+          .insert(s.customerProfiles)
+          .values({ networkId: invite.networkId, userId: ctx.actor!.id })
+          .onConflictDoNothing();
+        if (invite.role === 'driver')
+          await tx
+            .insert(s.driverProfiles)
+            .values({
+              networkId: invite.networkId,
+              userId: ctx.actor!.id,
+              phone: '',
+              vehicle: '',
+              status: 'approved',
+            })
+            .onConflictDoNothing();
+        return { success: true };
+      });
+    }),
   addresses: t.router({
     suggest: addressProcedure
       .input(
@@ -115,7 +269,13 @@ export const appRouter = t.router({
         }),
       )
       .mutation(({ ctx, input }) =>
-        suggestAddresses(input.input, input.sessionToken, ctx.googleMapsKey),
+        suggestAddresses(
+          input.input,
+          input.sessionToken,
+          ctx.googleMapsKey,
+          undefined,
+          ctx.network.location,
+        ),
       ),
     resolve: addressProcedure
       .input(
@@ -470,7 +630,7 @@ export const appRouter = t.router({
       .input(
         z.object({
           email: z.email().toLowerCase(),
-          role: z.enum(['customer', 'driver']),
+          role: z.enum(['customer', 'driver', 'network_admin']),
         }),
       )
       .mutation(({ ctx, input }) => ctx.ops.createInvitation(input)),

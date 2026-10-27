@@ -1,3 +1,4 @@
+import { SupportContact } from './AppSettings';
 import { useQuery } from '@tanstack/react-query';
 import { api, rpc } from './api';
 import {
@@ -21,6 +22,7 @@ export function Orders() {
         <h1>Your orders</h1>
       </div>
       {notice}
+      <SupportContact />
       {orders.isPending ? (
         <Loading />
       ) : orders.isError ? (

@@ -1,3 +1,12 @@
+import {
+  permissions,
+  resolveNetwork,
+  networkOperations,
+  networkEmailConfig,
+  networkInput,
+  networkSettingsInput,
+  membershipInput,
+} from './networks.js';
 import { TRPCError } from '@trpc/server';
 import { createEmailSender, type EmailConfig } from './email.js';
 import { createHash } from 'node:crypto';
@@ -28,12 +37,12 @@ import {
   scheduleInput,
   scheduleInventoryInput,
 } from './operations.js';
-import { isAdmin, orderDetails } from './queries.js';
+import { orderDetails } from './queries.js';
 export function registerMcp(
   app: FastifyInstance,
-  db: s.Database,
+  rootDb: s.Database,
   webOrigin: string,
-  emailConfig: EmailConfig = {},
+  defaults: EmailConfig & { secret?: string } = {},
 ) {
   app.route({
     method: ['GET', 'POST', 'DELETE'],
@@ -50,7 +59,7 @@ export function registerMcp(
           .code(401)
           .send({ error: 'A market operations token is required' });
       const hash = createHash('sha256').update(header.slice(7)).digest('hex');
-      const [token] = await db
+      const [token] = await rootDb
         .select()
         .from(s.apiTokens)
         .where(
@@ -60,7 +69,20 @@ export function registerMcp(
             gt(s.apiTokens.expiresAt, new Date()),
           ),
         );
-      if (!token || !(await isAdmin(db, token.userId)))
+      const access = token
+        ? await permissions(
+            rootDb,
+            token.userId,
+            token.networkId || s.OJAI_NETWORK_ID,
+          )
+        : null;
+      if (
+        !token ||
+        !access ||
+        !(token.networkId
+          ? access.globalAdmin || access.networkAdmin
+          : access.globalAdmin)
+      )
         return reply
           .code(401)
           .send({ error: 'Invalid, expired, or revoked token' });
@@ -69,16 +91,44 @@ export function registerMcp(
           .header('Allow', 'POST')
           .code(405)
           .send({ error: 'Use POST for stateless MCP' });
-      const [person] = await db
+      const [person] = await rootDb
         .select()
         .from(s.user)
         .where(eq(s.user.id, token.userId));
-      const ops = operations(db, {
+      const selector =
+        request.headers['x-network-id'] ||
+        new URL(request.url, webOrigin).searchParams.get('network');
+      const network = await resolveNetwork(
+        rootDb,
+        token.networkId ||
+          (typeof selector === 'string' ? selector : undefined),
+      );
+      if (
+        token.networkId &&
+        selector &&
+        selector !== network.id &&
+        selector !== network.slug
+      )
+        return reply
+          .code(403)
+          .send({ error: 'Token is restricted to its network' });
+      const globalAdmin = token.networkId === null && access.globalAdmin;
+      const actor = {
         id: person!.id,
         name: person!.name,
         email: person!.email,
         admin: true,
-      });
+        globalAdmin,
+        networkAdmin: true,
+      };
+      const networkOps = networkOperations(
+        rootDb,
+        actor,
+        network.id,
+        defaults.secret || '',
+      );
+      const db = s.networkDatabase(rootDb, network.id, person!.id);
+      const ops = operations(db, actor);
       const mcp = new McpServer({
         name: 'market-delivered-operations',
         version: '2.0.0',
@@ -110,6 +160,64 @@ export function registerMcp(
         offset: z.number().int().min(0).max(1000000).default(0),
       };
       const readOnly = { readOnlyHint: true, destructiveHint: false };
+      mcp.registerTool(
+        'get_network',
+        {
+          description:
+            'Read every setting shown in Operations → Configure: app name, branding, header display, and email sender override. Only hasEmailKey is returned for the write-only email key.',
+          inputSchema: {},
+          annotations: readOnly,
+        },
+        () => call(() => networkOps.get()),
+      );
+      mcp.registerTool(
+        'update_network',
+        {
+          description:
+            'Edit Operations → Configure settings for this app: name, all four colors, font preset, logo, headerDisplay (logo, text, logo-text), emailFrom, emailKey, emailReplyTo, supportEmail, supportPhone, contactUrl, and location defaults. Branding fields merge with existing settings; null resets all branding. emailKey is write-only; null clears an override and restores the environment fallback.',
+          inputSchema: networkSettingsInput,
+        },
+        (input) => call(() => networkOps.update(input)),
+      );
+      mcp.registerTool(
+        'list_network_members',
+        {
+          description: 'List members and network_admin roles in this network.',
+          inputSchema: {},
+          annotations: readOnly,
+        },
+        () => call(() => networkOps.members()),
+      );
+      mcp.registerTool(
+        'set_network_member',
+        {
+          description:
+            'Set an existing member role to member or network_admin. Global admins can add existing accounts. This never grants global_admin.',
+          inputSchema: membershipInput,
+        },
+        (input) => call(() => networkOps.setMember(input)),
+      );
+      if (globalAdmin) {
+        mcp.registerTool(
+          'list_networks',
+          {
+            description:
+              'Global admin: list all networks. Set the MCP endpoint query network=<slug> to operate a different network.',
+            inputSchema: {},
+            annotations: readOnly,
+          },
+          () => call(() => networkOps.list()),
+        );
+        mcp.registerTool(
+          'create_network',
+          {
+            description:
+              'Global admin: create an independent delivery network. Existing vendors and stock are not copied.',
+            inputSchema: networkInput,
+          },
+          (input) => call(() => networkOps.create(input)),
+        );
+      }
       const stockRows = (runId: string) =>
         db
           .select({
@@ -130,10 +238,12 @@ export function registerMcp(
         'invite_user',
         {
           description:
-            'Invite a customer or driver and email them a signup link valid for seven days. Defaults to customer; driver invitations grant approved driver access after signup. Cannot grant administrator access. Requires configured email delivery. Success means the email provider accepted the message, not that it reached the inbox. Creates a new invitation on each call; do not retry after success.',
+            'Invite a customer, driver, or network administrator and email them a signup link valid for seven days. Defaults to customer; driver invitations grant approved driver access after signup. Can grant network_admin access in this network; cannot grant global_admin access. Requires configured email delivery. Success means the email provider accepted the message, not that it reached the inbox. Creates a new invitation on each call; do not retry after success.',
           inputSchema: z.object({
             email: z.string().trim().email().max(254).toLowerCase(),
-            role: z.enum(['customer', 'driver']).default('customer'),
+            role: z
+              .enum(['customer', 'driver', 'network_admin'])
+              .default('customer'),
           }),
           annotations: {
             readOnlyHint: false,
@@ -144,6 +254,10 @@ export function registerMcp(
         },
         (input) =>
           call(async () => {
+            const emailConfig = await networkEmailConfig(rootDb, network.id, {
+              ...defaults,
+              secret: defaults.secret || '',
+            });
             if (!emailConfig.resendKey || !emailConfig.emailFrom)
               throw new TRPCError({
                 code: 'PRECONDITION_FAILED',
@@ -153,12 +267,13 @@ export function registerMcp(
             const invitation = await ops.createInvitation(input);
             const url = new URL('/', webOrigin);
             url.searchParams.set('invite', invitation.token);
+            url.searchParams.set('network', network.slug);
             try {
               await createEmailSender(emailConfig)(
                 input.email,
-                'You’re invited to Market Delivered',
+                `You’re invited to ${network.name.replace(/[\r\n]/g, ' ')}`,
                 url.href,
-                `You’re invited to Market Delivered as a ${input.role}. Sign up within seven days using this email address: ${input.email}`,
+                `You’re invited to ${network.name} as a ${input.role === 'network_admin' ? 'administrator' : input.role}. Sign up within seven days using this email address: ${input.email}`,
               );
             } catch {
               await ops.revokeInvitation(invitation.id);

@@ -1,5 +1,7 @@
+import { networkDatabase } from './network-scope.js';
+import { networks } from './network-schema.js';
 import { closeExpiredMarkets } from './close-markets.js';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, isNull } from 'drizzle-orm';
 import type { Database } from './index.js';
 import { backgroundJobRuns } from './market-schema.js';
 import { ensureUpcomingRuns } from './recurrence.js';
@@ -9,7 +11,39 @@ export async function runMarketRunsJob(
   db: Database,
   source: 'cron' | 'cli' | 'admin' | 'worker',
   asOf = new Date(),
-) {
+): Promise<{
+  id: string;
+  status: 'skipped' | 'succeeded';
+  schedulesProcessed: number;
+  runsCreated: number;
+}> {
+  const scope = await db.execute<{ network_id: string | null }>(
+    sql`select nullif(current_setting('app.network_id', true), '') as network_id`,
+  );
+  if (!scope.rows[0]!.network_id) {
+    const all = await db
+      .select()
+      .from(networks)
+      .where(isNull(networks.deletedAt))
+      .orderBy(networks.createdAt, networks.id);
+    const results = [];
+    for (const network of all)
+      results.push(
+        await runMarketRunsJob(
+          networkDatabase(db, network.id, ''),
+          source,
+          asOf,
+        ),
+      );
+    return {
+      ...results[0]!,
+      status: results.some((result) => result.status === 'succeeded')
+        ? 'succeeded'
+        : 'skipped',
+      schedulesProcessed: results.reduce((n, r) => n + r.schedulesProcessed, 0),
+      runsCreated: results.reduce((n, r) => n + r.runsCreated, 0),
+    };
+  }
   const [attempt] = await db
     .insert(backgroundJobRuns)
     .values({ name: MARKET_RUNS_JOB, source })
@@ -59,7 +93,39 @@ export async function runCloseMarketsJob(
   db: Database,
   source: 'cron' | 'cli' | 'worker',
   asOf = new Date(),
-) {
+): Promise<{
+  id: string;
+  status: 'skipped' | 'succeeded';
+  ordersCancelled: number;
+  runsClosed: number;
+}> {
+  const scope = await db.execute<{ network_id: string | null }>(
+    sql`select nullif(current_setting('app.network_id', true), '') as network_id`,
+  );
+  if (!scope.rows[0]!.network_id) {
+    const all = await db
+      .select()
+      .from(networks)
+      .where(isNull(networks.deletedAt))
+      .orderBy(networks.createdAt, networks.id);
+    const results = [];
+    for (const network of all)
+      results.push(
+        await runCloseMarketsJob(
+          networkDatabase(db, network.id, ''),
+          source,
+          asOf,
+        ),
+      );
+    return {
+      ...results[0]!,
+      status: results.some((result) => result.status === 'succeeded')
+        ? 'succeeded'
+        : 'skipped',
+      ordersCancelled: results.reduce((n, r) => n + r.ordersCancelled, 0),
+      runsClosed: results.reduce((n, r) => n + r.runsClosed, 0),
+    };
+  }
   const [attempt] = await db
     .insert(backgroundJobRuns)
     .values({ name: CLOSE_MARKETS_JOB, source })

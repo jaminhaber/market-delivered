@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { createDatabase } from '../packages/db/src/index.js';
+
+import { createDatabase, runMigrations } from '../packages/db/src/index.js';
 const databaseURL =
   process.env.E2E_DATABASE_URL ??
   'postgresql://market:market@localhost:5433/market_delivered_e2e';
@@ -12,14 +12,19 @@ if (!new URL(databaseURL).pathname.endsWith('_e2e'))
   );
 const { db, pool } = createDatabase(databaseURL);
 try {
-  await migrate(db, {
-    migrationsFolder: fileURLToPath(
-      new URL('../packages/db/drizzle', import.meta.url),
-    ),
+  // Only the explicitly isolated *_e2e database is reset. Exercise the complete
+  // migration history on every run, including the network upgrade.
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('market-delivered:migrations'))`,
+    );
+    await tx.execute(sql`DROP SCHEMA IF EXISTS drizzle CASCADE`);
+    await tx.execute(sql`DROP SCHEMA IF EXISTS public CASCADE`);
+    await tx.execute(sql`CREATE SCHEMA public`);
   });
-  // This runner only accepts an isolated *_e2e database; reset fixtures between runs.
-  await db.execute(
-    sql`TRUNCATE TABLE users, farms, markets, auth_verifications, auth_rate_limits, background_job_runs CASCADE`,
+  await runMigrations(
+    db,
+    fileURLToPath(new URL('../packages/db/drizzle', import.meta.url)),
   );
 } finally {
   await pool.end();

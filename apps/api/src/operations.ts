@@ -4,7 +4,15 @@ import * as s from '@market/db';
 import { z } from 'zod';
 import { createHash, randomBytes } from 'node:crypto';
 import { addressInput, formatAddress } from './addresses.js';
-export type Actor = { id: string; name: string; email: string; admin: boolean };
+export type Actor = {
+  id: string;
+  name: string;
+  email: string;
+  admin: boolean;
+  globalAdmin?: boolean;
+  networkAdmin?: boolean;
+  member?: boolean;
+};
 type Tx = Parameters<Parameters<s.Database['transaction']>[0]>[0];
 export function ensure(
   condition: unknown,
@@ -388,7 +396,7 @@ export function operations(db: s.Database, actor: Actor) {
           .insert(s.customerProfiles)
           .values({ userId: actor.id, ...profile })
           .onConflictDoUpdate({
-            target: s.customerProfiles.userId,
+            target: [s.customerProfiles.networkId, s.customerProfiles.userId],
             set: profile,
           });
         return { success: true };
@@ -452,7 +460,7 @@ export function operations(db: s.Database, actor: Actor) {
     },
     async createInvitation(input: {
       email: string;
-      role: 'customer' | 'driver';
+      role: 'customer' | 'driver' | 'network_admin';
     }) {
       admin();
       return db.transaction(async (tx) => {

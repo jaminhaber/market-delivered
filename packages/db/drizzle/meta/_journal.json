@@ -22,6 +22,13 @@
       "when": 1792802667467,
       "tag": "0002_shopping_packing",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793061483072,
+      "tag": "0003_networks",
+      "breakpoints": true
     }
   ]
 }
