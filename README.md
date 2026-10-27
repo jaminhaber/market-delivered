@@ -451,8 +451,12 @@ provider credentials and the reply-to override are not exposed by public reads.
 
 Location defaults include city, US state, ZIP, and IANA timezone. They prefill
 new delivery profiles and new markets; saved addresses and market timezones stay
-unchanged. Address autocomplete can optionally use a manually entered latitude,
-longitude, and radius in meters (1–50,000). This biases suggestions, without
+unchanged. Address autocomplete can optionally use a five-digit search ZIP code and radius
+in meters (1–50,000). The backend resolves the ZIP center through
+[Zippopotam.us](https://docs.zippopotam.us/docs/getting-started/) (GeoNames data)
+when settings are saved, and stores the ZIP with its latitude/longitude. Unchanged
+ZIP codes reuse the saved center; lookup failures leave all settings unchanged.
+No API key or new Google API needs to be configured. This biases suggestions, without
 restricting delivery eligibility. Without a search center, autocomplete uses its
 default US search. The network migration initializes Ojai defaults; newly created
 operators have no location-specific defaults.
@@ -464,8 +468,10 @@ override where replies go; otherwise the support email is used when configured.
 
 MCP `get_network` and `update_network` support `supportEmail`, `supportPhone`,
 `contactUrl`, `emailReplyTo`, and `location`. Location fields are `city`, `region`,
-`postalCode`, `timezone`, and `autocompleteBias: { latitude, longitude,
-radiusMeters }`. Partial location updates merge with saved values. Set individual
+`postalCode`, `timezone`, and `autocompleteBias: { postalCode, radiusMeters }`.
+Coordinates are returned as saved data, but cannot be supplied as update inputs.
+Set `autocompleteBias: null` to remove the search bias. Existing coordinate-only
+centers remain active until replaced with a ZIP or explicitly cleared. Partial location updates merge with saved values. Set individual
 fields to `null` to clear them, or `location: null` to clear all location defaults.
 The supported address format remains US/USD; these settings do not introduce
 international address or currency support.

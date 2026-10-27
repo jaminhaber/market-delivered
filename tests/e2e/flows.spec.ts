@@ -4633,7 +4633,18 @@ test('MCP edits every Configure setting and administrator role with encrypted, i
     member = await actor();
   const [other] = await db
     .insert(networks)
-    .values({ name: 'Other sender', slug: unique('sender') })
+    .values({
+      name: 'Other sender',
+      slug: unique('sender'),
+      location: {
+        autocompleteBias: {
+          postalCode: '10001',
+          latitude: 40.71,
+          longitude: -74.01,
+          radiusMeters: 10000,
+        },
+      },
+    })
     .returning();
   await db.insert(networkMemberships).values([
     { networkId: other!.id, userId: admin.id, role: 'network_admin' },
@@ -4682,8 +4693,7 @@ test('MCP edits every Configure setting and administrator role with encrypted, i
         postalCode: '10001',
         timezone: 'America/New_York',
         autocompleteBias: {
-          latitude: 40.71,
-          longitude: -74.01,
+          postalCode: '10001',
           radiusMeters: 10000,
         },
       },
@@ -5220,7 +5230,18 @@ test('Configure support and location defaults appear on customer pages without r
     customer = await actor();
   const [n] = await db
     .insert(networks)
-    .values({ name: 'New York Basket', slug: unique('ny-settings') })
+    .values({
+      name: 'New York Basket',
+      slug: unique('ny-settings'),
+      location: {
+        autocompleteBias: {
+          postalCode: '10001',
+          latitude: 40.71,
+          longitude: -74.01,
+          radiusMeters: 10000,
+        },
+      },
+    })
     .returning();
   await db.insert(networkMemberships).values([
     { networkId: n!.id, userId: admin.id, role: 'network_admin' },
@@ -5263,11 +5284,14 @@ test('Configure support and location defaults appear on customer pages without r
       .getByLabel('Default timezone', { exact: true })
       .fill('America/New_York');
     await page
-      .getByLabel('Search center latitude', { exact: true })
-      .fill('40.71');
-    await page
-      .getByLabel('Search center longitude', { exact: true })
-      .fill('-74.01');
+      .getByLabel('Search center ZIP code', { exact: true })
+      .fill('10001');
+    await expect(
+      page.getByLabel('Search center latitude', { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByLabel('Search center longitude', { exact: true }),
+    ).toHaveCount(0);
     await page
       .getByLabel('Search radius (meters)', { exact: true })
       .fill('10000');
@@ -5471,4 +5495,146 @@ test('account email identity uses the app name, verified sender and reply-to whi
     },
     { autocompleteBias: bias },
   );
+});
+
+test('MCP resolves search ZIPs on the backend, reuses saved coordinates, and preserves settings when lookup fails', async () => {
+  const Fastify: typeof import('fastify').default = createRequire(
+    import.meta.url,
+  )('fastify');
+  const admin = await actor('admin');
+  const [n] = await db
+    .insert(networks)
+    .values({ name: 'ZIP search app', slug: unique('zip-search') })
+    .returning();
+  await db
+    .insert(networkMemberships)
+    .values({ networkId: n!.id, userId: admin.id, role: 'network_admin' });
+  const settings = api(admin.request, n!.slug);
+  const { token } = await settings.admin.createToken.mutate({
+    name: 'ZIP configuration',
+  });
+  const server = Fastify();
+  registerMcp(server, db, baseURL);
+  const previousFetch = globalThis.fetch;
+  const requested: string[] = [];
+  let mode: 'ok' | 'missing' | 'invalid' | 'outage' = 'ok';
+  globalThis.fetch = async (url, options) => {
+    requested.push(String(url));
+    expect(String(url)).toMatch(/^https:\/\/api\.zippopotam\.us\/us\/\d{5}$/);
+    expect(options?.signal).toBeDefined();
+    if (mode === 'outage') throw new Error('Provider unavailable');
+    if (mode === 'missing') return Response.json({}, { status: 404 });
+    const zip = new URL(String(url)).pathname.split('/').at(-1);
+    return Response.json({
+      'post code': zip,
+      'country abbreviation': 'US',
+      places: [
+        {
+          latitude: mode === 'invalid' ? 'invalid' : '34.448',
+          longitude: '-119.243',
+        },
+      ],
+    });
+  };
+  const call = async (arguments_: object) => {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/mcp',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      payload: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'update_network', arguments: arguments_ },
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    return response.json().result;
+  };
+  try {
+    const result = await call({
+      location: {
+        autocompleteBias: { postalCode: '93023', radiusMeters: 30000 },
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(requested).toEqual(['https://api.zippopotam.us/us/93023']);
+    expect(
+      (await settings.networks.current.query()).location.autocompleteBias,
+    ).toEqual({
+      postalCode: '93023',
+      latitude: 34.448,
+      longitude: -119.243,
+      radiusMeters: 30000,
+    });
+    await call({
+      location: {
+        autocompleteBias: { postalCode: '93023', radiusMeters: 12000 },
+      },
+    });
+    expect(requested).toHaveLength(1);
+    expect(
+      (await settings.networks.current.query()).location.autocompleteBias
+        ?.radiusMeters,
+    ).toBe(12000);
+    for (const failure of ['missing', 'invalid', 'outage'] as const) {
+      mode = failure;
+      const failed = await call({
+        name: 'Must not save',
+        location: {
+          autocompleteBias: { postalCode: '10001', radiusMeters: 10000 },
+        },
+      });
+      expect(failed.isError).toBe(true);
+      expect(JSON.parse(failed.content[0].text).code).toBe(
+        failure === 'missing' ? 'BAD_REQUEST' : 'BAD_GATEWAY',
+      );
+      expect(await settings.networks.current.query()).toMatchObject({
+        name: 'ZIP search app',
+        location: {
+          autocompleteBias: {
+            postalCode: '93023',
+            latitude: 34.448,
+            longitude: -119.243,
+            radiusMeters: 12000,
+          },
+        },
+      });
+    }
+    const count = requested.length;
+    expect(
+      (
+        await call({
+          location: {
+            autocompleteBias: { latitude: 0, longitude: 0, radiusMeters: 5000 },
+          },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      (
+        await call({
+          location: {
+            autocompleteBias: { postalCode: 'bad', radiusMeters: 5000 },
+          },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(requested).toHaveLength(count);
+    expect(
+      (await call({ location: { autocompleteBias: null } })).isError,
+    ).not.toBe(true);
+    expect(
+      (await settings.networks.current.query()).location.autocompleteBias,
+    ).toBeNull();
+    expect(requested).toHaveLength(count);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await server.close();
+    await admin.request.dispose();
+  }
 });

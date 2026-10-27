@@ -26,6 +26,7 @@ export type NetworkLocation = {
   postalCode?: string | null;
   timezone?: string | null;
   autocompleteBias?: {
+    postalCode?: string;
     latitude: number;
     longitude: number;
     radiusMeters: number;

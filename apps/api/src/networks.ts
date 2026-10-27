@@ -1,3 +1,4 @@
+import { lookupZipCoordinates } from './zip-codes.js';
 import { addressInput } from './addresses.js';
 import {
   createCipheriv,
@@ -92,12 +93,18 @@ export const locationInput = z.object({
     .optional(),
   autocompleteBias: z
     .object({
-      latitude: z.number().min(-90).max(90),
-      longitude: z.number().min(-180).max(180),
+      postalCode: z
+        .string()
+        .trim()
+        .regex(/^\d{5}$/, 'Enter a five-digit US ZIP code'),
       radiusMeters: z.number().int().min(1).max(50000),
     })
+    .strict()
     .nullable()
-    .optional(),
+    .optional()
+    .describe(
+      'Search center ZIP code and radius. Coordinates are resolved on the server; null clears the bias.',
+    ),
 });
 export const networkSettingsInput = z
   .object({
@@ -405,6 +412,31 @@ export function networkOperations(
     },
     async update(input: z.infer<typeof networkSettingsInput>) {
       admin();
+      const { autocompleteBias: bias, ...locationDefaults } =
+        input.location || {};
+      let location: Partial<s.NetworkLocation> | null | undefined =
+        input.location === null
+          ? null
+          : input.location === undefined
+            ? undefined
+            : locationDefaults;
+      if (bias === null) location = { ...location, autocompleteBias: null };
+      if (bias) {
+        const [current] = await db
+          .select({ location: s.networks.location })
+          .from(s.networks)
+          .where(eq(s.networks.id, networkId));
+        ensure(current, 'Network not found', 'NOT_FOUND');
+        const saved = current.location.autocompleteBias;
+        const center =
+          saved?.postalCode === bias.postalCode
+            ? { latitude: saved.latitude, longitude: saved.longitude }
+            : await lookupZipCoordinates(bias.postalCode);
+        location = {
+          ...input.location,
+          autocompleteBias: { ...bias, ...center },
+        };
+      }
       return db.transaction(async (tx) => {
         const [n] = await tx
           .update(s.networks)
@@ -421,12 +453,12 @@ export function networkOperations(
             ...(input.emailReplyTo !== undefined
               ? { emailReplyTo: input.emailReplyTo }
               : {}),
-            ...(input.location !== undefined
+            ...(location !== undefined
               ? {
                   location:
-                    input.location === null
+                    location === null
                       ? {}
-                      : sql`coalesce(${s.networks.location}, '{}'::jsonb) || ${JSON.stringify(input.location)}::jsonb`,
+                      : sql`coalesce(${s.networks.location}, '{}'::jsonb) || ${JSON.stringify(location)}::jsonb`,
                 }
               : {}),
             ...(input.branding !== undefined

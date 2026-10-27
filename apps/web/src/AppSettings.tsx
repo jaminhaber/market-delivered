@@ -105,26 +105,28 @@ export function LocationSettings() {
           e.preventDefault();
           const form = e.currentTarget;
           void location.act(async () => {
-            const latitude = field(form, 'latitude'),
-              longitude = field(form, 'longitude');
-            if (!!latitude !== !!longitude)
-              throw new Error(
-                'Enter both latitude and longitude, or leave both blank.',
-              );
+            const searchZip = field(form, 'searchZip');
+            const clearBias = new FormData(form).has('clearBias');
             await rpc.networks.update.mutate({
               location: {
                 city: field(form, 'city') || null,
                 region: field(form, 'region') || null,
                 postalCode: field(form, 'postalCode') || null,
                 timezone: field(form, 'timezone') || null,
-                autocompleteBias:
-                  latitude && longitude
-                    ? {
-                        latitude: Number(latitude),
-                        longitude: Number(longitude),
-                        radiusMeters: Number(field(form, 'radiusMeters')),
-                      }
-                    : null,
+                ...(searchZip ||
+                clearBias ||
+                !loc.autocompleteBias ||
+                loc.autocompleteBias.postalCode
+                  ? {
+                      autocompleteBias:
+                        clearBias || !searchZip
+                          ? null
+                          : {
+                              postalCode: searchZip,
+                              radiusMeters: Number(field(form, 'radiusMeters')),
+                            },
+                    }
+                  : {}),
               },
             });
           }, 'Location defaults saved');
@@ -170,31 +172,47 @@ export function LocationSettings() {
           />
         </label>
         <p>
-          Optionally bias address suggestions toward a center point. With no
-          center, suggestions use the provider’s default US search.
+          Optionally bias address suggestions toward a ZIP code. We look up its
+          center when you save. This does not limit delivery eligibility.
         </p>
         <label>
-          Search center latitude
+          Search center ZIP code
           <input
-            name="latitude"
-            type="number"
-            step="any"
-            min={-90}
-            max={90}
-            defaultValue={loc.autocompleteBias?.latitude ?? ''}
+            name="searchZip"
+            inputMode="numeric"
+            pattern="[0-9]{5}"
+            maxLength={5}
+            defaultValue={loc.autocompleteBias?.postalCode || ''}
           />
         </label>
-        <label>
-          Search center longitude
-          <input
-            name="longitude"
-            type="number"
-            step="any"
-            min={-180}
-            max={180}
-            defaultValue={loc.autocompleteBias?.longitude ?? ''}
-          />
+        {loc.autocompleteBias && !loc.autocompleteBias.postalCode && (
+          <p className="muted">
+            A saved search center is active. Enter a ZIP code to replace it, or
+            clear the saved center below.
+          </p>
+        )}
+        <label className="checkbox-label">
+          <input type="checkbox" name="clearBias" /> Clear saved search center
         </label>
+        <p className="muted">
+          ZIP lookup data:{' '}
+          <a
+            href="https://www.zippopotam.us/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Zippopotam.us
+          </a>{' '}
+          /{' '}
+          <a
+            href="https://www.geonames.org/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            GeoNames
+          </a>
+          .
+        </p>
         <label>
           Search radius (meters)
           <input
