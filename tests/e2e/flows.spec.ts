@@ -409,6 +409,10 @@ test('signed-in invitation links offer a safe account switch and preserve the in
   expect((await api(page.request).me.query())?.email).toBe(nextEmail);
 
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  // Sign-out reloads the page; wait before starting another navigation.
+  await expect(
+    page.getByRole('heading', { name: 'Welcome back' }),
+  ).toBeVisible();
   await page.goto(`/?invite=${next.token}`);
   await expect(
     page.getByRole('alert').filter({ hasText: 'invalid or expired' }),
