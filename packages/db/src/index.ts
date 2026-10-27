@@ -31,4 +31,10 @@ export {
 } from './jobs.js';
 
 export * from './network-schema.js';
-export { withNetwork, networkDatabase } from './network-scope.js';
+export {
+  withNetwork,
+  networkDatabase,
+  networkWhere,
+  networkValues,
+  databaseNetworkId,
+} from './network-scope.js';

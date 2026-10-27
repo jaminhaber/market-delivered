@@ -1,4 +1,9 @@
-import { networkDatabase } from './network-scope.js';
+import {
+  networkWhere,
+  networkValues,
+  networkDatabase,
+  databaseNetworkId,
+} from './network-scope.js';
 import { networks } from './network-schema.js';
 import { closeExpiredMarkets } from './close-markets.js';
 import { eq, sql, isNull } from 'drizzle-orm';
@@ -17,10 +22,7 @@ export async function runMarketRunsJob(
   schedulesProcessed: number;
   runsCreated: number;
 }> {
-  const scope = await db.execute<{ network_id: string | null }>(
-    sql`select nullif(current_setting('app.network_id', true), '') as network_id`,
-  );
-  if (!scope.rows[0]!.network_id) {
+  if (!databaseNetworkId(db)) {
     const all = await db
       .select()
       .from(networks)
@@ -46,7 +48,7 @@ export async function runMarketRunsJob(
   }
   const [attempt] = await db
     .insert(backgroundJobRuns)
-    .values({ name: MARKET_RUNS_JOB, source })
+    .values(networkValues(db, { name: MARKET_RUNS_JOB, source }))
     .returning();
   try {
     return await db.transaction(async (tx) => {
@@ -60,7 +62,13 @@ export async function runMarketRunsJob(
         await tx
           .update(backgroundJobRuns)
           .set({ status: 'skipped', finishedAt: new Date() })
-          .where(eq(backgroundJobRuns.id, attempt!.id));
+          .where(
+            networkWhere(
+              tx,
+              backgroundJobRuns,
+              eq(backgroundJobRuns.id, attempt!.id),
+            ),
+          );
         return {
           id: attempt!.id,
           status: 'skipped' as const,
@@ -72,7 +80,13 @@ export async function runMarketRunsJob(
       await tx
         .update(backgroundJobRuns)
         .set({ status: 'succeeded', finishedAt: new Date(), ...summary })
-        .where(eq(backgroundJobRuns.id, attempt!.id));
+        .where(
+          networkWhere(
+            tx,
+            backgroundJobRuns,
+            eq(backgroundJobRuns.id, attempt!.id),
+          ),
+        );
       return { id: attempt!.id, status: 'succeeded' as const, ...summary };
     });
   } catch (error) {
@@ -83,7 +97,13 @@ export async function runMarketRunsJob(
         finishedAt: new Date(),
         error: 'Market run generation failed; see worker/API logs.',
       })
-      .where(eq(backgroundJobRuns.id, attempt!.id));
+      .where(
+        networkWhere(
+          db,
+          backgroundJobRuns,
+          eq(backgroundJobRuns.id, attempt!.id),
+        ),
+      );
     throw error;
   }
 }
@@ -99,10 +119,7 @@ export async function runCloseMarketsJob(
   ordersCancelled: number;
   runsClosed: number;
 }> {
-  const scope = await db.execute<{ network_id: string | null }>(
-    sql`select nullif(current_setting('app.network_id', true), '') as network_id`,
-  );
-  if (!scope.rows[0]!.network_id) {
+  if (!databaseNetworkId(db)) {
     const all = await db
       .select()
       .from(networks)
@@ -128,7 +145,7 @@ export async function runCloseMarketsJob(
   }
   const [attempt] = await db
     .insert(backgroundJobRuns)
-    .values({ name: CLOSE_MARKETS_JOB, source })
+    .values(networkValues(db, { name: CLOSE_MARKETS_JOB, source }))
     .returning();
   try {
     return await db.transaction(async (tx) => {
@@ -141,7 +158,13 @@ export async function runCloseMarketsJob(
         await tx
           .update(backgroundJobRuns)
           .set({ status: 'skipped', finishedAt: new Date() })
-          .where(eq(backgroundJobRuns.id, attempt!.id));
+          .where(
+            networkWhere(
+              tx,
+              backgroundJobRuns,
+              eq(backgroundJobRuns.id, attempt!.id),
+            ),
+          );
         return {
           id: attempt!.id,
           status: 'skipped' as const,
@@ -153,7 +176,13 @@ export async function runCloseMarketsJob(
       await tx
         .update(backgroundJobRuns)
         .set({ status: 'succeeded', finishedAt: new Date(), ...summary })
-        .where(eq(backgroundJobRuns.id, attempt!.id));
+        .where(
+          networkWhere(
+            tx,
+            backgroundJobRuns,
+            eq(backgroundJobRuns.id, attempt!.id),
+          ),
+        );
       return { id: attempt!.id, status: 'succeeded' as const, ...summary };
     });
   } catch (error) {
@@ -164,7 +193,13 @@ export async function runCloseMarketsJob(
         finishedAt: new Date(),
         error: 'Market closing failed; see worker/API logs.',
       })
-      .where(eq(backgroundJobRuns.id, attempt!.id));
+      .where(
+        networkWhere(
+          db,
+          backgroundJobRuns,
+          eq(backgroundJobRuns.id, attempt!.id),
+        ),
+      );
     throw error;
   }
 }

@@ -1,81 +1,66 @@
-import { drizzle } from 'drizzle-orm/node-postgres';
-import type pg from 'pg';
+import { and, eq, type SQL } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Database } from './index.js';
-import * as catalog from './schema.js';
-import * as auth from './auth-schema.js';
-import * as market from './market-schema.js';
-import * as network from './network-schema.js';
 
-// A scoped database borrows the existing pool. Each standalone query runs in a
-// short transaction; explicit domain transactions retain one scoped connection.
-// This preserves independent failure logs/rate limits without a request-wide tx.
+// Scope lives in application memory and follows transactions/savepoints. Queries
+// explicitly use networkWhere/networkValues; no database roles or session state.
+const scopes = new WeakMap<object, string>();
+export const databaseNetworkId = (db: object) => scopes.get(db);
+
+export function networkWhere(
+  db: object,
+  table: { networkId: AnyPgColumn },
+  condition?: SQL,
+) {
+  const networkId = databaseNetworkId(db);
+  return and(condition, networkId ? eq(table.networkId, networkId) : undefined);
+}
+
+export function networkValues<T extends object | object[]>(
+  db: object,
+  values: T,
+): T {
+  const networkId = databaseNetworkId(db);
+  if (!networkId) return values; // Trusted CLI/platform operations pass ownership explicitly.
+  function owned(value: object) {
+    if (
+      'networkId' in value &&
+      value.networkId !== undefined &&
+      value.networkId !== networkId
+    )
+      throw new Error('Cannot write data belonging to another network');
+    return { ...value, networkId };
+  }
+  return (Array.isArray(values) ? values.map(owned) : owned(values)) as T;
+}
+
 export function networkDatabase(
   db: Database,
   networkId: string,
-  userId: string,
+  _userId: string,
 ): Database {
-  const pool = db.$client;
-  async function scope(client: pg.PoolClient) {
-    await client.query(
-      "select set_config('app.network_id', $1, true), set_config('app.user_id', $2, true)",
-      [networkId, userId],
-    );
-    await client.query('set local role market_network');
-  }
-  const scopedPool = new Proxy(pool, {
+  const scoped = new Proxy(db, {
     get(target, property) {
-      if (property === 'query')
-        return async (...args: Parameters<pg.PoolClient['query']>) => {
-          const client = await target.connect();
-          try {
-            await client.query('begin');
-            await scope(client);
-            const result = await client.query(...args);
-            await client.query('commit');
-            return result;
-          } catch (error) {
-            await client.query('rollback');
-            throw error;
-          } finally {
-            client.release();
-          }
-        };
-      if (property === 'connect')
-        return async () => {
-          const client = await target.connect();
-          return new Proxy(client, {
-            get(connection, key) {
-              if (key === 'query')
-                return async (...args: Parameters<pg.PoolClient['query']>) => {
-                  const query = args[0] as unknown as string | { text: string };
-                  const text = typeof query === 'string' ? query : query.text;
-                  const result = await connection.query(...args);
-                  if (/^begin\b/i.test(text)) {
-                    try {
-                      await scope(connection);
-                    } catch (error) {
-                      await connection.query('rollback');
-                      connection.release(true);
-                      throw error;
-                    }
-                  }
-                  return result;
-                };
-              const value = Reflect.get(connection, key);
-              return typeof value === 'function'
-                ? value.bind(connection)
-                : value;
-            },
-          });
-        };
+      if (property === 'transaction')
+        return (
+          action: (tx: Database) => Promise<unknown>,
+          config?: Parameters<Database['transaction']>[1],
+        ) =>
+          target.transaction(
+            (tx) =>
+              action(
+                networkDatabase(tx as unknown as Database, networkId, _userId),
+              ),
+            config,
+          );
       const value = Reflect.get(target, property);
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
-  return drizzle(scopedPool, {
-    schema: { ...catalog, ...auth, ...market, ...network },
-  });
+  scopes.set(scoped, networkId);
+  return scoped;
 }
+
 export async function withNetwork<T>(
   db: Database,
   networkId: string,

@@ -68,6 +68,7 @@ export const produce = pgTable(
   },
   (table) => [
     unique('produce_network_identity').on(table.networkId, table.id),
+    index('produce_network_farm_idx').on(table.networkId, table.farmId),
     foreignKey({
       name: 'produce_farm_id_network_fk',
       columns: [table.networkId, table.farmId],

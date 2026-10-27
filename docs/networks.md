@@ -51,21 +51,20 @@ grants, and to `global_admin` for admin grants.
 
 ## Network isolation and database setup
 
-Browser operations and MCP queries use a restricted PostgreSQL `market_network`
-role with row-level security. Each standalone query or domain transaction sets its
-network and actor with transaction-local settings, including when using transaction
-poolers. Composite foreign keys also prevent records from referencing inventory,
-profiles, markets, or vendors in another network. The restricted role cannot read
-authentication secrets or network email credentials. Platform administration, auth,
-and migrations use the trusted application connection. Background workers dispatch
-separately per network, keeping each network's job history private.
+Browser operations, MCP queries, and background jobs scope reads and updates
+with explicit `network_id` predicates in the application. Inserts supply the
+selected network ID and reject a conflicting owner. Transactions and nested
+savepoints retain the application scope. Global administration and authentication
+use explicitly authorized platform queries.
 
-On first install, the migration needs `CREATEROLE` to create the `NOLOGIN`,
-`NOBYPASSRLS` role, and permission to grant that role to the application database
-user. On hosted databases that disallow role creation, a database administrator
-must provision `market_network` with those attributes and grant membership to the
-application/migration user first. Do not give the restricted role ownership of the
-application tables, superuser privileges, or `BYPASSRLS`.
+Composite foreign keys prevent inventory, profiles, markets, orders, and vendors
+from referencing another network. No custom PostgreSQL roles, `SET ROLE`, row-level
+security policies, or `CREATEROLE` permission are required. The database login needs
+normal schema migration and application read/write permissions.
+
+The unreleased `0003_networks` migration now uses application scoping. Recreate the
+disposable staging database before deploying this version; an already-applied copy
+of that migration is not rerun. Keep the merged `0000`–`0002` history unchanged.
 
 ## Related guides
 

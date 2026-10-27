@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   primaryKey,
+  index,
   check,
   jsonb,
 } from 'drizzle-orm/pg-core';
@@ -34,13 +35,11 @@ export type NetworkLocation = {
 };
 
 export const OJAI_NETWORK_ID = '00000000-0000-4000-8000-000000000001';
-// Trusted jobs/CLI default to Ojai. Request transactions always set an explicit network.
+// Trusted CLI/seed inserts default to Ojai; application writes supply ownership explicitly.
 export const networkIdColumn = () =>
   uuid('network_id')
     .notNull()
-    .default(
-      sql`coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '${sql.raw(OJAI_NETWORK_ID)}'::uuid)`,
-    )
+    .default(sql`'${sql.raw(OJAI_NETWORK_ID)}'::uuid`)
     .references(() => networks.id);
 export const networks = pgTable('networks', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -70,6 +69,7 @@ export const networkMemberships = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.networkId, t.userId] }),
+    index('network_memberships_user_network_idx').on(t.userId, t.networkId),
     check(
       'membership_role_valid',
       sql`${t.role} IN ('member', 'network_admin')`,

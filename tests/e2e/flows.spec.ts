@@ -27,6 +27,8 @@ import {
   produce,
   OJAI_NETWORK_ID,
   withNetwork,
+  networkWhere,
+  networkValues,
   userRoles,
   user,
   marketRuns,
@@ -3268,7 +3270,10 @@ test('one network migration upgrades the committed schema and preserves existing
         OJAI_NETWORK_ID,
         'baseline-user',
         async (scoped) =>
-          scoped.select().from(farms).where(eq(farms.id, farm.id)),
+          scoped
+            .select()
+            .from(farms)
+            .where(networkWhere(scoped, farms, eq(farms.id, farm.id))),
       ),
     ).toEqual([farm]);
     await fresh.pool.query(
@@ -3305,6 +3310,110 @@ test('one network migration upgrades the committed schema and preserves existing
     await fresh.pool.end();
     await pool.query(`DROP DATABASE "${name}"`);
     await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('network migration and scoped operations work without role administration privileges', async () => {
+  const { fileURLToPath } = await import('node:url');
+  const { runMigrations } = await import('../../packages/db/src/migrations.js');
+  const { operations } = await import('../../apps/api/src/operations.js');
+  const role = `app_login_${randomUUID().replaceAll('-', '')}`;
+  const name = `${role}_e2e`;
+  const secret = randomBytes(24).toString('hex');
+  const url = new URL(databaseURL);
+  url.pathname = '/' + name;
+  url.username = role;
+  url.password = secret;
+  await pool.query(
+    `CREATE ROLE "${role}" LOGIN NOCREATEROLE PASSWORD '${secret}'`,
+  );
+  const fresh = createDatabase(url.href);
+  try {
+    await pool.query(`CREATE DATABASE "${name}" OWNER "${role}"`);
+    const folder = fileURLToPath(
+      new URL('../../packages/db/drizzle', import.meta.url),
+    );
+    await runMigrations(fresh.db, folder);
+    await runMigrations(fresh.db, folder);
+    expect(
+      (
+        await fresh.pool.query(
+          'SELECT rolsuper, rolcreaterole FROM pg_roles WHERE rolname=current_user',
+        )
+      ).rows,
+    ).toEqual([{ rolsuper: false, rolcreaterole: false }]);
+    expect(
+      (
+        await fresh.pool.query(
+          "SELECT relname FROM pg_class WHERE relnamespace='public'::regnamespace AND relrowsecurity",
+        )
+      ).rows,
+    ).toEqual([]);
+    const [person] = await fresh.db
+      .insert(user)
+      .values({
+        id: randomUUID(),
+        name: 'Operator',
+        email: 'operator@example.test',
+      })
+      .returning();
+    const [other] = await fresh.db
+      .insert(networks)
+      .values({ name: 'Another network', slug: 'another' })
+      .returning();
+    const admin = {
+      id: person!.id,
+      email: person!.email,
+      name: person!.name,
+      admin: true,
+    };
+    const remote = await withNetwork(
+      fresh.db,
+      other!.id,
+      admin.id,
+      async (scoped) =>
+        operations(scoped, admin).createFarm({
+          name: 'Remote farm',
+          location: 'Sonoma',
+          contactPhone: '',
+          notes: '',
+          active: true,
+        }),
+    );
+    await withNetwork(fresh.db, OJAI_NETWORK_ID, admin.id, async (scoped) => {
+      expect(
+        await scoped.select().from(farms).where(networkWhere(scoped, farms)),
+      ).toEqual([]);
+      await expect(
+        operations(scoped, admin).updateFarm(remote.id, {
+          name: 'Intrusion',
+          location: 'Ojai',
+          contactPhone: '',
+          notes: '',
+          active: true,
+        }),
+      ).rejects.toThrow('Farm not found');
+    });
+    expect((await fresh.db.select().from(farms))[0]).toMatchObject({
+      id: remote.id,
+      networkId: other!.id,
+      name: 'Remote farm',
+    });
+    expect(
+      await withNetwork(fresh.db, other!.id, '', async (scoped) =>
+        (await import('../../packages/db/src/jobs.js')).runCloseMarketsJob(
+          scoped,
+          'cron',
+        ),
+      ),
+    ).toMatchObject({ status: 'succeeded', ordersCancelled: 0, runsClosed: 0 });
+    expect(
+      (await fresh.db.select().from(backgroundJobRuns))[0]!.networkId,
+    ).toBe(other!.id);
+  } finally {
+    await fresh.pool.end();
+    await pool.query(`DROP DATABASE IF EXISTS "${name}"`);
+    await pool.query(`DROP ROLE "${role}"`);
   }
 });
 
@@ -4484,11 +4593,13 @@ test('networks isolate records, memberships, profiles, and MCP tokens while glob
   ).rejects.toThrow();
   await expect(
     withNetwork(db, OJAI_NETWORK_ID, admin.id, async (scoped) => {
-      await scoped.insert(farms).values({
-        networkId: other!.id,
-        name: 'Bad owner',
-        location: 'Sonoma',
-      });
+      await scoped.insert(farms).values(
+        networkValues(scoped, {
+          networkId: other!.id,
+          name: 'Bad owner',
+          location: 'Sonoma',
+        }),
+      );
     }),
   ).rejects.toThrow();
   await otherRpc.profile.save.mutate({
@@ -4502,6 +4613,92 @@ test('networks isolate records, memberships, profiles, and MCP tokens while glob
   });
   expect((await admin.rpc.me.query())!.customer!.city).toBe('Ojai');
   expect((await otherRpc.me.query())!.customer!.city).toBe('Sonoma');
+  // IDs from another operator must not bypass scope, even for a global admin.
+  const remoteMarket = await otherRpc.admin.createMarket.mutate({
+    name: 'Remote market',
+    address: '1 Market Street',
+    timezone: 'America/Los_Angeles',
+  });
+  const now = Date.now();
+  const remoteRun = await otherRpc.admin.scheduleRun.mutate({
+    marketId: remoteMarket.id,
+    cutoffAt: new Date(now + 3600000).toISOString(),
+    startsAt: new Date(now + 86400000).toISOString(),
+    endsAt: new Date(now + 2 * 86400000).toISOString(),
+    deliveryStartAt: new Date(now + 86400000).toISOString(),
+    deliveryEndAt: new Date(now + 2 * 86400000).toISOString(),
+    deliveryFeeCents: 500,
+  });
+  const remoteProduce = await otherRpc.admin.createProduce.mutate({
+    name: 'Remote carrots',
+    description: '',
+    category: 'Vegetables',
+    unit: 'bunch',
+    farmId: remoteFarm.id,
+  });
+  const remoteStock = await otherRpc.admin.saveInventory.mutate({
+    runId: remoteRun.id,
+    produceId: remoteProduce.id,
+    priceCents: 350,
+    quantity: 10,
+    active: true,
+  });
+  const remoteOrder = await otherRpc.orders.place.mutate({
+    runId: remoteRun.id,
+    requestId: randomUUID(),
+    items: [{ inventoryId: remoteStock.id, quantity: 1 }],
+  });
+  expect(
+    (await admin.rpc.markets.list.query()).map((row) => row.id),
+  ).not.toContain(remoteMarket.id);
+  expect(
+    (await admin.rpc.orders.mine.query()).map((row) => row.id),
+  ).not.toContain(remoteOrder.id);
+  expect((await otherRpc.orders.mine.query()).map((row) => row.id)).toContain(
+    remoteOrder.id,
+  );
+  await rejectCode(
+    admin.rpc.orders.cancel.mutate({ id: remoteOrder.id }),
+    'NOT_FOUND',
+  );
+  await rejectCode(
+    admin.rpc.admin.cancelRun.mutate({ id: remoteRun.id }),
+    'NOT_FOUND',
+  );
+  await rejectCode(
+    admin.rpc.admin.saveInventory.mutate({
+      runId: remoteRun.id,
+      produceId: remoteProduce.id,
+      priceCents: 1,
+      quantity: 10,
+      active: true,
+    }),
+    'NOT_FOUND',
+  );
+  await rejectCode(
+    admin.rpc.admin.createProduce.mutate({
+      name: 'Wrong farm',
+      description: '',
+      category: 'Vegetables',
+      unit: 'bunch',
+      farmId: remoteFarm.id,
+    }),
+    'BAD_REQUEST',
+  );
+  expect(
+    (await otherRpc.orders.mine.query()).find(
+      (row) => row.id === remoteOrder.id,
+    )!.status,
+  ).toBe('placed');
+  expect(
+    (
+      await db.select().from(inventory).where(eq(inventory.id, remoteStock.id))
+    )[0],
+  ).toMatchObject({
+    networkId: other!.id,
+    priceCents: 350,
+    reservedQuantity: 1,
+  });
   const localToken = await admin.rpc.admin.createToken.mutate({
     name: 'Network only',
   });

@@ -125,6 +125,8 @@ export const marketRuns = pgTable(
   },
   (t) => [
     unique('market_runs_network_identity').on(t.networkId, t.id),
+    index('runs_network_start_idx').on(t.networkId, t.startsAt, t.id),
+    index('runs_network_end_idx').on(t.networkId, t.endsAt),
     foreignKey({
       name: 'market_runs_market_id_network_fk',
       columns: [t.networkId, t.marketId],
@@ -162,6 +164,7 @@ export const inventory = pgTable(
   },
   (t) => [
     unique('inventory_network_identity').on(t.networkId, t.id),
+    index('inventory_network_produce_idx').on(t.networkId, t.produceId),
     foreignKey({
       name: 'inventory_run_id_network_fk',
       columns: [t.networkId, t.runId],
@@ -222,6 +225,29 @@ export const orders = pgTable(
   },
   (t) => [
     unique('orders_network_identity').on(t.networkId, t.id),
+    index('orders_network_created_idx').on(t.networkId, t.createdAt, t.id),
+    index('orders_network_customer_created_idx').on(
+      t.networkId,
+      t.customerId,
+      t.createdAt,
+      t.id,
+    ),
+    index('orders_network_driver_run_idx').on(
+      t.networkId,
+      t.driverId,
+      t.runId,
+      t.createdAt,
+      t.id,
+    ),
+    index('orders_network_run_created_idx').on(
+      t.networkId,
+      t.runId,
+      t.createdAt,
+      t.id,
+    ),
+    index('orders_available_network_run_idx')
+      .on(t.networkId, t.runId, t.createdAt, t.id)
+      .where(sql`${t.status} = 'placed' AND ${t.driverId} IS NULL`),
     foreignKey({
       name: 'orders_run_id_network_fk',
       columns: [t.networkId, t.runId],
@@ -367,7 +393,7 @@ export const apiTokens = pgTable(
   'api_tokens',
   {
     networkId: uuid('network_id').default(
-      sql`coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)`,
+      sql`'00000000-0000-4000-8000-000000000001'::uuid`,
     ),
     id: uuid('id').defaultRandom().primaryKey(),
     userId: text('user_id')
@@ -387,6 +413,11 @@ export const apiTokens = pgTable(
       foreignColumns: [networks.id],
     }),
     index('api_tokens_user_idx').on(t.userId),
+    index('api_tokens_network_user_created_idx').on(
+      t.networkId,
+      t.userId,
+      t.createdAt,
+    ),
   ],
 );
 export const auditEvents = pgTable('audit_events', {
@@ -416,6 +447,7 @@ export const invitations = pgTable(
   },
   (t) => [
     index('invitations_email_idx').on(t.email),
+    index('invitations_network_created_idx').on(t.networkId, t.createdAt),
     check(
       'invitation_role_valid',
       sql`${t.role} IN ('customer','driver','network_admin')`,
@@ -489,6 +521,10 @@ export const scheduleInventory = pgTable(
       foreignColumns: [produce.networkId, produce.id],
     }),
     primaryKey({ columns: [t.scheduleId, t.produceId] }),
+    index('schedule_inventory_network_produce_idx').on(
+      t.networkId,
+      t.produceId,
+    ),
     check(
       'schedule_inventory_valid',
       sql`${t.priceCents} BETWEEN 0 AND 1000000 AND ${t.quantity} BETWEEN 0 AND 100000`,
@@ -516,6 +552,7 @@ export const backgroundJobRuns = pgTable(
   },
   (t) => [
     index('background_jobs_name_started_idx').on(t.name, t.startedAt),
+    index('background_jobs_network_started_idx').on(t.networkId, t.startedAt),
     check(
       'background_jobs_status_valid',
       sql`${t.status} IN ('running','succeeded','failed','skipped')`,

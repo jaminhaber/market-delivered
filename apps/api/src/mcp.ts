@@ -63,10 +63,14 @@ export function registerMcp(
         .select()
         .from(s.apiTokens)
         .where(
-          and(
-            eq(s.apiTokens.tokenHash, hash),
-            isNull(s.apiTokens.revokedAt),
-            gt(s.apiTokens.expiresAt, new Date()),
+          s.networkWhere(
+            rootDb,
+            s.apiTokens,
+            and(
+              eq(s.apiTokens.tokenHash, hash),
+              isNull(s.apiTokens.revokedAt),
+              gt(s.apiTokens.expiresAt, new Date()),
+            ),
           ),
         );
       const access = token
@@ -231,9 +235,19 @@ export function registerMcp(
             availableQuantity: sql<number>`${s.inventory.quantity} - ${s.inventory.reservedQuantity}`,
           })
           .from(s.inventory)
-          .innerJoin(s.produce, eq(s.produce.id, s.inventory.produceId))
-          .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
-          .where(eq(s.inventory.runId, runId));
+          .innerJoin(
+            s.produce,
+            s.networkWhere(
+              db,
+              s.produce,
+              eq(s.produce.id, s.inventory.produceId),
+            ),
+          )
+          .innerJoin(
+            s.farms,
+            s.networkWhere(db, s.farms, eq(s.farms.id, s.produce.farmId)),
+          )
+          .where(s.networkWhere(db, s.inventory, eq(s.inventory.runId, runId)));
       mcp.registerTool(
         'invite_user',
         {
@@ -310,16 +324,20 @@ export function registerMcp(
               .select()
               .from(s.farms)
               .where(
-                and(
-                  input.search
-                    ? or(
-                        ilike(s.farms.name, `%${input.search}%`),
-                        ilike(s.farms.location, `%${input.search}%`),
-                      )
-                    : undefined,
-                  input.active === undefined
-                    ? undefined
-                    : eq(s.farms.active, input.active),
+                s.networkWhere(
+                  db,
+                  s.farms,
+                  and(
+                    input.search
+                      ? or(
+                          ilike(s.farms.name, `%${input.search}%`),
+                          ilike(s.farms.location, `%${input.search}%`),
+                        )
+                      : undefined,
+                    input.active === undefined
+                      ? undefined
+                      : eq(s.farms.active, input.active),
+                  ),
                 ),
               )
               .orderBy(asc(s.farms.name), asc(s.farms.id))
@@ -340,7 +358,7 @@ export function registerMcp(
             const [farm] = await db
               .select()
               .from(s.farms)
-              .where(eq(s.farms.id, input.id));
+              .where(s.networkWhere(db, s.farms, eq(s.farms.id, input.id)));
             ensure(farm, 'Farm not found', 'NOT_FOUND');
             return farm;
           }),
@@ -394,26 +412,39 @@ export function registerMcp(
             const rows = await db
               .select(getTableColumns(s.orders))
               .from(s.orders)
-              .innerJoin(s.marketRuns, eq(s.marketRuns.id, s.orders.runId))
+              .innerJoin(
+                s.marketRuns,
+                s.networkWhere(
+                  db,
+                  s.marketRuns,
+                  eq(s.marketRuns.id, s.orders.runId),
+                ),
+              )
               .where(
-                and(
-                  input.runId ? eq(s.orders.runId, input.runId) : undefined,
-                  input.marketId
-                    ? eq(s.marketRuns.marketId, input.marketId)
-                    : undefined,
-                  input.driverId
-                    ? eq(s.orders.driverId, input.driverId)
-                    : undefined,
-                  input.customerId
-                    ? eq(s.orders.customerId, input.customerId)
-                    : undefined,
-                  input.status ? eq(s.orders.status, input.status) : undefined,
-                  input.from
-                    ? sql`${s.marketRuns.startsAt} >= ${new Date(input.from)}`
-                    : undefined,
-                  input.to
-                    ? sql`${s.marketRuns.startsAt} < ${new Date(input.to)}`
-                    : undefined,
+                s.networkWhere(
+                  db,
+                  s.orders,
+                  and(
+                    input.runId ? eq(s.orders.runId, input.runId) : undefined,
+                    input.marketId
+                      ? eq(s.marketRuns.marketId, input.marketId)
+                      : undefined,
+                    input.driverId
+                      ? eq(s.orders.driverId, input.driverId)
+                      : undefined,
+                    input.customerId
+                      ? eq(s.orders.customerId, input.customerId)
+                      : undefined,
+                    input.status
+                      ? eq(s.orders.status, input.status)
+                      : undefined,
+                    input.from
+                      ? sql`${s.marketRuns.startsAt} >= ${new Date(input.from)}`
+                      : undefined,
+                    input.to
+                      ? sql`${s.marketRuns.startsAt} < ${new Date(input.to)}`
+                      : undefined,
+                  ),
                 ),
               )
               .orderBy(
@@ -438,7 +469,7 @@ export function registerMcp(
             const [order] = await db
               .select()
               .from(s.orders)
-              .where(eq(s.orders.id, input.id));
+              .where(s.networkWhere(db, s.orders, eq(s.orders.id, input.id)));
             ensure(order, 'Order not found', 'NOT_FOUND');
             return (await orderDetails(db, [order]))[0]!;
           }),
@@ -460,12 +491,16 @@ export function registerMcp(
               .select()
               .from(s.markets)
               .where(
-                input.search
-                  ? or(
-                      ilike(s.markets.name, `%${input.search}%`),
-                      ilike(s.markets.address, `%${input.search}%`),
-                    )
-                  : undefined,
+                s.networkWhere(
+                  db,
+                  s.markets,
+                  input.search
+                    ? or(
+                        ilike(s.markets.name, `%${input.search}%`),
+                        ilike(s.markets.address, `%${input.search}%`),
+                      )
+                    : undefined,
+                ),
               )
               .orderBy(asc(s.markets.name), asc(s.markets.id))
               .limit(input.limit)
@@ -484,14 +519,20 @@ export function registerMcp(
             const [market] = await db
               .select()
               .from(s.markets)
-              .where(eq(s.markets.id, input.id));
+              .where(s.networkWhere(db, s.markets, eq(s.markets.id, input.id)));
             ensure(market, 'Market not found', 'NOT_FOUND');
             return {
               ...market,
               schedules: await db
                 .select()
                 .from(s.marketSchedules)
-                .where(eq(s.marketSchedules.marketId, input.id))
+                .where(
+                  s.networkWhere(
+                    db,
+                    s.marketSchedules,
+                    eq(s.marketSchedules.marketId, input.id),
+                  ),
+                )
                 .orderBy(asc(s.marketSchedules.weekday)),
             };
           }),
@@ -516,19 +557,23 @@ export function registerMcp(
               .select()
               .from(s.marketRuns)
               .where(
-                and(
-                  input.marketId
-                    ? eq(s.marketRuns.marketId, input.marketId)
-                    : undefined,
-                  input.status
-                    ? eq(s.marketRuns.status, input.status)
-                    : undefined,
-                  input.from
-                    ? sql`${s.marketRuns.startsAt} >= ${new Date(input.from)}`
-                    : undefined,
-                  input.to
-                    ? sql`${s.marketRuns.startsAt} < ${new Date(input.to)}`
-                    : undefined,
+                s.networkWhere(
+                  db,
+                  s.marketRuns,
+                  and(
+                    input.marketId
+                      ? eq(s.marketRuns.marketId, input.marketId)
+                      : undefined,
+                    input.status
+                      ? eq(s.marketRuns.status, input.status)
+                      : undefined,
+                    input.from
+                      ? sql`${s.marketRuns.startsAt} >= ${new Date(input.from)}`
+                      : undefined,
+                    input.to
+                      ? sql`${s.marketRuns.startsAt} < ${new Date(input.to)}`
+                      : undefined,
+                  ),
                 ),
               )
               .orderBy(
@@ -553,13 +598,24 @@ export function registerMcp(
             const [row] = await db
               .select({ run: s.marketRuns, market: s.markets })
               .from(s.marketRuns)
-              .innerJoin(s.markets, eq(s.markets.id, s.marketRuns.marketId))
-              .where(eq(s.marketRuns.id, input.id));
+              .innerJoin(
+                s.markets,
+                s.networkWhere(
+                  db,
+                  s.markets,
+                  eq(s.markets.id, s.marketRuns.marketId),
+                ),
+              )
+              .where(
+                s.networkWhere(db, s.marketRuns, eq(s.marketRuns.id, input.id)),
+              );
             ensure(row, 'Run not found', 'NOT_FOUND');
             const [count] = await db
               .select({ count: sql<number>`count(*)::int` })
               .from(s.orders)
-              .where(eq(s.orders.runId, input.id));
+              .where(
+                s.networkWhere(db, s.orders, eq(s.orders.runId, input.id)),
+              );
             return { ...row, orderCount: count!.count };
           }),
       );
@@ -585,19 +641,28 @@ export function registerMcp(
                 location: s.farms.location,
               })
               .from(s.produce)
-              .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
+              .innerJoin(
+                s.farms,
+                s.networkWhere(db, s.farms, eq(s.farms.id, s.produce.farmId)),
+              )
               .where(
-                and(
-                  input.search
-                    ? or(
-                        ilike(s.produce.name, `%${input.search}%`),
-                        ilike(s.farms.name, `%${input.search}%`),
-                      )
-                    : undefined,
-                  input.category
-                    ? eq(s.produce.category, input.category)
-                    : undefined,
-                  input.farmId ? eq(s.produce.farmId, input.farmId) : undefined,
+                s.networkWhere(
+                  db,
+                  s.produce,
+                  and(
+                    input.search
+                      ? or(
+                          ilike(s.produce.name, `%${input.search}%`),
+                          ilike(s.farms.name, `%${input.search}%`),
+                        )
+                      : undefined,
+                    input.category
+                      ? eq(s.produce.category, input.category)
+                      : undefined,
+                    input.farmId
+                      ? eq(s.produce.farmId, input.farmId)
+                      : undefined,
+                  ),
                 ),
               )
               .orderBy(asc(s.produce.name), asc(s.produce.id))
@@ -621,8 +686,11 @@ export function registerMcp(
                 location: s.farms.location,
               })
               .from(s.produce)
-              .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
-              .where(eq(s.produce.id, input.id));
+              .innerJoin(
+                s.farms,
+                s.networkWhere(db, s.farms, eq(s.farms.id, s.produce.farmId)),
+              )
+              .where(s.networkWhere(db, s.produce, eq(s.produce.id, input.id)));
             ensure(item, 'Produce not found', 'NOT_FOUND');
             return item;
           }),
@@ -654,7 +722,13 @@ export function registerMcp(
             const [run] = await db
               .select({ id: s.marketRuns.id })
               .from(s.marketRuns)
-              .where(eq(s.marketRuns.id, input.runId));
+              .where(
+                s.networkWhere(
+                  db,
+                  s.marketRuns,
+                  eq(s.marketRuns.id, input.runId),
+                ),
+              );
             ensure(run, 'Run not found', 'NOT_FOUND');
             return stockRows(input.runId)
               .orderBy(asc(s.produce.name), asc(s.inventory.id))
@@ -675,7 +749,13 @@ export function registerMcp(
             const [schedule] = await db
               .select({ id: s.marketSchedules.id })
               .from(s.marketSchedules)
-              .where(eq(s.marketSchedules.id, input.scheduleId));
+              .where(
+                s.networkWhere(
+                  db,
+                  s.marketSchedules,
+                  eq(s.marketSchedules.id, input.scheduleId),
+                ),
+              );
             ensure(schedule, 'Schedule not found', 'NOT_FOUND');
             return db
               .select({
@@ -688,10 +768,23 @@ export function registerMcp(
               .from(s.scheduleInventory)
               .innerJoin(
                 s.produce,
-                eq(s.produce.id, s.scheduleInventory.produceId),
+                s.networkWhere(
+                  db,
+                  s.produce,
+                  eq(s.produce.id, s.scheduleInventory.produceId),
+                ),
               )
-              .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
-              .where(eq(s.scheduleInventory.scheduleId, input.scheduleId))
+              .innerJoin(
+                s.farms,
+                s.networkWhere(db, s.farms, eq(s.farms.id, s.produce.farmId)),
+              )
+              .where(
+                s.networkWhere(
+                  db,
+                  s.scheduleInventory,
+                  eq(s.scheduleInventory.scheduleId, input.scheduleId),
+                ),
+              )
               .orderBy(asc(s.produce.name), asc(s.produce.id))
               .limit(input.limit)
               .offset(input.offset);
@@ -786,13 +879,17 @@ export function registerMcp(
               .select()
               .from(s.marketSchedules)
               .where(
-                and(
-                  input.marketId
-                    ? eq(s.marketSchedules.marketId, input.marketId)
-                    : undefined,
-                  input.active === undefined
-                    ? undefined
-                    : eq(s.marketSchedules.active, input.active),
+                s.networkWhere(
+                  db,
+                  s.marketSchedules,
+                  and(
+                    input.marketId
+                      ? eq(s.marketSchedules.marketId, input.marketId)
+                      : undefined,
+                    input.active === undefined
+                      ? undefined
+                      : eq(s.marketSchedules.active, input.active),
+                  ),
                 ),
               )
               .orderBy(
@@ -842,6 +939,7 @@ export function registerMcp(
             db
               .select()
               .from(s.backgroundJobRuns)
+              .where(s.networkWhere(db, s.backgroundJobRuns))
               .orderBy(sql`${s.backgroundJobRuns.startedAt} DESC`)
               .limit(20),
           ),

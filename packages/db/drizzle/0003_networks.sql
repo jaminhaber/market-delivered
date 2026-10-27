@@ -1,7 +1,7 @@
 -- Network ownership, isolation, branding, support, location and email settings.
 -- Upgrade from the existing 0000–0002 migration history without recreating tables.
 CREATE TABLE "network_memberships" (
-	"network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL,
+	"network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL,
 	"user_id" text NOT NULL,
 	"role" text DEFAULT 'member' NOT NULL,
 	CONSTRAINT "network_memberships_network_id_user_id_pk" PRIMARY KEY("network_id","user_id"),
@@ -42,39 +42,39 @@ ALTER TABLE "customer_profiles" DROP CONSTRAINT "customer_profiles_pkey";
 --> statement-breakpoint
 ALTER TABLE "driver_profiles" DROP CONSTRAINT "driver_profiles_pkey";
 --> statement-breakpoint
-ALTER TABLE "farms" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "farms" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "produce" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "produce" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "api_tokens" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid);
+ALTER TABLE "api_tokens" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid;
 --> statement-breakpoint
-ALTER TABLE "audit_events" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "audit_events" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "background_job_runs" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "background_job_runs" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "customer_profiles" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "customer_profiles" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "driver_profiles" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "driver_profiles" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "inventory" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "inventory" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "invitations" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "invitations" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "market_runs" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "market_runs" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "market_schedules" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "market_schedules" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "markets" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "markets" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "order_events" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "order_events" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "order_items" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "order_items" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "orders" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "orders" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "purchases" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "purchases" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
-ALTER TABLE "schedule_inventory" ADD COLUMN "network_id" uuid DEFAULT coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid) NOT NULL;
+ALTER TABLE "schedule_inventory" ADD COLUMN "network_id" uuid DEFAULT '00000000-0000-4000-8000-000000000001'::uuid NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "customer_profiles" ADD CONSTRAINT "customer_profiles_network_id_user_id_pk" PRIMARY KEY("network_id","user_id");
 --> statement-breakpoint
@@ -182,120 +182,18 @@ FROM users u;
 INSERT INTO user_roles (user_id, role) SELECT user_id, 'global_admin' FROM user_roles WHERE role = 'admin' ON CONFLICT DO NOTHING;
 DELETE FROM user_roles WHERE role = 'admin';
 --> statement-breakpoint
--- Requires CREATEROLE on first install (or a pre-provisioned NOLOGIN role).
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'market_network') THEN
-    CREATE ROLE market_network NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'market_network' AND (rolsuper OR rolbypassrls OR rolcanlogin OR rolcreaterole OR rolcreatedb))
-     OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_roles r ON c.relowner = r.oid WHERE r.rolname = 'market_network' AND c.relnamespace = 'public'::regnamespace) THEN
-    RAISE EXCEPTION 'market_network must be a restricted NOLOGIN, NOBYPASSRLS role without application table ownership';
-  END IF;
-  -- Hosted databases may provision membership without granting role administration.
-  IF NOT pg_has_role(current_user, 'market_network', 'MEMBER') THEN
-    EXECUTE format('GRANT market_network TO %I', current_user);
-  END IF;
-END $$;
-GRANT USAGE ON SCHEMA public TO market_network;
-ALTER TABLE farms ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON farms TO market_network;
-CREATE POLICY network_isolation ON farms TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE produce ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON produce TO market_network;
-CREATE POLICY network_isolation ON produce TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE markets ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON markets TO market_network;
-CREATE POLICY network_isolation ON markets TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE market_runs ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON market_runs TO market_network;
-CREATE POLICY network_isolation ON market_runs TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE market_schedules ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON market_schedules TO market_network;
-CREATE POLICY network_isolation ON market_schedules TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE inventory ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON inventory TO market_network;
-CREATE POLICY network_isolation ON inventory TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON orders TO market_network;
-CREATE POLICY network_isolation ON orders TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON order_items TO market_network;
-CREATE POLICY network_isolation ON order_items TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE purchases ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON purchases TO market_network;
-CREATE POLICY network_isolation ON purchases TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE order_events ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON order_events TO market_network;
-CREATE POLICY network_isolation ON order_events TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE customer_profiles ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON customer_profiles TO market_network;
-CREATE POLICY network_isolation ON customer_profiles TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE driver_profiles ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON driver_profiles TO market_network;
-CREATE POLICY network_isolation ON driver_profiles TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON invitations TO market_network;
-CREATE POLICY network_isolation ON invitations TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE api_tokens ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON api_tokens TO market_network;
-CREATE POLICY network_isolation ON api_tokens TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON audit_events TO market_network;
-CREATE POLICY network_isolation ON audit_events TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE schedule_inventory ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON schedule_inventory TO market_network;
-CREATE POLICY network_isolation ON schedule_inventory TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE background_job_runs ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON background_job_runs TO market_network;
-CREATE POLICY network_isolation ON background_job_runs TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid)
- WITH CHECK (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE network_memberships ENABLE ROW LEVEL SECURITY;
-GRANT SELECT ON network_memberships TO market_network;
-CREATE POLICY network_isolation ON network_memberships FOR SELECT TO market_network
- USING (network_id = nullif(current_setting('app.network_id', true), '')::uuid);
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-GRANT SELECT ON users TO market_network;
-GRANT UPDATE (name, updated_at) ON users TO market_network;
-CREATE POLICY network_people ON users FOR SELECT TO market_network
- USING (id = current_setting('app.user_id', true) OR EXISTS (SELECT 1 FROM network_memberships m WHERE m.user_id = users.id));
-CREATE POLICY own_name ON users FOR UPDATE TO market_network
- USING (id = current_setting('app.user_id', true)) WITH CHECK (id = current_setting('app.user_id', true));
-
-ALTER TABLE auth_rate_limits ENABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE ON auth_rate_limits TO market_network;
-CREATE POLICY own_address_limits ON auth_rate_limits TO market_network
- USING (key LIKE 'address:' || current_setting('app.network_id', true) || ':%:' || current_setting('app.user_id', true))
- WITH CHECK (key LIKE 'address:' || current_setting('app.network_id', true) || ':%:' || current_setting('app.user_id', true));
+-- Network-scoped list, queue, and history access paths.
+CREATE INDEX "produce_network_farm_idx" ON "produce" USING btree ("network_id","farm_id");--> statement-breakpoint
+CREATE INDEX "api_tokens_network_user_created_idx" ON "api_tokens" USING btree ("network_id","user_id","created_at");--> statement-breakpoint
+CREATE INDEX "background_jobs_network_started_idx" ON "background_job_runs" USING btree ("network_id","started_at");--> statement-breakpoint
+CREATE INDEX "inventory_network_produce_idx" ON "inventory" USING btree ("network_id","produce_id");--> statement-breakpoint
+CREATE INDEX "invitations_network_created_idx" ON "invitations" USING btree ("network_id","created_at");--> statement-breakpoint
+CREATE INDEX "runs_network_start_idx" ON "market_runs" USING btree ("network_id","starts_at","id");--> statement-breakpoint
+CREATE INDEX "runs_network_end_idx" ON "market_runs" USING btree ("network_id","ends_at");--> statement-breakpoint
+CREATE INDEX "orders_network_created_idx" ON "orders" USING btree ("network_id","created_at","id");--> statement-breakpoint
+CREATE INDEX "orders_network_customer_created_idx" ON "orders" USING btree ("network_id","customer_id","created_at","id");--> statement-breakpoint
+CREATE INDEX "orders_network_driver_run_idx" ON "orders" USING btree ("network_id","driver_id","run_id","created_at","id");--> statement-breakpoint
+CREATE INDEX "orders_network_run_created_idx" ON "orders" USING btree ("network_id","run_id","created_at","id");--> statement-breakpoint
+CREATE INDEX "orders_available_network_run_idx" ON "orders" USING btree ("network_id","run_id","created_at","id") WHERE "orders"."status" = 'placed' AND "orders"."driver_id" IS NULL;--> statement-breakpoint
+CREATE INDEX "schedule_inventory_network_produce_idx" ON "schedule_inventory" USING btree ("network_id","produce_id");--> statement-breakpoint
+CREATE INDEX "network_memberships_user_network_idx" ON "network_memberships" USING btree ("user_id","network_id");

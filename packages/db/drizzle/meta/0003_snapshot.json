@@ -13,7 +13,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -103,7 +103,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -173,6 +173,27 @@
         }
       },
       "indexes": {
+        "produce_network_farm_idx": {
+          "name": "produce_network_farm_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "farm_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "produce_farm_idx": {
           "name": "produce_farm_idx",
           "columns": [
@@ -703,7 +724,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -771,6 +792,33 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "api_tokens_network_user_created_idx": {
+          "name": "api_tokens_network_user_created_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -824,7 +872,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -903,7 +951,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -1000,6 +1048,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "background_jobs_network_started_idx": {
+          "name": "background_jobs_network_started_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -1037,7 +1106,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "user_id": {
           "name": "user_id",
@@ -1197,7 +1266,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "user_id": {
           "name": "user_id",
@@ -1285,7 +1354,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -1334,6 +1403,27 @@
         }
       },
       "indexes": {
+        "inventory_network_produce_idx": {
+          "name": "inventory_network_produce_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "produce_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "inventory_run_produce_unique": {
           "name": "inventory_run_produce_unique",
           "columns": [
@@ -1456,7 +1546,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -1527,6 +1617,27 @@
           "columns": [
             {
               "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "invitations_network_created_idx": {
+          "name": "invitations_network_created_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1607,7 +1718,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -1682,6 +1793,54 @@
         }
       },
       "indexes": {
+        "runs_network_start_idx": {
+          "name": "runs_network_start_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "runs_network_end_idx": {
+          "name": "runs_network_end_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ends_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "runs_schedule_idx": {
           "name": "runs_schedule_idx",
           "columns": [
@@ -1823,7 +1982,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -1998,7 +2157,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -2074,7 +2233,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -2205,7 +2364,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -2457,7 +2616,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "id": {
           "name": "id",
@@ -2665,6 +2824,172 @@
         }
       },
       "indexes": {
+        "orders_network_created_idx": {
+          "name": "orders_network_created_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "orders_network_customer_created_idx": {
+          "name": "orders_network_customer_created_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "orders_network_driver_run_idx": {
+          "name": "orders_network_driver_run_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "driver_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "orders_network_run_created_idx": {
+          "name": "orders_network_run_created_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "orders_available_network_run_idx": {
+          "name": "orders_available_network_run_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"orders\".\"status\" = 'placed' AND \"orders\".\"driver_id\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "orders_customer_request_unique": {
           "name": "orders_customer_request_unique",
           "columns": [
@@ -2887,7 +3212,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "order_item_id": {
           "name": "order_item_id",
@@ -2998,7 +3323,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "schedule_id": {
           "name": "schedule_id",
@@ -3032,7 +3357,29 @@
           "default": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "schedule_inventory_network_produce_idx": {
+          "name": "schedule_inventory_network_produce_idx",
+          "columns": [
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "produce_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "schedule_inventory_network_id_networks_id_fk": {
           "name": "schedule_inventory_network_id_networks_id_fk",
@@ -3179,7 +3526,7 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true,
-          "default": "coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)"
+          "default": "'00000000-0000-4000-8000-000000000001'::uuid"
         },
         "user_id": {
           "name": "user_id",
@@ -3195,7 +3542,29 @@
           "default": "'member'"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "network_memberships_user_network_idx": {
+          "name": "network_memberships_user_network_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "network_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "network_memberships_network_id_networks_id_fk": {
           "name": "network_memberships_network_id_networks_id_fk",

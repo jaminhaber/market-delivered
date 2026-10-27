@@ -24,18 +24,37 @@ The committed migration history is preserved unchanged:
 2. `0001_orders_and_fulfillment.sql`: schedules, dated runs, orders, purchases, and history.
 3. `0002_shopping_packing.sql`: packing timestamps and checks.
 
-**One follow-up migration, `0003_networks.sql`, contains all network changes**:
+**Migration `0003_networks.sql` introduces the network layer**:
 ownership and isolation, branding, support contacts, location defaults, and email
 identity. The new networks table includes all configuration columns from the start.
 Existing accounts, vendors, schedules, inventory, orders, and tokens move into Ojai;
 legacy administrators retain global access and gain Ojai administrator membership.
-No application data or merged migration files are replaced.
+The upgrade preserves application data and the `0000`–`0002` migration files.
 
 `npm run db:setup` applies the migration history and seeds Ojai for a new database.
-For an existing installation, `npm run db:migrate` applies only the network upgrade;
-the API also migrates on startup. Future changes should use subsequent migrations.
+For a database without the network migration, `npm run db:migrate` applies it;
+the API also migrates on startup. Recreate disposable staging databases that already
+applied the earlier role-based `0003` version; see [network setup](networks.md#network-isolation-and-database-setup).
+Future released changes should use subsequent migrations.
 The destructive `npm run db:reset:local` command remains available only for
 explicitly resetting disposable local data; it is not required for this upgrade.
+
+## Writing network queries
+
+Request handlers and jobs receive an application-scoped database. The scope follows
+transactions, but queries must explicitly call `networkWhere` for reads, updates,
+join conditions, and upsert `setWhere` clauses, and `networkValues` for inserts:
+
+```ts
+await scoped.select().from(farms).where(networkWhere(scoped, farms));
+await scoped.insert(farms).values(networkValues(scoped, input));
+```
+
+These helpers live in [network-scope.ts](../packages/db/src/network-scope.ts).
+Preserve existing authorization and business conditions when adding the network
+predicate. Global administration, authentication, and trusted CLI code use the
+platform connection and explicit ownership where applicable. Raw SQL does not gain
+an automatic network filter.
 
 ## Checks and E2E tests
 
@@ -52,7 +71,7 @@ npm run test:e2e
 
 Tests start their own web/API servers on ports 5180/3101 and use a separate PostgreSQL container on port 5433 with a temporary filesystem. Override `E2E_DATABASE_URL` only with an isolated database whose name ends in `_e2e`; the runner refuses other names. Tests recreate only this isolated test database’s application schema and migration ledger at startup, create uniquely named fixtures, and never truncate development data. Failure screenshots, traces, and an HTML report are ignored by Git.
 
-The migration test installs the committed schema, creates representative existing data, then applies the network migration and verifies ownership, administrator roles, order snapshots, isolation, and concurrent retries without losing data. It uses a disposable database and requires `CREATEDB` on the isolated test PostgreSQL role (provided by the bundled Docker/CI setup).
+The migration test installs the committed schema, creates representative existing data, then applies the network migration and verifies ownership, administrator roles, order snapshots, isolation, and concurrent retries without losing data. It uses a disposable database and requires `CREATEDB` on the isolated test PostgreSQL role. A separate regression test uses a temporary non-superuser login without `CREATEROLE` to verify migrations and scoped operations need no role administration. The test runner needs `CREATEROLE` to create that disposable login; the bundled Docker/CI setup provides both privileges. Application deployments do not need them.
 
 The suite covers production verification/resend with a stubbed email provider, secure session cookies, production configuration validation, atomic address request limits, administrator driver reassignment, invitation-only signup and sessions, profile persistence, administrator UI, customer checkout, driver shopping and delivery (including shortages and retry), concurrent stock reservation, idempotency, cancellation, cutoff enforcement, authorization, immutable order snapshots, and authenticated MCP tools/token lifecycle. GitHub Actions runs these checks against PostgreSQL and Chromium.
 

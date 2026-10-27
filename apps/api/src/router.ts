@@ -147,9 +147,13 @@ export const appRouter = t.router({
         })
         .from(s.apiTokens)
         .where(
-          and(
-            eq(s.apiTokens.userId, ctx.actor!.id),
-            sql`${s.apiTokens.networkId} IS NULL`,
+          s.networkWhere(
+            ctx.db,
+            s.apiTokens,
+            and(
+              eq(s.apiTokens.userId, ctx.actor!.id),
+              sql`${s.apiTokens.networkId} IS NULL`,
+            ),
           ),
         ),
     ),
@@ -167,11 +171,23 @@ export const appRouter = t.router({
     const [customer] = await ctx.db
       .select()
       .from(s.customerProfiles)
-      .where(eq(s.customerProfiles.userId, ctx.actor.id));
+      .where(
+        s.networkWhere(
+          ctx.db,
+          s.customerProfiles,
+          eq(s.customerProfiles.userId, ctx.actor.id),
+        ),
+      );
     const [driver] = await ctx.db
       .select()
       .from(s.driverProfiles)
-      .where(eq(s.driverProfiles.userId, ctx.actor.id));
+      .where(
+        s.networkWhere(
+          ctx.db,
+          s.driverProfiles,
+          eq(s.driverProfiles.userId, ctx.actor.id),
+        ),
+      );
     return {
       ...ctx.actor,
       network: {
@@ -191,14 +207,18 @@ export const appRouter = t.router({
         .select({ email: s.invitations.email })
         .from(s.invitations)
         .where(
-          and(
-            eq(
-              s.invitations.tokenHash,
-              createHash('sha256').update(input.token).digest('hex'),
+          s.networkWhere(
+            ctx.db,
+            s.invitations,
+            and(
+              eq(
+                s.invitations.tokenHash,
+                createHash('sha256').update(input.token).digest('hex'),
+              ),
+              sql`${s.invitations.expiresAt} > now()`,
+              sql`${s.invitations.usedAt} IS NULL`,
+              sql`${s.invitations.revokedAt} IS NULL`,
             ),
-            sql`${s.invitations.expiresAt} > now()`,
-            sql`${s.invitations.usedAt} IS NULL`,
-            sql`${s.invitations.revokedAt} IS NULL`,
           ),
         );
       ensure(invite, 'This invitation is invalid or expired.', 'NOT_FOUND');
@@ -213,26 +233,34 @@ export const appRouter = t.router({
           .update(s.invitations)
           .set({ usedAt: new Date(), usedBy: ctx.actor!.id })
           .where(
-            and(
-              eq(s.invitations.networkId, ctx.network.id),
-              eq(s.invitations.email, ctx.actor!.email.toLowerCase()),
-              eq(
-                s.invitations.tokenHash,
-                createHash('sha256').update(input.token).digest('hex'),
+            s.networkWhere(
+              tx,
+              s.invitations,
+              and(
+                eq(s.invitations.networkId, ctx.network.id),
+                eq(s.invitations.email, ctx.actor!.email.toLowerCase()),
+                eq(
+                  s.invitations.tokenHash,
+                  createHash('sha256').update(input.token).digest('hex'),
+                ),
+                sql`${s.invitations.expiresAt} > now() AND ${s.invitations.usedAt} IS NULL AND ${s.invitations.revokedAt} IS NULL`,
               ),
-              sql`${s.invitations.expiresAt} > now() AND ${s.invitations.usedAt} IS NULL AND ${s.invitations.revokedAt} IS NULL`,
             ),
           )
           .returning();
         ensure(invite, 'This invitation is invalid or expired.', 'NOT_FOUND');
         await tx
           .insert(s.networkMemberships)
-          .values({
-            networkId: invite.networkId,
-            userId: ctx.actor!.id,
-            role: invite.role === 'network_admin' ? 'network_admin' : 'member',
-          })
+          .values(
+            s.networkValues(tx, {
+              networkId: invite.networkId,
+              userId: ctx.actor!.id,
+              role:
+                invite.role === 'network_admin' ? 'network_admin' : 'member',
+            }),
+          )
           .onConflictDoUpdate({
+            setWhere: s.networkWhere(tx, s.networkMemberships),
             target: [
               s.networkMemberships.networkId,
               s.networkMemberships.userId,
@@ -244,18 +272,25 @@ export const appRouter = t.router({
           });
         await tx
           .insert(s.customerProfiles)
-          .values({ networkId: invite.networkId, userId: ctx.actor!.id })
+          .values(
+            s.networkValues(tx, {
+              networkId: invite.networkId,
+              userId: ctx.actor!.id,
+            }),
+          )
           .onConflictDoNothing();
         if (invite.role === 'driver')
           await tx
             .insert(s.driverProfiles)
-            .values({
-              networkId: invite.networkId,
-              userId: ctx.actor!.id,
-              phone: '',
-              vehicle: '',
-              status: 'approved',
-            })
+            .values(
+              s.networkValues(tx, {
+                networkId: invite.networkId,
+                userId: ctx.actor!.id,
+                phone: '',
+                vehicle: '',
+                status: 'approved',
+              }),
+            )
             .onConflictDoNothing();
         return { success: true };
       });
@@ -300,7 +335,13 @@ export const appRouter = t.router({
       const [profile] = await ctx.db
         .select()
         .from(s.customerProfiles)
-        .where(eq(s.customerProfiles.userId, ctx.actor.id));
+        .where(
+          s.networkWhere(
+            ctx.db,
+            s.customerProfiles,
+            eq(s.customerProfiles.userId, ctx.actor.id),
+          ),
+        );
       ensure(profile, 'Save your delivery address first');
       const address = addressInput.parse(profile);
       const match = await geocodeAddress(address, ctx.googleMapsKey);
@@ -341,15 +382,25 @@ export const appRouter = t.router({
             },
           })
           .from(s.produce)
-          .innerJoin(s.farms, eq(s.produce.farmId, s.farms.id))
+          .innerJoin(
+            s.farms,
+            s.networkWhere(ctx.db, s.farms, eq(s.produce.farmId, s.farms.id)),
+          )
           .where(
-            and(
-              input.category
-                ? eq(s.produce.category, input.category)
-                : undefined,
-              input.search
-                ? or(ilike(s.produce.name, search), ilike(s.farms.name, search))
-                : undefined,
+            s.networkWhere(
+              ctx.db,
+              s.produce,
+              and(
+                input.category
+                  ? eq(s.produce.category, input.category)
+                  : undefined,
+                input.search
+                  ? or(
+                      ilike(s.produce.name, search),
+                      ilike(s.farms.name, search),
+                    )
+                  : undefined,
+              ),
             ),
           )
           .orderBy(asc(s.produce.name))
@@ -358,7 +409,11 @@ export const appRouter = t.router({
   }),
   markets: t.router({
     list: authenticated.query(({ ctx }) =>
-      ctx.db.select().from(s.markets).orderBy(asc(s.markets.name)),
+      ctx.db
+        .select()
+        .from(s.markets)
+        .where(s.networkWhere(ctx.db, s.markets))
+        .orderBy(asc(s.markets.name)),
     ),
     runs: authenticated.query(async ({ ctx }) => {
       return ctx.db
@@ -377,9 +432,20 @@ export const appRouter = t.router({
           status: s.marketRuns.status,
         })
         .from(s.marketRuns)
-        .innerJoin(s.markets, eq(s.marketRuns.marketId, s.markets.id))
+        .innerJoin(
+          s.markets,
+          s.networkWhere(
+            ctx.db,
+            s.markets,
+            eq(s.marketRuns.marketId, s.markets.id),
+          ),
+        )
         .where(
-          sql`${s.marketRuns.cutoffAt} > now() AND ${s.marketRuns.startsAt} <= now() + interval '14 days' AND ${s.marketRuns.status} = 'scheduled'`,
+          s.networkWhere(
+            ctx.db,
+            s.marketRuns,
+            sql`${s.marketRuns.cutoffAt} > now() AND ${s.marketRuns.startsAt} <= now() + interval '14 days' AND ${s.marketRuns.status} = 'scheduled'`,
+          ),
         )
         .orderBy(asc(s.marketRuns.startsAt))
         .limit(100);
@@ -401,13 +467,27 @@ export const appRouter = t.router({
           source: s.farms.name,
         })
         .from(s.inventory)
-        .innerJoin(s.produce, eq(s.produce.id, s.inventory.produceId))
-        .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
+        .innerJoin(
+          s.produce,
+          s.networkWhere(
+            ctx.db,
+            s.produce,
+            eq(s.produce.id, s.inventory.produceId),
+          ),
+        )
+        .innerJoin(
+          s.farms,
+          s.networkWhere(ctx.db, s.farms, eq(s.farms.id, s.produce.farmId)),
+        )
         .where(
-          and(
-            eq(s.inventory.runId, input.id),
-            eq(s.inventory.active, true),
-            eq(s.farms.active, true),
+          s.networkWhere(
+            ctx.db,
+            s.inventory,
+            and(
+              eq(s.inventory.runId, input.id),
+              eq(s.inventory.active, true),
+              eq(s.farms.active, true),
+            ),
           ),
         )
         .orderBy(asc(s.produce.name)),
@@ -534,7 +614,11 @@ export const appRouter = t.router({
   }),
   farms: t.router({
     list: authenticated.query(({ ctx }) =>
-      ctx.db.select().from(s.farms).orderBy(asc(s.farms.name), asc(s.farms.id)),
+      ctx.db
+        .select()
+        .from(s.farms)
+        .where(s.networkWhere(ctx.db, s.farms))
+        .orderBy(asc(s.farms.name), asc(s.farms.id)),
     ),
   }),
   admin: t.router({
@@ -565,7 +649,13 @@ export const appRouter = t.router({
         const rows = await ctx.db
           .select()
           .from(s.orders)
-          .where(input.runId ? eq(s.orders.runId, input.runId) : undefined)
+          .where(
+            s.networkWhere(
+              ctx.db,
+              s.orders,
+              input.runId ? eq(s.orders.runId, input.runId) : undefined,
+            ),
+          )
           .orderBy(desc(s.orders.createdAt), desc(s.orders.id))
           .limit(input.limit)
           .offset(input.offset);
@@ -585,14 +675,24 @@ export const appRouter = t.router({
           availableQuantity: sql<number>`${s.inventory.quantity} - ${s.inventory.reservedQuantity}`,
         })
         .from(s.inventory)
-        .innerJoin(s.produce, eq(s.produce.id, s.inventory.produceId))
-        .where(eq(s.inventory.runId, input.id))
+        .innerJoin(
+          s.produce,
+          s.networkWhere(
+            ctx.db,
+            s.produce,
+            eq(s.produce.id, s.inventory.produceId),
+          ),
+        )
+        .where(
+          s.networkWhere(ctx.db, s.inventory, eq(s.inventory.runId, input.id)),
+        )
         .orderBy(asc(s.produce.name)),
     ),
     jobs: admin.query(({ ctx }) =>
       ctx.db
         .select()
         .from(s.backgroundJobRuns)
+        .where(s.networkWhere(ctx.db, s.backgroundJobRuns))
         .orderBy(desc(s.backgroundJobRuns.startedAt))
         .limit(20),
     ),
@@ -603,7 +703,15 @@ export const appRouter = t.router({
       ctx.db
         .select({ schedule: s.marketSchedules, market: s.markets })
         .from(s.marketSchedules)
-        .innerJoin(s.markets, eq(s.marketSchedules.marketId, s.markets.id))
+        .where(s.networkWhere(ctx.db, s.marketSchedules))
+        .innerJoin(
+          s.markets,
+          s.networkWhere(
+            ctx.db,
+            s.markets,
+            eq(s.marketSchedules.marketId, s.markets.id),
+          ),
+        )
         .orderBy(asc(s.markets.name), asc(s.marketSchedules.weekday)),
     ),
     saveSchedule: admin
@@ -623,6 +731,7 @@ export const appRouter = t.router({
           revokedAt: s.invitations.revokedAt,
         })
         .from(s.invitations)
+        .where(s.networkWhere(ctx.db, s.invitations))
         .orderBy(desc(s.invitations.createdAt))
         .limit(100),
     ),
@@ -656,7 +765,15 @@ export const appRouter = t.router({
       return ctx.db
         .select({ run: s.marketRuns, market: s.markets })
         .from(s.marketRuns)
-        .innerJoin(s.markets, eq(s.marketRuns.marketId, s.markets.id))
+        .where(s.networkWhere(ctx.db, s.marketRuns))
+        .innerJoin(
+          s.markets,
+          s.networkWhere(
+            ctx.db,
+            s.markets,
+            eq(s.marketRuns.marketId, s.markets.id),
+          ),
+        )
         .orderBy(
           sql`CASE WHEN ${s.marketRuns.status} IN ('shopping', 'delivering') THEN 0
             WHEN ${s.marketRuns.status} = 'scheduled' AND ${s.marketRuns.endsAt} > now() THEN 1
@@ -676,6 +793,7 @@ export const appRouter = t.router({
           email: s.user.email,
         })
         .from(s.driverProfiles)
+        .where(s.networkWhere(ctx.db, s.driverProfiles))
         .innerJoin(s.user, eq(s.user.id, s.driverProfiles.userId)),
     ),
     reviewDriver: admin
@@ -703,7 +821,13 @@ export const appRouter = t.router({
           revokedAt: s.apiTokens.revokedAt,
         })
         .from(s.apiTokens)
-        .where(eq(s.apiTokens.userId, ctx.actor.id)),
+        .where(
+          s.networkWhere(
+            ctx.db,
+            s.apiTokens,
+            eq(s.apiTokens.userId, ctx.actor.id),
+          ),
+        ),
     ),
     createToken: admin
       .input(z.object({ name: z.string().trim().min(2).max(100) }))

@@ -158,19 +158,22 @@ export async function lockRun(
   const [run] = await tx
     .select()
     .from(s.marketRuns)
-    .where(eq(s.marketRuns.id, id))
+    .where(s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, id)))
     .for(strength);
   ensure(run, 'Market run not found', 'NOT_FOUND');
   return run;
 }
 export async function lockOrder(tx: Tx, id: string) {
-  const [initial] = await tx.select().from(s.orders).where(eq(s.orders.id, id));
+  const [initial] = await tx
+    .select()
+    .from(s.orders)
+    .where(s.networkWhere(tx, s.orders, eq(s.orders.id, id)));
   ensure(initial, 'Order not found', 'NOT_FOUND');
   const run = await lockRun(tx, initial.runId);
   const [order] = await tx
     .select()
     .from(s.orders)
-    .where(eq(s.orders.id, id))
+    .where(s.networkWhere(tx, s.orders, eq(s.orders.id, id)))
     .for('update');
   ensure(order, 'Order not found', 'NOT_FOUND');
   return { order, run };
@@ -189,13 +192,19 @@ async function purchaseVersion(tx: Tx, previous: Date[]) {
 async function audit(tx: Tx, actor: Actor, action: string, targetId: string) {
   await tx
     .insert(s.auditEvents)
-    .values({ actorId: actor.id, action, targetId });
+    .values(s.networkValues(tx, { actorId: actor.id, action, targetId }));
 }
 async function driverCheck(tx: Tx, actor: Actor) {
   const [driver] = await tx
     .select()
     .from(s.driverProfiles)
-    .where(eq(s.driverProfiles.userId, actor.id))
+    .where(
+      s.networkWhere(
+        tx,
+        s.driverProfiles,
+        eq(s.driverProfiles.userId, actor.id),
+      ),
+    )
     .for('share');
   ensure(
     driver?.status === 'approved' &&
@@ -217,9 +226,13 @@ async function claimOrders(
     .select()
     .from(s.orders)
     .where(
-      and(
-        eq(s.orders.runId, input.runId),
-        inArray(s.orders.id, input.orderIds),
+      s.networkWhere(
+        tx,
+        s.orders,
+        and(
+          eq(s.orders.runId, input.runId),
+          inArray(s.orders.id, input.orderIds),
+        ),
       ),
     )
     .orderBy(asc(s.orders.id))
@@ -264,24 +277,30 @@ async function claimOrders(
     ? await tx
         .update(s.orders)
         .set({ driverId: actor.id, claimedAt: now, status: 'claimed' })
-        .where(inArray(s.orders.id, ids))
+        .where(s.networkWhere(tx, s.orders, inArray(s.orders.id, ids)))
         .returning()
     : [];
   if (ids.length) {
     await tx.insert(s.orderEvents).values(
-      ids.map((orderId) => ({
-        orderId,
-        actorId: actor.id,
-        status: 'claimed' as const,
-        note: 'A driver claimed your order.',
-      })),
+      s.networkValues(
+        tx,
+        ids.map((orderId) => ({
+          orderId,
+          actorId: actor.id,
+          status: 'claimed' as const,
+          note: 'A driver claimed your order.',
+        })),
+      ),
     );
     await tx.insert(s.auditEvents).values(
-      ids.map((targetId) => ({
-        actorId: actor.id,
-        action: 'order.claimed',
-        targetId,
-      })),
+      s.networkValues(
+        tx,
+        ids.map((targetId) => ({
+          actorId: actor.id,
+          action: 'order.claimed',
+          targetId,
+        })),
+      ),
     );
   }
   return {
@@ -298,10 +317,14 @@ async function lockDriverTrip(tx: Tx, actor: Actor, runId: string) {
     .select()
     .from(s.orders)
     .where(
-      and(
-        eq(s.orders.runId, runId),
-        eq(s.orders.driverId, actor.id),
-        sql`${s.orders.status} <> 'cancelled'`,
+      s.networkWhere(
+        tx,
+        s.orders,
+        and(
+          eq(s.orders.runId, runId),
+          eq(s.orders.driverId, actor.id),
+          sql`${s.orders.status} <> 'cancelled'`,
+        ),
       ),
     )
     .orderBy(asc(s.orders.id))
@@ -317,8 +340,17 @@ async function finalizeShopping(
   const items = await tx
     .select({ item: s.orderItems, purchase: s.purchases })
     .from(s.orderItems)
-    .leftJoin(s.purchases, eq(s.purchases.orderItemId, s.orderItems.id))
-    .where(eq(s.orderItems.orderId, order.id));
+    .leftJoin(
+      s.purchases,
+      s.networkWhere(
+        tx,
+        s.purchases,
+        eq(s.purchases.orderItemId, s.orderItems.id),
+      ),
+    )
+    .where(
+      s.networkWhere(tx, s.orderItems, eq(s.orderItems.orderId, order.id)),
+    );
   let quantity = 0,
     charge = 0;
   for (const { item, purchase } of items) {
@@ -336,7 +368,7 @@ async function finalizeShopping(
         fulfilledQuantity: purchase.quantity,
         actualCostCents: purchase.totalCostCents,
       })
-      .where(eq(s.orderItems.id, item.id));
+      .where(s.networkWhere(tx, s.orderItems, eq(s.orderItems.id, item.id)));
     quantity += purchase.quantity;
     charge += purchase.quantity * item.priceCents;
   }
@@ -346,13 +378,15 @@ async function finalizeShopping(
   await tx
     .update(s.orders)
     .set({ status, actualTotalCents })
-    .where(eq(s.orders.id, order.id));
-  await tx.insert(s.orderEvents).values({
-    orderId: order.id,
-    actorId: actor.id,
-    status,
-    note: 'Shopping complete; purchased quantities and shortages recorded.',
-  });
+    .where(s.networkWhere(tx, s.orders, eq(s.orders.id, order.id)));
+  await tx.insert(s.orderEvents).values(
+    s.networkValues(tx, {
+      orderId: order.id,
+      actorId: actor.id,
+      status,
+      note: 'Shopping complete; purchased quantities and shortages recorded.',
+    }),
+  );
 }
 export function operations(db: s.Database, actor: Actor) {
   function admin() {
@@ -369,7 +403,13 @@ export function operations(db: s.Database, actor: Actor) {
         const [previous] = await tx
           .select()
           .from(s.customerProfiles)
-          .where(eq(s.customerProfiles.userId, actor.id))
+          .where(
+            s.networkWhere(
+              tx,
+              s.customerProfiles,
+              eq(s.customerProfiles.userId, actor.id),
+            ),
+          )
           .for('update');
         const changed =
           !previous ||
@@ -394,8 +434,9 @@ export function operations(db: s.Database, actor: Actor) {
         };
         await tx
           .insert(s.customerProfiles)
-          .values({ userId: actor.id, ...profile })
+          .values(s.networkValues(tx, { userId: actor.id, ...profile }))
           .onConflictDoUpdate({
+            setWhere: s.networkWhere(tx, s.customerProfiles),
             target: [s.customerProfiles.networkId, s.customerProfiles.userId],
             set: profile,
           });
@@ -417,12 +458,16 @@ export function operations(db: s.Database, actor: Actor) {
           geocodedAt: new Date(),
         })
         .where(
-          and(
-            eq(s.customerProfiles.userId, actor.id),
-            ...Object.keys(addressInput.shape).map((key) =>
-              eq(
-                s.customerProfiles[key as keyof typeof address],
-                address[key as keyof typeof address],
+          s.networkWhere(
+            db,
+            s.customerProfiles,
+            and(
+              eq(s.customerProfiles.userId, actor.id),
+              ...Object.keys(addressInput.shape).map((key) =>
+                eq(
+                  s.customerProfiles[key as keyof typeof address],
+                  address[key as keyof typeof address],
+                ),
               ),
             ),
           ),
@@ -440,7 +485,13 @@ export function operations(db: s.Database, actor: Actor) {
         const [existing] = await tx
           .select()
           .from(s.driverProfiles)
-          .where(eq(s.driverProfiles.userId, actor.id));
+          .where(
+            s.networkWhere(
+              tx,
+              s.driverProfiles,
+              eq(s.driverProfiles.userId, actor.id),
+            ),
+          );
         ensure(
           existing,
           'Driver access requires a driver invitation.',
@@ -449,7 +500,13 @@ export function operations(db: s.Database, actor: Actor) {
         await tx
           .update(s.driverProfiles)
           .set({ phone: input.phone, vehicle: input.vehicle })
-          .where(eq(s.driverProfiles.userId, actor.id));
+          .where(
+            s.networkWhere(
+              tx,
+              s.driverProfiles,
+              eq(s.driverProfiles.userId, actor.id),
+            ),
+          );
         if (input.name)
           await tx
             .update(s.user)
@@ -468,12 +525,14 @@ export function operations(db: s.Database, actor: Actor) {
         const expiresAt = new Date(Date.now() + 7 * 86400000);
         const [invitation] = await tx
           .insert(s.invitations)
-          .values({
-            ...input,
-            createdBy: actor.id,
-            tokenHash: createHash('sha256').update(token).digest('hex'),
-            expiresAt,
-          })
+          .values(
+            s.networkValues(tx, {
+              ...input,
+              createdBy: actor.id,
+              tokenHash: createHash('sha256').update(token).digest('hex'),
+              expiresAt,
+            }),
+          )
           .returning({ id: s.invitations.id });
         await audit(tx, actor, 'invitation.created', invitation!.id);
         return { token, id: invitation!.id, expiresAt };
@@ -485,7 +544,7 @@ export function operations(db: s.Database, actor: Actor) {
         await tx
           .update(s.invitations)
           .set({ revokedAt: new Date() })
-          .where(eq(s.invitations.id, id));
+          .where(s.networkWhere(tx, s.invitations, eq(s.invitations.id, id)));
         await audit(tx, actor, 'invitation.revoked', id);
         return { success: true };
       });
@@ -496,13 +555,15 @@ export function operations(db: s.Database, actor: Actor) {
         const token = `md_${randomBytes(32).toString('hex')}`;
         const [saved] = await tx
           .insert(s.apiTokens)
-          .values({
-            userId: actor.id,
-            name,
-            tokenHash: createHash('sha256').update(token).digest('hex'),
-            lastFour: token.slice(-4),
-            expiresAt: new Date(Date.now() + 90 * 86400000),
-          })
+          .values(
+            s.networkValues(tx, {
+              userId: actor.id,
+              name,
+              tokenHash: createHash('sha256').update(token).digest('hex'),
+              lastFour: token.slice(-4),
+              expiresAt: new Date(Date.now() + 90 * 86400000),
+            }),
+          )
           .returning({ id: s.apiTokens.id });
         await audit(tx, actor, 'api_token.created', saved!.id);
         return { token };
@@ -514,7 +575,13 @@ export function operations(db: s.Database, actor: Actor) {
         const [saved] = await tx
           .update(s.apiTokens)
           .set({ revokedAt: new Date() })
-          .where(and(eq(s.apiTokens.id, id), eq(s.apiTokens.userId, actor.id)))
+          .where(
+            s.networkWhere(
+              tx,
+              s.apiTokens,
+              and(eq(s.apiTokens.id, id), eq(s.apiTokens.userId, actor.id)),
+            ),
+          )
           .returning({ id: s.apiTokens.id });
         if (saved) await audit(tx, actor, 'api_token.revoked', id);
         return { success: true };
@@ -523,7 +590,10 @@ export function operations(db: s.Database, actor: Actor) {
     async createFarm(input: z.infer<typeof farmInput>) {
       admin();
       return db.transaction(async (tx) => {
-        const [farm] = await tx.insert(s.farms).values(input).returning();
+        const [farm] = await tx
+          .insert(s.farms)
+          .values(s.networkValues(tx, input))
+          .returning();
         await audit(tx, actor, 'farm.created', farm!.id);
         return farm!;
       });
@@ -534,7 +604,7 @@ export function operations(db: s.Database, actor: Actor) {
         const [farm] = await tx
           .update(s.farms)
           .set(input)
-          .where(eq(s.farms.id, id))
+          .where(s.networkWhere(tx, s.farms, eq(s.farms.id, id)))
           .returning();
         ensure(farm, 'Farm not found', 'NOT_FOUND');
         await audit(
@@ -552,12 +622,15 @@ export function operations(db: s.Database, actor: Actor) {
         const [market] = await tx
           .select()
           .from(s.markets)
-          .where(eq(s.markets.id, input.marketId));
+          .where(
+            s.networkWhere(tx, s.markets, eq(s.markets.id, input.marketId)),
+          );
         ensure(market, 'Market not found', 'NOT_FOUND');
         const [schedule] = await tx
           .insert(s.marketSchedules)
-          .values(input)
+          .values(s.networkValues(tx, input))
           .onConflictDoUpdate({
+            setWhere: s.networkWhere(tx, s.marketSchedules),
             target: [s.marketSchedules.marketId, s.marketSchedules.weekday],
             set: input,
           })
@@ -572,18 +645,27 @@ export function operations(db: s.Database, actor: Actor) {
         const [schedule] = await tx
           .select()
           .from(s.marketSchedules)
-          .where(eq(s.marketSchedules.id, input.scheduleId))
+          .where(
+            s.networkWhere(
+              tx,
+              s.marketSchedules,
+              eq(s.marketSchedules.id, input.scheduleId),
+            ),
+          )
           .for('update');
         ensure(schedule, 'Schedule not found', 'NOT_FOUND');
         const [item] = await tx
           .select()
           .from(s.produce)
-          .where(eq(s.produce.id, input.produceId));
+          .where(
+            s.networkWhere(tx, s.produce, eq(s.produce.id, input.produceId)),
+          );
         ensure(item, 'Produce not found', 'NOT_FOUND');
         const [template] = await tx
           .insert(s.scheduleInventory)
-          .values(input)
+          .values(s.networkValues(tx, input))
           .onConflictDoUpdate({
+            setWhere: s.networkWhere(tx, s.scheduleInventory),
             target: [
               s.scheduleInventory.scheduleId,
               s.scheduleInventory.produceId,
@@ -598,7 +680,10 @@ export function operations(db: s.Database, actor: Actor) {
     async createMarket(input: z.infer<typeof marketInput>) {
       admin();
       return db.transaction(async (tx) => {
-        const [market] = await tx.insert(s.markets).values(input).returning();
+        const [market] = await tx
+          .insert(s.markets)
+          .values(s.networkValues(tx, input))
+          .returning();
         await audit(tx, actor, 'market.created', market!.id);
         return market!;
       });
@@ -609,14 +694,16 @@ export function operations(db: s.Database, actor: Actor) {
         const [market] = await tx
           .select()
           .from(s.markets)
-          .where(eq(s.markets.id, id))
+          .where(s.networkWhere(tx, s.markets, eq(s.markets.id, id)))
           .for('update');
         ensure(market, 'Market not found', 'NOT_FOUND');
         if (market.timezone !== input.timezone) {
           const [run] = await tx
             .select({ id: s.marketRuns.id })
             .from(s.marketRuns)
-            .where(eq(s.marketRuns.marketId, id))
+            .where(
+              s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.marketId, id)),
+            )
             .limit(1);
           ensure(
             !run,
@@ -627,7 +714,7 @@ export function operations(db: s.Database, actor: Actor) {
         const [updated] = await tx
           .update(s.markets)
           .set(input)
-          .where(eq(s.markets.id, id))
+          .where(s.networkWhere(tx, s.markets, eq(s.markets.id, id)))
           .returning();
         await audit(tx, actor, 'market.updated', id);
         return updated!;
@@ -649,7 +736,7 @@ export function operations(db: s.Database, actor: Actor) {
         const [order] = await tx
           .select({ id: s.orders.id })
           .from(s.orders)
-          .where(eq(s.orders.runId, id))
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.runId, id)))
           .limit(1);
         ensure(
           !order,
@@ -670,10 +757,14 @@ export function operations(db: s.Database, actor: Actor) {
           .select({ id: s.marketRuns.id })
           .from(s.marketRuns)
           .where(
-            and(
-              eq(s.marketRuns.marketId, run.marketId),
-              eq(s.marketRuns.startsAt, startsAt),
-              sql`${s.marketRuns.id} <> ${id}`,
+            s.networkWhere(
+              tx,
+              s.marketRuns,
+              and(
+                eq(s.marketRuns.marketId, run.marketId),
+                eq(s.marketRuns.startsAt, startsAt),
+                sql`${s.marketRuns.id} <> ${id}`,
+              ),
             ),
           )
           .limit(1);
@@ -692,7 +783,7 @@ export function operations(db: s.Database, actor: Actor) {
             deliveryStartAt: new Date(input.deliveryStartAt),
             deliveryEndAt: new Date(input.deliveryEndAt),
           })
-          .where(eq(s.marketRuns.id, id))
+          .where(s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, id)))
           .returning();
         await audit(tx, actor, 'run.updated', id);
         return updated!;
@@ -704,19 +795,27 @@ export function operations(db: s.Database, actor: Actor) {
         const [item] = await tx
           .select()
           .from(s.produce)
-          .where(eq(s.produce.id, id))
+          .where(s.networkWhere(tx, s.produce, eq(s.produce.id, id)))
           .for('update');
         ensure(item, 'Produce not found', 'NOT_FOUND');
         if (item.unit !== input.unit) {
           const [stock] = await tx
             .select({ id: s.inventory.id })
             .from(s.inventory)
-            .where(eq(s.inventory.produceId, id))
+            .where(
+              s.networkWhere(tx, s.inventory, eq(s.inventory.produceId, id)),
+            )
             .limit(1);
           const [template] = await tx
             .select({ id: s.scheduleInventory.produceId })
             .from(s.scheduleInventory)
-            .where(eq(s.scheduleInventory.produceId, id))
+            .where(
+              s.networkWhere(
+                tx,
+                s.scheduleInventory,
+                eq(s.scheduleInventory.produceId, id),
+              ),
+            )
             .limit(1);
           ensure(
             !stock && !template,
@@ -727,19 +826,27 @@ export function operations(db: s.Database, actor: Actor) {
         const [farm] = await tx
           .select()
           .from(s.farms)
-          .where(eq(s.farms.id, input.farmId))
+          .where(s.networkWhere(tx, s.farms, eq(s.farms.id, input.farmId)))
           .for('share');
         ensure(farm?.active, 'Choose an active farm');
         if (item.farmId !== input.farmId) {
           const [stock] = await tx
             .select({ id: s.inventory.id })
             .from(s.inventory)
-            .where(eq(s.inventory.produceId, id))
+            .where(
+              s.networkWhere(tx, s.inventory, eq(s.inventory.produceId, id)),
+            )
             .limit(1);
           const [template] = await tx
             .select({ id: s.scheduleInventory.produceId })
             .from(s.scheduleInventory)
-            .where(eq(s.scheduleInventory.produceId, id))
+            .where(
+              s.networkWhere(
+                tx,
+                s.scheduleInventory,
+                eq(s.scheduleInventory.produceId, id),
+              ),
+            )
             .limit(1);
           ensure(
             !stock && !template,
@@ -756,7 +863,7 @@ export function operations(db: s.Database, actor: Actor) {
             unit: input.unit,
             farmId: input.farmId,
           })
-          .where(eq(s.produce.id, id))
+          .where(s.networkWhere(tx, s.produce, eq(s.produce.id, id)))
           .returning();
         await audit(tx, actor, 'produce.updated', id);
         return updated!;
@@ -772,18 +879,22 @@ export function operations(db: s.Database, actor: Actor) {
         const [market] = await tx
           .select()
           .from(s.markets)
-          .where(eq(s.markets.id, input.marketId));
+          .where(
+            s.networkWhere(tx, s.markets, eq(s.markets.id, input.marketId)),
+          );
         ensure(market, 'Market not found', 'NOT_FOUND');
         const [run] = await tx
           .insert(s.marketRuns)
-          .values({
-            ...input,
-            startsAt: new Date(input.startsAt),
-            endsAt: new Date(input.endsAt),
-            cutoffAt: new Date(input.cutoffAt),
-            deliveryStartAt: new Date(input.deliveryStartAt),
-            deliveryEndAt: new Date(input.deliveryEndAt),
-          })
+          .values(
+            s.networkValues(tx, {
+              ...input,
+              startsAt: new Date(input.startsAt),
+              endsAt: new Date(input.endsAt),
+              cutoffAt: new Date(input.cutoffAt),
+              deliveryStartAt: new Date(input.deliveryStartAt),
+              deliveryEndAt: new Date(input.deliveryEndAt),
+            }),
+          )
           .onConflictDoNothing()
           .returning();
         ensure(run, 'This market already has a run at that time', 'CONFLICT');
@@ -802,15 +913,21 @@ export function operations(db: s.Database, actor: Actor) {
         const [item] = await tx
           .select()
           .from(s.produce)
-          .where(eq(s.produce.id, input.produceId));
+          .where(
+            s.networkWhere(tx, s.produce, eq(s.produce.id, input.produceId)),
+          );
         ensure(item, 'Produce not found', 'NOT_FOUND');
         const [existing] = await tx
           .select()
           .from(s.inventory)
           .where(
-            and(
-              eq(s.inventory.runId, input.runId),
-              eq(s.inventory.produceId, input.produceId),
+            s.networkWhere(
+              tx,
+              s.inventory,
+              and(
+                eq(s.inventory.runId, input.runId),
+                eq(s.inventory.produceId, input.produceId),
+              ),
             ),
           );
         ensure(
@@ -819,14 +936,17 @@ export function operations(db: s.Database, actor: Actor) {
         );
         const [entry] = await tx
           .insert(s.inventory)
-          .values({
-            runId: input.runId,
-            produceId: input.produceId,
-            priceCents: input.priceCents,
-            quantity: input.quantity,
-            active: input.active,
-          })
+          .values(
+            s.networkValues(tx, {
+              runId: input.runId,
+              produceId: input.produceId,
+              priceCents: input.priceCents,
+              quantity: input.quantity,
+              active: input.active,
+            }),
+          )
           .onConflictDoUpdate({
+            setWhere: s.networkWhere(tx, s.inventory),
             target: [s.inventory.runId, s.inventory.produceId],
             set: {
               priceCents: input.priceCents,
@@ -838,14 +958,17 @@ export function operations(db: s.Database, actor: Actor) {
         if (input.repeat && run.scheduleId)
           await tx
             .insert(s.scheduleInventory)
-            .values({
-              scheduleId: run.scheduleId,
-              produceId: input.produceId,
-              priceCents: input.priceCents,
-              quantity: input.quantity,
-              active: input.active,
-            })
+            .values(
+              s.networkValues(tx, {
+                scheduleId: run.scheduleId,
+                produceId: input.produceId,
+                priceCents: input.priceCents,
+                quantity: input.quantity,
+                active: input.active,
+              }),
+            )
             .onConflictDoUpdate({
+              setWhere: s.networkWhere(tx, s.scheduleInventory),
               target: [
                 s.scheduleInventory.scheduleId,
                 s.scheduleInventory.produceId,
@@ -866,20 +989,22 @@ export function operations(db: s.Database, actor: Actor) {
         const [farm] = await tx
           .select()
           .from(s.farms)
-          .where(eq(s.farms.id, input.farmId))
+          .where(s.networkWhere(tx, s.farms, eq(s.farms.id, input.farmId)))
           .for('share');
         ensure(farm?.active, 'Choose an active farm');
         const [item] = await tx
           .insert(s.produce)
-          .values({
-            farmId: input.farmId,
-            name: input.name,
-            description: input.description,
-            category: input.category,
-            unit: input.unit,
-            priceCents: 0,
-            availableQuantity: 0,
-          })
+          .values(
+            s.networkValues(tx, {
+              farmId: input.farmId,
+              name: input.name,
+              description: input.description,
+              category: input.category,
+              unit: input.unit,
+              priceCents: 0,
+              availableQuantity: 0,
+            }),
+          )
           .returning();
         await audit(tx, actor, 'produce.created', item!.id);
         return item!;
@@ -891,7 +1016,13 @@ export function operations(db: s.Database, actor: Actor) {
         const [driver] = await tx
           .update(s.driverProfiles)
           .set({ status })
-          .where(eq(s.driverProfiles.userId, userId))
+          .where(
+            s.networkWhere(
+              tx,
+              s.driverProfiles,
+              eq(s.driverProfiles.userId, userId),
+            ),
+          )
           .returning();
         ensure(driver, 'Driver application not found', 'NOT_FOUND');
         await audit(tx, actor, `driver.${status}`, userId);
@@ -940,14 +1071,16 @@ export function operations(db: s.Database, actor: Actor) {
             claimedAt: input.driverId ? new Date() : null,
             status,
           })
-          .where(eq(s.orders.id, order.id))
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, order.id)))
           .returning();
-        await tx.insert(s.orderEvents).values({
-          orderId: order.id,
-          actorId: actor.id,
-          status,
-          note: 'Operations updated the assigned driver.',
-        });
+        await tx.insert(s.orderEvents).values(
+          s.networkValues(tx, {
+            orderId: order.id,
+            actorId: actor.id,
+            status,
+            note: 'Operations updated the assigned driver.',
+          }),
+        );
         await audit(tx, actor, 'order.driver_assigned', order.id);
         return updated!;
       });
@@ -963,9 +1096,13 @@ export function operations(db: s.Database, actor: Actor) {
           .select()
           .from(s.orders)
           .where(
-            and(
-              eq(s.orders.customerId, actor.id),
-              eq(s.orders.requestId, input.requestId),
+            s.networkWhere(
+              tx,
+              s.orders,
+              and(
+                eq(s.orders.customerId, actor.id),
+                eq(s.orders.requestId, input.requestId),
+              ),
             ),
           );
         if (previous) {
@@ -984,7 +1121,13 @@ export function operations(db: s.Database, actor: Actor) {
         const [profile] = await tx
           .select()
           .from(s.customerProfiles)
-          .where(eq(s.customerProfiles.userId, actor.id));
+          .where(
+            s.networkWhere(
+              tx,
+              s.customerProfiles,
+              eq(s.customerProfiles.userId, actor.id),
+            ),
+          );
         ensure(
           profile &&
             profile.street.length >= 3 &&
@@ -1002,12 +1145,26 @@ export function operations(db: s.Database, actor: Actor) {
         const stock = await tx
           .select({ inventory: s.inventory, produce: s.produce, farm: s.farms })
           .from(s.inventory)
-          .innerJoin(s.produce, eq(s.inventory.produceId, s.produce.id))
-          .innerJoin(s.farms, eq(s.farms.id, s.produce.farmId))
+          .innerJoin(
+            s.produce,
+            s.networkWhere(
+              tx,
+              s.produce,
+              eq(s.inventory.produceId, s.produce.id),
+            ),
+          )
+          .innerJoin(
+            s.farms,
+            s.networkWhere(tx, s.farms, eq(s.farms.id, s.produce.farmId)),
+          )
           .where(
-            inArray(
-              s.inventory.id,
-              input.items.map((i) => i.inventoryId),
+            s.networkWhere(
+              tx,
+              s.inventory,
+              inArray(
+                s.inventory.id,
+                input.items.map((i) => i.inventoryId),
+              ),
             ),
           )
           .for('share', { of: s.farms });
@@ -1045,43 +1202,58 @@ export function operations(db: s.Database, actor: Actor) {
         ensure(total <= 100_000_000, 'Order total is too large');
         const [order] = await tx
           .insert(s.orders)
-          .values({
-            customerId: actor.id,
-            runId: run.id,
-            requestId: input.requestId,
-            customerName: actor.name,
-            phone: profile.phone,
-            address: profile.address,
-            googlePlaceId: profile.googlePlaceId,
-            street: profile.street,
-            unit: profile.unit,
-            city: profile.city,
-            region: profile.region,
-            postalCode: profile.postalCode,
-            country: profile.country,
-            latitude: profile.latitude,
-            longitude: profile.longitude,
-            geocodedAddress: profile.geocodedAddress,
-            geocoder: profile.geocoder,
-            geocodedAt: profile.geocodedAt,
-            deliveryNotes: profile.deliveryNotes,
-            deliveryFeeCents: run.deliveryFeeCents,
-            estimatedTotalCents: total,
-          })
+          .values(
+            s.networkValues(tx, {
+              customerId: actor.id,
+              runId: run.id,
+              requestId: input.requestId,
+              customerName: actor.name,
+              phone: profile.phone,
+              address: profile.address,
+              googlePlaceId: profile.googlePlaceId,
+              street: profile.street,
+              unit: profile.unit,
+              city: profile.city,
+              region: profile.region,
+              postalCode: profile.postalCode,
+              country: profile.country,
+              latitude: profile.latitude,
+              longitude: profile.longitude,
+              geocodedAddress: profile.geocodedAddress,
+              geocoder: profile.geocoder,
+              geocodedAt: profile.geocodedAt,
+              deliveryNotes: profile.deliveryNotes,
+              deliveryFeeCents: run.deliveryFeeCents,
+              estimatedTotalCents: total,
+            }),
+          )
           .returning();
-        await tx
-          .insert(s.orderItems)
-          .values(lines.map((line) => ({ ...line, orderId: order!.id })));
+        await tx.insert(s.orderItems).values(
+          s.networkValues(
+            tx,
+            lines.map((line) => ({ ...line, orderId: order!.id })),
+          ),
+        );
         for (const line of lines)
           await tx
             .update(s.inventory)
             .set({
               reservedQuantity: sql`${s.inventory.reservedQuantity} + ${line.quantity}`,
             })
-            .where(eq(s.inventory.id, line.inventoryId));
-        await tx
-          .insert(s.orderEvents)
-          .values({ orderId: order!.id, actorId: actor.id, status: 'placed' });
+            .where(
+              s.networkWhere(
+                tx,
+                s.inventory,
+                eq(s.inventory.id, line.inventoryId),
+              ),
+            );
+        await tx.insert(s.orderEvents).values(
+          s.networkValues(tx, {
+            orderId: order!.id,
+            actorId: actor.id,
+            status: 'placed',
+          }),
+        );
         return order!;
       });
     },
@@ -1090,7 +1262,7 @@ export function operations(db: s.Database, actor: Actor) {
         const [initial] = await tx
           .select()
           .from(s.orders)
-          .where(eq(s.orders.id, id));
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, id)));
         ensure(
           initial && initial.customerId === actor.id,
           'Order not found',
@@ -1100,7 +1272,7 @@ export function operations(db: s.Database, actor: Actor) {
         const [order] = await tx
           .select()
           .from(s.orders)
-          .where(eq(s.orders.id, id))
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, id)))
           .for('update');
         if (order!.status === 'cancelled') return order!;
         ensure(
@@ -1113,22 +1285,34 @@ export function operations(db: s.Database, actor: Actor) {
         const lines = await tx
           .select()
           .from(s.orderItems)
-          .where(eq(s.orderItems.orderId, id));
+          .where(
+            s.networkWhere(tx, s.orderItems, eq(s.orderItems.orderId, id)),
+          );
         for (const line of lines)
           await tx
             .update(s.inventory)
             .set({
               reservedQuantity: sql`${s.inventory.reservedQuantity} - ${line.quantity}`,
             })
-            .where(eq(s.inventory.id, line.inventoryId));
+            .where(
+              s.networkWhere(
+                tx,
+                s.inventory,
+                eq(s.inventory.id, line.inventoryId),
+              ),
+            );
         const [cancelled] = await tx
           .update(s.orders)
           .set({ status: 'cancelled', actualTotalCents: 0 })
-          .where(eq(s.orders.id, id))
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, id)))
           .returning();
-        await tx
-          .insert(s.orderEvents)
-          .values({ orderId: id, actorId: actor.id, status: 'cancelled' });
+        await tx.insert(s.orderEvents).values(
+          s.networkValues(tx, {
+            orderId: id,
+            actorId: actor.id,
+            status: 'cancelled',
+          }),
+        );
         return cancelled!;
       });
     },
@@ -1147,7 +1331,7 @@ export function operations(db: s.Database, actor: Actor) {
         const [initial] = await tx
           .select({ runId: s.orders.runId })
           .from(s.orders)
-          .where(eq(s.orders.id, id));
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, id)));
         ensure(initial, 'Order not found', 'NOT_FOUND');
         const { results, orders } = await claimOrders(tx, actor, {
           runId: initial.runId,
@@ -1176,13 +1360,15 @@ export function operations(db: s.Database, actor: Actor) {
         await tx
           .update(s.orders)
           .set({ status: 'placed', driverId: null, claimedAt: null })
-          .where(eq(s.orders.id, id));
-        await tx.insert(s.orderEvents).values({
-          orderId: id,
-          actorId: actor.id,
-          status: 'placed',
-          note: 'Driver released the order for another driver.',
-        });
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, id)));
+        await tx.insert(s.orderEvents).values(
+          s.networkValues(tx, {
+            orderId: id,
+            actorId: actor.id,
+            status: 'placed',
+            note: 'Driver released the order for another driver.',
+          }),
+        );
         return { success: true };
       });
     },
@@ -1202,13 +1388,16 @@ export function operations(db: s.Database, actor: Actor) {
         await tx
           .update(s.orders)
           .set({ status: 'shopping' })
-          .where(inArray(s.orders.id, ids));
+          .where(s.networkWhere(tx, s.orders, inArray(s.orders.id, ids)));
         await tx.insert(s.orderEvents).values(
-          ids.map((orderId) => ({
-            orderId,
-            actorId: actor.id,
-            status: 'shopping' as const,
-          })),
+          s.networkValues(
+            tx,
+            ids.map((orderId) => ({
+              orderId,
+              actorId: actor.id,
+              status: 'shopping' as const,
+            })),
+          ),
         );
         await audit(tx, actor, 'shopping.batch_started', runId);
         return { ordersStarted: ids.length };
@@ -1227,12 +1416,16 @@ export function operations(db: s.Database, actor: Actor) {
           .select()
           .from(s.orderItems)
           .where(
-            and(
-              inArray(
-                s.orderItems.orderId,
-                shopping.map((order) => order.id),
+            s.networkWhere(
+              tx,
+              s.orderItems,
+              and(
+                inArray(
+                  s.orderItems.orderId,
+                  shopping.map((order) => order.id),
+                ),
+                eq(s.orderItems.inventoryId, input.inventoryId),
               ),
-              eq(s.orderItems.inventoryId, input.inventoryId),
             ),
           )
           .orderBy(asc(s.orderItems.id));
@@ -1250,9 +1443,13 @@ export function operations(db: s.Database, actor: Actor) {
           .select()
           .from(s.purchases)
           .where(
-            inArray(
-              s.purchases.orderItemId,
-              items.map((item) => item.id),
+            s.networkWhere(
+              tx,
+              s.purchases,
+              inArray(
+                s.purchases.orderItemId,
+                items.map((item) => item.id),
+              ),
             ),
           );
         let quantity = 0;
@@ -1321,8 +1518,9 @@ export function operations(db: s.Database, actor: Actor) {
         });
         await tx
           .insert(s.purchases)
-          .values(records)
+          .values(s.networkValues(tx, records))
           .onConflictDoUpdate({
+            setWhere: s.networkWhere(tx, s.purchases),
             target: s.purchases.orderItemId,
             set: {
               quantity: sql`excluded.quantity`,
@@ -1332,11 +1530,14 @@ export function operations(db: s.Database, actor: Actor) {
             },
           });
         await tx.insert(s.auditEvents).values(
-          items.map((item) => ({
-            actorId: actor.id,
-            action: 'purchase.recorded',
-            targetId: item.id,
-          })),
+          s.networkValues(
+            tx,
+            items.map((item) => ({
+              actorId: actor.id,
+              action: 'purchase.recorded',
+              targetId: item.id,
+            })),
+          ),
         );
         return {
           quantity,
@@ -1383,9 +1584,13 @@ export function operations(db: s.Database, actor: Actor) {
           .select()
           .from(s.orderItems)
           .where(
-            and(
-              eq(s.orderItems.id, input.orderItemId),
-              eq(s.orderItems.orderId, order.id),
+            s.networkWhere(
+              tx,
+              s.orderItems,
+              and(
+                eq(s.orderItems.id, input.orderItemId),
+                eq(s.orderItems.orderId, order.id),
+              ),
             ),
           );
         ensure(item, 'Order item not found', 'NOT_FOUND');
@@ -1399,7 +1604,9 @@ export function operations(db: s.Database, actor: Actor) {
         await tx
           .update(s.orderItems)
           .set({ packedAt })
-          .where(eq(s.orderItems.id, item.id));
+          .where(
+            s.networkWhere(tx, s.orderItems, eq(s.orderItems.id, item.id)),
+          );
         await audit(
           tx,
           actor,
@@ -1430,10 +1637,14 @@ export function operations(db: s.Database, actor: Actor) {
         await tx
           .update(s.orders)
           .set({ status: 'shopping' })
-          .where(eq(s.orders.id, id));
-        await tx
-          .insert(s.orderEvents)
-          .values({ orderId: id, actorId: actor.id, status: 'shopping' });
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, id)));
+        await tx.insert(s.orderEvents).values(
+          s.networkValues(tx, {
+            orderId: id,
+            actorId: actor.id,
+            status: 'shopping',
+          }),
+        );
         return { success: true };
       });
     },
@@ -1460,9 +1671,13 @@ export function operations(db: s.Database, actor: Actor) {
           .select()
           .from(s.orderItems)
           .where(
-            and(
-              eq(s.orderItems.id, input.orderItemId),
-              eq(s.orderItems.orderId, order.id),
+            s.networkWhere(
+              tx,
+              s.orderItems,
+              and(
+                eq(s.orderItems.id, input.orderItemId),
+                eq(s.orderItems.orderId, order.id),
+              ),
             ),
           );
         ensure(item, 'Order item not found', 'NOT_FOUND');
@@ -1477,21 +1692,30 @@ export function operations(db: s.Database, actor: Actor) {
         const [previous] = await tx
           .select({ updatedAt: s.purchases.updatedAt })
           .from(s.purchases)
-          .where(eq(s.purchases.orderItemId, item.id));
+          .where(
+            s.networkWhere(
+              tx,
+              s.purchases,
+              eq(s.purchases.orderItemId, item.id),
+            ),
+          );
         const updatedAt = await purchaseVersion(
           tx,
           previous ? [previous.updatedAt] : [],
         );
         await tx
           .insert(s.purchases)
-          .values({
-            orderItemId: item.id,
-            quantity: input.quantity,
-            totalCostCents: input.totalCostCents,
-            recordedBy: actor.id,
-            updatedAt,
-          })
+          .values(
+            s.networkValues(tx, {
+              orderItemId: item.id,
+              quantity: input.quantity,
+              totalCostCents: input.totalCostCents,
+              recordedBy: actor.id,
+              updatedAt,
+            }),
+          )
           .onConflictDoUpdate({
+            setWhere: s.networkWhere(tx, s.purchases),
             target: s.purchases.orderItemId,
             set: {
               quantity: input.quantity,
@@ -1531,13 +1755,13 @@ export function operations(db: s.Database, actor: Actor) {
         const [initial] = await tx
           .select()
           .from(s.orders)
-          .where(eq(s.orders.id, input.orderId));
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, input.orderId)));
         ensure(initial, 'Order not found', 'NOT_FOUND');
         await lockRun(tx, initial.runId);
         const [assigned] = await tx
           .select()
           .from(s.orders)
-          .where(eq(s.orders.id, input.orderId));
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, input.orderId)));
         if (!actor.admin) {
           await driverCheck(tx, actor);
           ensure(
@@ -1549,7 +1773,7 @@ export function operations(db: s.Database, actor: Actor) {
         const [order] = await tx
           .select()
           .from(s.orders)
-          .where(eq(s.orders.id, input.orderId))
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, input.orderId)))
           .for('update');
         ensure(
           order &&
@@ -1575,14 +1799,16 @@ export function operations(db: s.Database, actor: Actor) {
             cashRecordedBy: actor.id,
             cashNote: input.note,
           })
-          .where(eq(s.orders.id, input.orderId));
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, input.orderId)));
         await audit(tx, actor, 'order.cash_recorded', input.orderId);
-        await tx.insert(s.orderEvents).values({
-          orderId: order.id,
-          actorId: actor.id,
-          status: order.status,
-          note: `Cash collection record set to $${(input.amountCents / 100).toFixed(2)}.${input.note ? ' ' + input.note : ''}`,
-        });
+        await tx.insert(s.orderEvents).values(
+          s.networkValues(tx, {
+            orderId: order.id,
+            actorId: actor.id,
+            status: order.status,
+            note: `Cash collection record set to $${(input.amountCents / 100).toFixed(2)}.${input.note ? ' ' + input.note : ''}`,
+          }),
+        );
         return { success: true };
       });
     },
@@ -1595,13 +1821,13 @@ export function operations(db: s.Database, actor: Actor) {
         const [initial] = await tx
           .select()
           .from(s.orders)
-          .where(eq(s.orders.id, input.orderId));
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, input.orderId)));
         ensure(initial, 'Order not found', 'NOT_FOUND');
         await lockRun(tx, initial.runId);
         const [assigned] = await tx
           .select()
           .from(s.orders)
-          .where(eq(s.orders.id, input.orderId));
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, input.orderId)));
         await driverCheck(tx, actor);
         ensure(
           assigned?.driverId === actor.id,
@@ -1611,7 +1837,7 @@ export function operations(db: s.Database, actor: Actor) {
         const [order] = await tx
           .select()
           .from(s.orders)
-          .where(eq(s.orders.id, input.orderId))
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, input.orderId)))
           .for('update');
         const valid =
           input.status === 'out_for_delivery'
@@ -1628,13 +1854,15 @@ export function operations(db: s.Database, actor: Actor) {
             status: input.status,
             deliveredAt: input.status === 'delivered' ? new Date() : null,
           })
-          .where(eq(s.orders.id, input.orderId));
-        await tx.insert(s.orderEvents).values({
-          orderId: input.orderId,
-          actorId: actor.id,
-          status: input.status,
-          note: input.note,
-        });
+          .where(s.networkWhere(tx, s.orders, eq(s.orders.id, input.orderId)));
+        await tx.insert(s.orderEvents).values(
+          s.networkValues(tx, {
+            orderId: input.orderId,
+            actorId: actor.id,
+            status: input.status,
+            note: input.note,
+          }),
+        );
         return { success: true };
       });
     },
@@ -1651,15 +1879,19 @@ export function operations(db: s.Database, actor: Actor) {
           .select({ id: s.orders.id })
           .from(s.orders)
           .where(
-            and(
-              eq(s.orders.runId, id),
-              inArray(s.orders.status, [
-                'shopping',
-                'ready',
-                'out_for_delivery',
-                'delivery_failed',
-                'delivered',
-              ]),
+            s.networkWhere(
+              tx,
+              s.orders,
+              and(
+                eq(s.orders.runId, id),
+                inArray(s.orders.status, [
+                  'shopping',
+                  'ready',
+                  'out_for_delivery',
+                  'delivery_failed',
+                  'delivered',
+                ]),
+              ),
             ),
           )
           .limit(1);
@@ -1672,7 +1904,7 @@ export function operations(db: s.Database, actor: Actor) {
           const [order] = await tx
             .select({ id: s.orders.id })
             .from(s.orders)
-            .where(eq(s.orders.runId, id))
+            .where(s.networkWhere(tx, s.orders, eq(s.orders.runId, id)))
             .limit(1);
           ensure(
             !order,
@@ -1684,29 +1916,36 @@ export function operations(db: s.Database, actor: Actor) {
           .update(s.orders)
           .set({ status: 'cancelled', actualTotalCents: 0 })
           .where(
-            and(
-              eq(s.orders.runId, id),
-              inArray(s.orders.status, ['placed', 'claimed']),
+            s.networkWhere(
+              tx,
+              s.orders,
+              and(
+                eq(s.orders.runId, id),
+                inArray(s.orders.status, ['placed', 'claimed']),
+              ),
             ),
           )
           .returning();
         if (cancelled.length)
           await tx.insert(s.orderEvents).values(
-            cancelled.map((o) => ({
-              orderId: o.id,
-              actorId: actor.id,
-              status: 'cancelled' as const,
-              note: 'Market run cancelled by operations.',
-            })),
+            s.networkValues(
+              tx,
+              cancelled.map((o) => ({
+                orderId: o.id,
+                actorId: actor.id,
+                status: 'cancelled' as const,
+                note: 'Market run cancelled by operations.',
+              })),
+            ),
           );
         await tx
           .update(s.inventory)
           .set({ reservedQuantity: 0 })
-          .where(eq(s.inventory.runId, id));
+          .where(s.networkWhere(tx, s.inventory, eq(s.inventory.runId, id)));
         await tx
           .update(s.marketRuns)
           .set({ status: 'cancelled' })
-          .where(eq(s.marketRuns.id, id));
+          .where(s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, id)));
         await audit(tx, actor, 'run.cancelled', id);
         return { success: true };
       });

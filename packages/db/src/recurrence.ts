@@ -1,3 +1,4 @@
+import { networkWhere, networkValues } from './network-scope.js';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { Database } from './index.js';
 import {
@@ -19,7 +20,9 @@ export async function ensureUpcomingRuns(
     const schedules = await tx
       .select()
       .from(marketSchedules)
-      .where(eq(marketSchedules.active, true))
+      .where(
+        networkWhere(tx, marketSchedules, eq(marketSchedules.active, true)),
+      )
       .orderBy(asc(marketSchedules.id))
       .for('update');
     let runsCreated = 0;
@@ -27,7 +30,7 @@ export async function ensureUpcomingRuns(
       const [market] = await tx
         .select()
         .from(markets)
-        .where(eq(markets.id, schedule.marketId));
+        .where(networkWhere(tx, markets, eq(markets.id, schedule.marketId)));
       if (!market) continue;
       const { rows: dates } = await tx.execute<{
         starts_at: Date;
@@ -56,9 +59,13 @@ export async function ensureUpcomingRuns(
           .select()
           .from(marketRuns)
           .where(
-            and(
-              eq(marketRuns.marketId, market.id),
-              eq(marketRuns.startsAt, startsAt),
+            networkWhere(
+              tx,
+              marketRuns,
+              and(
+                eq(marketRuns.marketId, market.id),
+                eq(marketRuns.startsAt, startsAt),
+              ),
             ),
           );
         // A cancellation remains a cancellation; continue to the following week.
@@ -73,24 +80,26 @@ export async function ensureUpcomingRuns(
         }
         const [run] = await tx
           .insert(marketRuns)
-          .values({
-            networkId: market.networkId,
-            marketId: market.id,
-            scheduleId: schedule.id,
-            startsAt,
-            endsAt,
-            cutoffAt: new Date(+startsAt - schedule.cutoffMinutes * 60000),
-            deliveryStartAt: new Date(
-              +startsAt + schedule.deliveryDelayMinutes * 60000,
-            ),
-            deliveryEndAt: new Date(
-              +startsAt +
-                (schedule.deliveryDelayMinutes +
-                  schedule.deliveryDurationMinutes) *
-                  60000,
-            ),
-            deliveryFeeCents: schedule.deliveryFeeCents,
-          })
+          .values(
+            networkValues(tx, {
+              networkId: market.networkId,
+              marketId: market.id,
+              scheduleId: schedule.id,
+              startsAt,
+              endsAt,
+              cutoffAt: new Date(+startsAt - schedule.cutoffMinutes * 60000),
+              deliveryStartAt: new Date(
+                +startsAt + schedule.deliveryDelayMinutes * 60000,
+              ),
+              deliveryEndAt: new Date(
+                +startsAt +
+                  (schedule.deliveryDelayMinutes +
+                    schedule.deliveryDurationMinutes) *
+                    60000,
+              ),
+              deliveryFeeCents: schedule.deliveryFeeCents,
+            }),
+          )
           .onConflictDoNothing()
           .returning();
         if (run) {
@@ -98,19 +107,28 @@ export async function ensureUpcomingRuns(
           const templates = await tx
             .select()
             .from(scheduleInventory)
-            .where(eq(scheduleInventory.scheduleId, schedule.id));
+            .where(
+              networkWhere(
+                tx,
+                scheduleInventory,
+                eq(scheduleInventory.scheduleId, schedule.id),
+              ),
+            );
           if (templates.length)
             await tx
               .insert(inventory)
               .values(
-                templates.map((item) => ({
-                  networkId: run.networkId,
-                  runId: run.id,
-                  produceId: item.produceId,
-                  priceCents: item.priceCents,
-                  quantity: item.quantity,
-                  active: item.active,
-                })),
+                networkValues(
+                  tx,
+                  templates.map((item) => ({
+                    networkId: run.networkId,
+                    runId: run.id,
+                    produceId: item.produceId,
+                    priceCents: item.priceCents,
+                    quantity: item.quantity,
+                    active: item.active,
+                  })),
+                ),
               )
               .onConflictDoNothing();
         }

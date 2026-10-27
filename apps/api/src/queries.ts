@@ -10,15 +10,25 @@ export async function orderDetails(
   const runs = await db
     .select()
     .from(s.marketRuns)
-    .where(inArray(s.marketRuns.id, [...new Set(rows.map((r) => r.runId))]));
+    .where(
+      s.networkWhere(
+        db,
+        s.marketRuns,
+        inArray(s.marketRuns.id, [...new Set(rows.map((r) => r.runId))]),
+      ),
+    );
   const items = await db
     .select()
     .from(s.orderItems)
-    .where(inArray(s.orderItems.orderId, ids));
+    .where(
+      s.networkWhere(db, s.orderItems, inArray(s.orderItems.orderId, ids)),
+    );
   const events = await db
     .select()
     .from(s.orderEvents)
-    .where(inArray(s.orderEvents.orderId, ids))
+    .where(
+      s.networkWhere(db, s.orderEvents, inArray(s.orderEvents.orderId, ids)),
+    )
     .orderBy(asc(s.orderEvents.createdAt));
   const driverIds = [
     ...new Set(rows.flatMap((row) => (row.driverId ? [row.driverId] : []))),
@@ -32,7 +42,13 @@ export async function orderDetails(
         })
         .from(s.driverProfiles)
         .innerJoin(s.user, eq(s.user.id, s.driverProfiles.userId))
-        .where(inArray(s.driverProfiles.userId, driverIds))
+        .where(
+          s.networkWhere(
+            db,
+            s.driverProfiles,
+            inArray(s.driverProfiles.userId, driverIds),
+          ),
+        )
     : [];
   return rows.map((order) => ({
     ...order,
@@ -50,13 +66,22 @@ export async function driverOrderDetail(
   const [driver] = await db
     .select()
     .from(s.driverProfiles)
-    .where(eq(s.driverProfiles.userId, actor.id));
+    .where(
+      s.networkWhere(
+        db,
+        s.driverProfiles,
+        eq(s.driverProfiles.userId, actor.id),
+      ),
+    );
   ensure(
     actor.admin || driver?.status === 'approved',
     'Approved driver access required',
     'FORBIDDEN',
   );
-  const [order] = await db.select().from(s.orders).where(eq(s.orders.id, id));
+  const [order] = await db
+    .select()
+    .from(s.orders)
+    .where(s.networkWhere(db, s.orders, eq(s.orders.id, id)));
   ensure(
     order && (actor.admin || order.driverId === actor.id),
     'Order not found',
@@ -66,7 +91,9 @@ export async function driverOrderDetail(
   const [market] = await db
     .select()
     .from(s.markets)
-    .where(eq(s.markets.id, detail!.run.marketId));
+    .where(
+      s.networkWhere(db, s.markets, eq(s.markets.id, detail!.run.marketId)),
+    );
   const purchases = await db
     .select({
       itemId: s.orderItems.id,
@@ -75,9 +102,19 @@ export async function driverOrderDetail(
       notes: s.farms.notes,
     })
     .from(s.orderItems)
-    .innerJoin(s.farms, eq(s.farms.id, s.orderItems.farmId))
-    .leftJoin(s.purchases, eq(s.purchases.orderItemId, s.orderItems.id))
-    .where(eq(s.orderItems.orderId, id));
+    .innerJoin(
+      s.farms,
+      s.networkWhere(db, s.farms, eq(s.farms.id, s.orderItems.farmId)),
+    )
+    .leftJoin(
+      s.purchases,
+      s.networkWhere(
+        db,
+        s.purchases,
+        eq(s.purchases.orderItemId, s.orderItems.id),
+      ),
+    )
+    .where(s.networkWhere(db, s.orderItems, eq(s.orderItems.orderId, id)));
   return {
     ...detail!,
     isOwnOrder: order.customerId === actor.id,
@@ -96,12 +133,12 @@ export async function runDetail(db: s.Database, id: string, actor: Actor) {
   const [run] = await db
     .select()
     .from(s.marketRuns)
-    .where(eq(s.marketRuns.id, id));
+    .where(s.networkWhere(db, s.marketRuns, eq(s.marketRuns.id, id)));
   ensure(run, 'Run not found', 'NOT_FOUND');
   const rows = await db
     .select()
     .from(s.orders)
-    .where(eq(s.orders.runId, id))
+    .where(s.networkWhere(db, s.orders, eq(s.orders.runId, id)))
     .orderBy(asc(s.orders.createdAt), asc(s.orders.id));
   return { run, orders: await orderDetails(db, rows) };
 }
@@ -111,7 +148,7 @@ export async function myOrders(db: s.Database, userId: string) {
     await db
       .select()
       .from(s.orders)
-      .where(eq(s.orders.customerId, userId))
+      .where(s.networkWhere(db, s.orders, eq(s.orders.customerId, userId)))
       .orderBy(desc(s.orders.createdAt))
       .limit(100),
   );
@@ -157,7 +194,13 @@ async function requireDriver(db: ReadDb, actor: Actor) {
   const [profile] = await db
     .select()
     .from(s.driverProfiles)
-    .where(eq(s.driverProfiles.userId, actor.id));
+    .where(
+      s.networkWhere(
+        db,
+        s.driverProfiles,
+        eq(s.driverProfiles.userId, actor.id),
+      ),
+    );
   ensure(
     actor.globalAdmin || profile?.status === 'approved',
     'Approved driver access required',
@@ -176,13 +219,19 @@ export async function driverOrders(
       const [count] = await tx
         .select({ total: sql<number>`count(*)::int` })
         .from(s.orders)
-        .innerJoin(s.marketRuns, eq(s.marketRuns.id, s.orders.runId))
-        .where(filter);
+        .innerJoin(
+          s.marketRuns,
+          s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, s.orders.runId)),
+        )
+        .where(s.networkWhere(tx, s.orders, filter));
       const items = await tx
         .select(driverSummaryColumns(actor))
         .from(s.orders)
-        .innerJoin(s.marketRuns, eq(s.marketRuns.id, s.orders.runId))
-        .where(filter)
+        .innerJoin(
+          s.marketRuns,
+          s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, s.orders.runId)),
+        )
+        .where(s.networkWhere(tx, s.orders, filter))
         .orderBy(asc(s.orders.createdAt), asc(s.orders.id))
         .limit(input.limit)
         .offset(input.offset);
@@ -216,8 +265,11 @@ export async function driverOrderGroups(
       const [count] = await tx
         .select({ total: sql<number>`count(distinct ${s.orders.runId})::int` })
         .from(s.orders)
-        .innerJoin(s.marketRuns, eq(s.marketRuns.id, s.orders.runId))
-        .where(filter);
+        .innerJoin(
+          s.marketRuns,
+          s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, s.orders.runId)),
+        )
+        .where(s.networkWhere(tx, s.orders, filter));
       const rows = await tx
         .select({
           run: s.marketRuns,
@@ -226,9 +278,19 @@ export async function driverOrderGroups(
           priority: sql<number>`min(case when ${s.orders.status} in ('claimed','shopping','ready','out_for_delivery','delivery_failed') then 0 else 1 end)`,
         })
         .from(s.orders)
-        .innerJoin(s.marketRuns, eq(s.marketRuns.id, s.orders.runId))
-        .innerJoin(s.markets, eq(s.markets.id, s.marketRuns.marketId))
-        .where(filter)
+        .innerJoin(
+          s.marketRuns,
+          s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, s.orders.runId)),
+        )
+        .innerJoin(
+          s.markets,
+          s.networkWhere(
+            tx,
+            s.markets,
+            eq(s.markets.id, s.marketRuns.marketId),
+          ),
+        )
+        .where(s.networkWhere(tx, s.orders, filter))
         .groupBy(s.marketRuns.id, s.markets.id)
         .orderBy(
           sql`min(case when ${s.orders.status} in ('claimed','shopping','ready','out_for_delivery','delivery_failed') then 0 else 1 end)`,
@@ -251,8 +313,17 @@ export async function driverOrderGroups(
             ),
         })
         .from(s.orders)
-        .innerJoin(s.marketRuns, eq(s.marketRuns.id, s.orders.runId))
-        .where(and(filter, inArray(s.orders.runId, runIds)))
+        .innerJoin(
+          s.marketRuns,
+          s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, s.orders.runId)),
+        )
+        .where(
+          s.networkWhere(
+            tx,
+            s.orders,
+            and(filter, inArray(s.orders.runId, runIds)),
+          ),
+        )
         .as('ranked_orders');
       const orderRows = runIds.length
         ? await tx
@@ -315,18 +386,29 @@ export async function driverShoppingList(
       const [location] = await tx
         .select({ run: s.marketRuns, market: s.markets })
         .from(s.marketRuns)
-        .innerJoin(s.markets, eq(s.markets.id, s.marketRuns.marketId))
-        .where(eq(s.marketRuns.id, runId));
+        .innerJoin(
+          s.markets,
+          s.networkWhere(
+            tx,
+            s.markets,
+            eq(s.markets.id, s.marketRuns.marketId),
+          ),
+        )
+        .where(s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, runId)));
       ensure(location, 'Market date not found', 'NOT_FOUND');
       // This deliberately has no order-page limit: it is the driver's entire trip.
       const assigned = await tx
         .select()
         .from(s.orders)
         .where(
-          and(
-            eq(s.orders.runId, runId),
-            eq(s.orders.driverId, actor.id),
-            sql`${s.orders.status} <> 'cancelled'`,
+          s.networkWhere(
+            tx,
+            s.orders,
+            and(
+              eq(s.orders.runId, runId),
+              eq(s.orders.driverId, actor.id),
+              sql`${s.orders.status} <> 'cancelled'`,
+            ),
           ),
         )
         .orderBy(asc(s.orders.createdAt), asc(s.orders.id));
@@ -338,12 +420,26 @@ export async function driverShoppingList(
       const rows = await tx
         .select({ item: s.orderItems, purchase: s.purchases, farm: s.farms })
         .from(s.orderItems)
-        .leftJoin(s.purchases, eq(s.purchases.orderItemId, s.orderItems.id))
-        .innerJoin(s.farms, eq(s.farms.id, s.orderItems.farmId))
+        .leftJoin(
+          s.purchases,
+          s.networkWhere(
+            tx,
+            s.purchases,
+            eq(s.purchases.orderItemId, s.orderItems.id),
+          ),
+        )
+        .innerJoin(
+          s.farms,
+          s.networkWhere(tx, s.farms, eq(s.farms.id, s.orderItems.farmId)),
+        )
         .where(
-          inArray(
-            s.orderItems.orderId,
-            assigned.map((order) => order.id),
+          s.networkWhere(
+            tx,
+            s.orderItems,
+            inArray(
+              s.orderItems.orderId,
+              assigned.map((order) => order.id),
+            ),
           ),
         )
         .orderBy(asc(s.orderItems.name), asc(s.orderItems.id));
