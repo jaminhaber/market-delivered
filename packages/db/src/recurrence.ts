@@ -74,6 +74,7 @@ export async function ensureUpcomingRuns(
         const [run] = await tx
           .insert(marketRuns)
           .values({
+            networkId: market.networkId,
             marketId: market.id,
             scheduleId: schedule.id,
             startsAt,
@@ -103,6 +104,7 @@ export async function ensureUpcomingRuns(
               .insert(inventory)
               .values(
                 templates.map((item) => ({
+                  networkId: run.networkId,
                   runId: run.id,
                   produceId: item.produceId,
                   priceCents: item.priceCents,

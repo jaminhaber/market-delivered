@@ -3,7 +3,8 @@ import pg from 'pg';
 import * as catalog from './schema.js';
 import * as auth from './auth-schema.js';
 import * as market from './market-schema.js';
-const schema = { ...catalog, ...auth, ...market };
+import * as network from './network-schema.js';
+const schema = { ...catalog, ...auth, ...market, ...network };
 
 export function createDatabase(connectionString: string) {
   const pool = new pg.Pool({
@@ -28,3 +29,6 @@ export {
   runCloseMarketsJob,
   CLOSE_MARKETS_JOB,
 } from './jobs.js';
+
+export * from './network-schema.js';
+export { withNetwork, networkDatabase } from './network-scope.js';

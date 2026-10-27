@@ -1,3 +1,5 @@
+import { NetworkAdmin } from './Networks';
+import { McpSetupInstructions, NewMcpToken } from './McpSetupInstructions';
 import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, rpc } from './api';
@@ -7,11 +9,21 @@ import { useUrlState } from './navigation';
 const value = (form: HTMLFormElement, name: string) =>
   String(new FormData(form).get(name) ?? '');
 export function Admin() {
-  const [tab, setTab] = useUrlState(
+  const [selectedTab, setTab] = useUrlState(
     'tab',
-    ['Markets', 'Farms', 'Inventory', 'Orders', 'People', 'MCP access'],
+    [
+      'Markets',
+      'Farms',
+      'Inventory',
+      'Orders',
+      'People',
+      'Configure',
+      'Network',
+      'MCP access',
+    ],
     'Markets',
   );
+  const tab = selectedTab === 'Network' ? 'Configure' : selectedTab;
   return (
     <div className="workspace">
       <div className="page-heading">
@@ -25,6 +37,7 @@ export function Admin() {
           'Inventory',
           'Orders',
           'People',
+          'Configure',
           'MCP access',
         ].map((t) => (
           <button
@@ -44,6 +57,8 @@ export function Admin() {
         <FarmsAdmin />
       ) : tab === 'Orders' ? (
         <OrdersAdmin />
+      ) : tab === 'Configure' ? (
+        <NetworkAdmin />
       ) : tab === 'People' ? (
         <PeopleAdmin />
       ) : (
@@ -53,6 +68,7 @@ export function Admin() {
   );
 }
 function MarketsAdmin() {
+  const appSettings = useQuery(api.networks.branding.queryOptions());
   const markets = useQuery(api.markets.list.queryOptions()),
     runs = useQuery(api.admin.runs.queryOptions());
   const { act, busy, notice } = useAction();
@@ -103,7 +119,11 @@ function MarketsAdmin() {
               <input
                 name="timezone"
                 required
-                defaultValue="America/Los_Angeles"
+                key={appSettings.data?.location.timezone || 'device'}
+                defaultValue={
+                  appSettings.data?.location.timezone ||
+                  Intl.DateTimeFormat().resolvedOptions().timeZone
+                }
               />
             </label>
             <button disabled={busy}>Create market</button>
@@ -318,6 +338,7 @@ function InventoryAdmin() {
   );
 }
 function PeopleAdmin() {
+  const me = useQuery(api.me.queryOptions());
   const invites = useQuery(api.admin.invitations.queryOptions()),
     drivers = useQuery(api.admin.drivers.queryOptions());
   const { act, busy, notice } = useAction();
@@ -334,9 +355,12 @@ function PeopleAdmin() {
             void act(async () => {
               const result = await rpc.admin.invite.mutate({
                 email: value(form, 'email'),
-                role: value(form, 'role') as 'customer' | 'driver',
+                role: value(form, 'role') as
+                  'customer' | 'driver' | 'network_admin',
               });
-              setLink(`${location.origin}/?invite=${result.token}`);
+              setLink(
+                `${location.origin}/?network=${encodeURIComponent(me.data!.network.slug)}&invite=${result.token}`,
+              );
             }, 'Invitation created. Share the link with the intended person.');
           }}
         >
@@ -349,6 +373,7 @@ function PeopleAdmin() {
             <select aria-label="Profile" name="role">
               <option value="customer">Customer</option>
               <option value="driver">Approved driver</option>
+              <option value="network_admin">Administrator</option>
             </select>
           </label>
           <button disabled={busy}>Create invitation</button>
@@ -436,81 +461,10 @@ function TokensAdmin() {
   const tokens = useQuery(api.admin.tokens.queryOptions());
   const { act, busy, notice } = useAction();
   const [token, setToken] = useState('');
-  const endpoint = new URL(
-    '/mcp',
-    new URL(import.meta.env.VITE_API_URL || '/', window.location.origin),
-  ).href;
   return (
     <Panel title="Authenticated market operations MCP">
       {notice}
-      <p>
-        Endpoint: <code className="mcp-endpoint">{endpoint}</code>
-      </p>
-      <h3>Connect your MCP client</h3>
-      <ol>
-        <li>
-          Create a named token below, using a separate token for each client.
-        </li>
-        <li>
-          Copy and save the token securely; its full value is shown only once.
-        </li>
-        <li>
-          Add a remote MCP server in your client. Use the endpoint above and
-          select <strong>Streamable HTTP</strong> as the transport.
-        </li>
-        <li>
-          Set the <code>Authorization</code> header to{' '}
-          <code>Bearer YOUR_TOKEN</code>, replacing <code>YOUR_TOKEN</code> with
-          the token you created. OAuth sign-in is not supported; choose a client
-          that accepts custom headers or bearer tokens.
-        </li>
-        <li>Connect and ask the client to list markets to verify access.</li>
-      </ol>
-      <p>
-        For clients that use an <code>mcpServers</code> JSON configuration,
-        adapt this example to your client’s format:
-      </p>
-      <pre className="mcp-config">
-        <code>
-          {JSON.stringify(
-            {
-              mcpServers: {
-                'market-delivered': {
-                  url: endpoint,
-                  headers: { Authorization: 'Bearer YOUR_TOKEN' },
-                },
-              },
-            },
-            null,
-            2,
-          )}
-        </code>
-      </pre>
-      <p>
-        Tokens can manage farms, catalog items, markets, schedules, and
-        inventory with your administrator privileges, and read customer orders
-        and delivery details. They can also email customer or approved-driver
-        signup invitations with the invite_user tool. Order changes and
-        fulfillment use the app. Share tokens only with trusted clients. Tokens
-        expire after 90 days; revoke unused or exposed tokens below and create
-        replacements as needed.
-      </p>
-      <details>
-        <summary>Connection troubleshooting</summary>
-        <p>
-          A 401 response means the token is missing, invalid, expired, revoked,
-          or its owner no longer has administrator access. Check the header and
-          use a current token. A 403 response means the client sent an Origin
-          header that does not match this app’s configured web origin.
-        </p>
-        <p>
-          Opening the endpoint in a browser does not test an MCP connection:
-          requests require a bearer token and MCP uses POST here. Use Streamable
-          HTTP rather than the older SSE transport. A local endpoint is only
-          reachable by clients on your computer; use the deployed site’s
-          endpoint for hosted clients.
-        </p>
-      </details>
+      <McpSetupInstructions />
       <h3>Access tokens</h3>
       <form
         className="form-stack"
@@ -531,17 +485,7 @@ function TokensAdmin() {
         </label>
         <button disabled={busy}>Create MCP token</button>
       </form>
-      {token && (
-        <label>
-          New MCP token
-          <input
-            aria-label="New MCP token"
-            readOnly
-            value={token}
-            onFocus={(e) => e.target.select()}
-          />
-        </label>
-      )}
+      {token && <NewMcpToken key={token} token={token} label="New MCP token" />}
       {tokens.data?.map((t) => (
         <div key={t.id} className="list-row">
           <span>

@@ -19,7 +19,14 @@ import type { AppRouter } from '../../apps/api/src/router.js';
 import {
   createDatabase,
   customerProfiles,
+  driverProfiles,
   invitations,
+  networkMemberships,
+  networks,
+  farms,
+  produce,
+  OJAI_NETWORK_ID,
+  withNetwork,
   userRoles,
   user,
   marketRuns,
@@ -54,11 +61,12 @@ test.afterAll(async () => {
 });
 const password = 'A-long-market-password-123!';
 const unique = (prefix: string) => `${prefix}-${randomUUID().slice(0, 8)}`;
-function api(request: APIRequestContext) {
+function api(request: APIRequestContext, network?: string) {
   return createTRPCClient<AppRouter>({
     links: [
       httpBatchLink({
         url: baseURL + '/trpc',
+        headers: network ? { 'x-network-id': network } : undefined,
         fetch: async (url, options) => {
           const response = await request.fetch(String(url), {
             method: options?.method ?? 'GET',
@@ -107,7 +115,15 @@ async function actor(role: 'customer' | 'driver' | 'admin' = 'customer') {
   const me = await rpc.me.query();
   expect(me).not.toBeNull();
   if (role === 'admin')
-    await db.insert(userRoles).values({ userId: me!.id, role: 'admin' });
+    await db
+      .update(networkMemberships)
+      .set({ role: 'network_admin' })
+      .where(
+        and(
+          eq(networkMemberships.userId, me!.id),
+          eq(networkMemberships.networkId, OJAI_NETWORK_ID),
+        ),
+      );
   await rpc.profile.save.mutate({
     name: role === 'driver' ? 'Local Driver' : 'Local Customer',
     phone: '7075550101',
@@ -393,6 +409,10 @@ test('signed-in invitation links offer a safe account switch and preserve the in
   expect((await api(page.request).me.query())?.email).toBe(nextEmail);
 
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  // Sign-out reloads the page; wait before starting another navigation.
+  await expect(
+    page.getByRole('heading', { name: 'Welcome back' }),
+  ).toBeVisible();
   await page.goto(`/?invite=${next.token}`);
   await expect(
     page.getByRole('alert').filter({ hasText: 'invalid or expired' }),
@@ -476,7 +496,15 @@ test('admin UI creates market, schedule, catalog, inventory, invitations, and MC
 }) => {
   const admin = await browserActor(browser, 'customer', 'Operations User');
   const current = await admin.rpc.me.query();
-  await db.insert(userRoles).values({ userId: current!.id, role: 'admin' });
+  await db
+    .update(networkMemberships)
+    .set({ role: 'network_admin' })
+    .where(
+      and(
+        eq(networkMemberships.userId, current!.id),
+        eq(networkMemberships.networkId, OJAI_NETWORK_ID),
+      ),
+    );
   await admin.page.reload();
   const page = admin.page;
   await page.getByRole('button', { name: 'Operations', exact: true }).click();
@@ -971,6 +999,8 @@ test('MCP invitations email usable signup links and revoke failed sends', async 
       expect(saved.token).toBeUndefined();
       const message = messages.at(-1)!;
       expect(message.to).toBe(email);
+      expect(message.subject).toBe('You’re invited to Ojai');
+      expect(message.text).toContain('You’re invited to Ojai as a');
       const url = new URL(message.text.split('\n\n')[1]!);
       expect(url.origin).toBe(baseURL);
       const invitationToken = url.searchParams.get('invite')!;
@@ -1480,8 +1510,14 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   ).toBe(401);
   const demoted = await admin.rpc.admin.createToken.mutate({ name: 'Demoted' });
   await db
-    .delete(userRoles)
-    .where(and(eq(userRoles.userId, admin.id), eq(userRoles.role, 'admin')));
+    .update(networkMemberships)
+    .set({ role: 'member' })
+    .where(
+      and(
+        eq(networkMemberships.userId, admin.id),
+        eq(networkMemberships.networkId, OJAI_NETWORK_ID),
+      ),
+    );
   expect(
     (
       await fetch('http://127.0.0.1:3101/mcp', {
@@ -1862,7 +1898,15 @@ test('operations UI edits a weekly schedule and MCP exposes persisted recurrence
 }) => {
   const admin = await browserActor(browser, 'customer', 'Schedule Operator');
   const current = await admin.rpc.me.query();
-  await db.insert(userRoles).values({ userId: current!.id, role: 'admin' });
+  await db
+    .update(networkMemberships)
+    .set({ role: 'network_admin' })
+    .where(
+      and(
+        eq(networkMemberships.userId, current!.id),
+        eq(networkMemberships.networkId, OJAI_NETWORK_ID),
+      ),
+    );
   const market = await admin.rpc.admin.createMarket.mutate({
     name: unique('Weekly UI market'),
     address: '414 E Ojai Avenue, Ojai, CA',
@@ -2315,6 +2359,7 @@ test('Places API requests use session tokens and resolve US address components',
       const body = JSON.parse(String(options?.body));
       expect(body.sessionToken).toBe(sessionToken);
       expect(body.includedRegionCodes).toEqual(['us']);
+      expect(body).not.toHaveProperty('locationBias');
       return Response.json({
         suggestions: [
           {
@@ -3023,17 +3068,19 @@ test('order claims are atomic, different drivers shop the same date independentl
   for (const person of [customer, a, b, admin]) await person.request.dispose();
 });
 
-test('two baseline migrations separate auth/basic data from order fulfillment and retries preserve data', async () => {
+test('one network migration upgrades the committed schema and preserves existing operations on retries', async () => {
   const { readFile, mkdtemp, mkdir, writeFile, rm } =
     await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
+  const temporary = await mkdtemp(
+    join(tmpdir(), 'market-committed-migrations-'),
+  );
   const { fileURLToPath } = await import('node:url');
   const { runMigrations } = await import('../../packages/db/src/migrations.js');
   const name = `market_migration_${randomUUID().replaceAll('-', '')}_e2e`;
   const url = new URL(databaseURL);
   url.pathname = '/' + name;
-  const temporary = await mkdtemp(join(tmpdir(), 'market-migrations-'));
   await pool.query(`CREATE DATABASE "${name}"`);
   const fresh = createDatabase(url.href);
   try {
@@ -3043,21 +3090,42 @@ test('two baseline migrations separate auth/basic data from order fulfillment an
     const journal = JSON.parse(
       await readFile(folder + '/meta/_journal.json', 'utf8'),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.slice(0, 2).map((entry) => entry.tag)).toEqual([
+    expect(journal.entries.map((entry) => entry.tag)).toEqual([
       '0000_auth_and_basics',
       '0001_orders_and_fulfillment',
+      '0002_shopping_packing',
+      '0003_networks',
     ]);
     await mkdir(join(temporary, 'meta'));
     await writeFile(
       join(temporary, 'meta/_journal.json'),
-      JSON.stringify({ ...journal, entries: journal.entries.slice(0, 1) }),
+      JSON.stringify({ ...journal, entries: journal.entries.slice(0, 3) }),
     );
-    await writeFile(
-      join(temporary, '0000_auth_and_basics.sql'),
-      await readFile(join(folder, '0000_auth_and_basics.sql')),
-    );
+    for (const entry of journal.entries.slice(0, 3))
+      await writeFile(
+        join(temporary, entry.tag + '.sql'),
+        await readFile(join(folder, entry.tag + '.sql')),
+      );
     await runMigrations(fresh.db, temporary);
-    const first = (
+    await fresh.pool.query(`
+      INSERT INTO users(id,name,email) VALUES ('baseline-user','Baseline User','baseline@example.test');
+      INSERT INTO user_roles(user_id,role) VALUES ('baseline-user','admin');
+      INSERT INTO customer_profiles(user_id,phone,address) VALUES ('baseline-user','8055550101','Original address');
+      INSERT INTO driver_profiles(user_id,phone,vehicle,status) VALUES ('baseline-user','8055550101','Original vehicle','approved');
+      INSERT INTO markets(name,address) VALUES ('Baseline Market','Ojai');
+      INSERT INTO farms(name,location) VALUES ('Legacy farm','Ojai');
+      INSERT INTO produce(farm_id,name,description,category,unit,price_cents,available_quantity) SELECT id,'Original carrots','','Vegetables','each',250,10 FROM farms;
+      INSERT INTO market_runs(market_id,starts_at,ends_at,cutoff_at,delivery_start_at,delivery_end_at) SELECT id,now()+interval '1 day',now()+interval '2 days',now(),now()+interval '1 day',now()+interval '2 days' FROM markets;
+      INSERT INTO inventory(run_id,produce_id,price_cents,quantity,reserved_quantity) SELECT r.id,p.id,250,10,1 FROM market_runs r CROSS JOIN produce p;
+      INSERT INTO orders(customer_id,driver_id,run_id,request_id,status,customer_name,phone,address,delivery_notes,delivery_fee_cents,estimated_total_cents) SELECT 'baseline-user','baseline-user',id,gen_random_uuid(),'claimed','Original name','8055550101','Original address','Original note',500,750 FROM market_runs;
+      INSERT INTO order_items(order_id,inventory_id,farm_id,farm_name,farm_location,name,unit,quantity,price_cents) SELECT o.id,i.id,f.id,f.name,f.location,p.name,p.unit,1,250 FROM orders o CROSS JOIN inventory i CROSS JOIN produce p CROSS JOIN farms f;
+      INSERT INTO api_tokens(user_id,name,token_hash,last_four,expires_at) VALUES ('baseline-user','Original token','baseline-token-hash','hash',now()+interval '30 days');
+    `);
+    await Promise.all([
+      runMigrations(fresh.db, folder),
+      runMigrations(fresh.db, folder),
+    ]);
+    const tables = (
       await fresh.pool.query(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='public'",
       )
@@ -3065,64 +3133,159 @@ test('two baseline migrations separate auth/basic data from order fulfillment an
     for (const table of [
       'users',
       'auth_sessions',
+      'customer_profiles',
       'driver_profiles',
       'farms',
       'produce',
       'markets',
-      'api_tokens',
-    ])
-      expect(first).toContain(table);
-    for (const table of [
+      'market_runs',
+      'inventory',
       'orders',
       'order_items',
       'purchases',
-      'inventory',
-      'market_runs',
-    ])
-      expect(first).not.toContain(table);
-    await fresh.pool.query(
-      "INSERT INTO users(id,name,email) VALUES ('baseline-user','Baseline User','baseline@example.test')",
-    );
-    await runMigrations(fresh.db, folder);
-    const second = (
-      await fresh.pool.query(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema='public'",
-      )
-    ).rows.map((row) => row.table_name);
-    for (const table of [
-      'orders',
-      'order_items',
-      'purchases',
-      'inventory',
-      'market_runs',
       'market_schedules',
       'schedule_inventory',
       'order_events',
       'background_job_runs',
+      'api_tokens',
+      'network_memberships',
+      'networks',
     ])
-      expect(second).toContain(table);
-    expect(second).not.toContain('legacy_run_purchases');
+      expect(tables).toContain(table);
+    expect(tables).not.toContain('legacy_run_purchases');
     expect(
       (
         await fresh.pool.query(
-          "SELECT column_name FROM information_schema.columns WHERE table_name='orders' AND column_name='driver_id'",
+          "SELECT column_name FROM information_schema.columns WHERE table_name='networks'",
+        )
+      ).rows.map((row) => row.column_name),
+    ).toEqual(
+      expect.arrayContaining([
+        'branding',
+        'deleted_at',
+        'support_email',
+        'support_phone',
+        'contact_url',
+        'location',
+        'email_reply_to',
+        'email_key_encrypted',
+      ]),
+    );
+    expect(
+      (
+        await fresh.pool.query(
+          "SELECT column_name FROM information_schema.columns WHERE table_name='order_items' AND column_name='packed_at'",
         )
       ).rows,
     ).toHaveLength(1);
     expect(
       (
         await fresh.pool.query(
-          "SELECT column_name FROM information_schema.columns WHERE table_name='market_runs' AND column_name='driver_id'",
-        )
-      ).rows,
-    ).toHaveLength(0);
-    expect(
-      (
-        await fresh.pool.query(
-          "SELECT column_name FROM information_schema.columns WHERE table_name='purchases' AND column_name='order_item_id'",
+          "SELECT conname FROM pg_constraint WHERE conname='packed_item_valid'",
         )
       ).rows,
     ).toHaveLength(1);
+    const { resolveNetwork } = await import('../../apps/api/src/networks.js');
+    expect(await resolveNetwork(fresh.db)).toMatchObject({
+      slug: 'ojai',
+      location: {
+        city: 'Ojai',
+        region: 'CA',
+        postalCode: '93023',
+        autocompleteBias: {
+          latitude: 34.448,
+          longitude: -119.243,
+          radiusMeters: 30000,
+        },
+      },
+    });
+    expect(
+      (await fresh.pool.query('SELECT role FROM user_roles')).rows,
+    ).toEqual([{ role: 'global_admin' }]);
+    expect(
+      (
+        await fresh.pool.query(
+          'SELECT network_id, role FROM network_memberships',
+        )
+      ).rows,
+    ).toEqual([{ network_id: OJAI_NETWORK_ID, role: 'network_admin' }]);
+    for (const table of [
+      'customer_profiles',
+      'driver_profiles',
+      'markets',
+      'farms',
+      'produce',
+      'market_runs',
+      'inventory',
+      'orders',
+      'order_items',
+      'api_tokens',
+    ]) {
+      expect(
+        (await fresh.pool.query(`SELECT DISTINCT network_id FROM ${table}`))
+          .rows,
+      ).toEqual([{ network_id: OJAI_NETWORK_ID }]);
+    }
+    expect(
+      (
+        await fresh.pool.query(
+          'SELECT address, estimated_total_cents, status FROM orders',
+        )
+      ).rows,
+    ).toEqual([
+      {
+        address: 'Original address',
+        estimated_total_cents: 750,
+        status: 'claimed',
+      },
+    ]);
+    expect(
+      (await fresh.pool.query('SELECT quantity, price_cents FROM order_items'))
+        .rows,
+    ).toEqual([{ quantity: 1, price_cents: 250 }]);
+    const farm = await withNetwork(
+      fresh.db,
+      OJAI_NETWORK_ID,
+      'baseline-user',
+      async (scoped) =>
+        (
+          await scoped
+            .insert(farms)
+            .values({ name: 'Local farm', location: 'Ojai' })
+            .returning()
+        )[0]!,
+    );
+    const [other] = await fresh.db
+      .insert(networks)
+      .values({ name: 'Another operator', slug: 'another' })
+      .returning();
+    await fresh.db
+      .insert(farms)
+      .values({ networkId: other!.id, name: 'Other farm', location: 'Sonoma' });
+    expect(
+      await withNetwork(
+        fresh.db,
+        OJAI_NETWORK_ID,
+        'baseline-user',
+        async (scoped) =>
+          scoped.select().from(farms).where(eq(farms.id, farm.id)),
+      ),
+    ).toEqual([farm]);
+    await fresh.pool.query(
+      "INSERT INTO networks(name,slug,created_at,deleted_at) VALUES ('Retired','retired','2000-01-01',now())",
+    );
+    expect((await resolveNetwork(fresh.db)).slug).toBe('ojai');
+    await fresh.pool.query(
+      'UPDATE networks SET deleted_at=now() WHERE slug=$1',
+      ['ojai'],
+    );
+    expect((await resolveNetwork(fresh.db)).slug).toBe('another');
+    await expect(resolveNetwork(fresh.db, 'ojai')).rejects.toThrow(
+      'Network not found',
+    );
+    await expect(resolveNetwork(fresh.db, 'retired')).rejects.toThrow(
+      'Network not found',
+    );
     await Promise.all([
       runMigrations(fresh.db, folder),
       runMigrations(fresh.db, folder),
@@ -3133,10 +3296,11 @@ test('two baseline migrations separate auth/basic data from order fulfillment an
           'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
         )
       ).rows[0]!.count,
-    ).toBe(journal.entries.length);
+    ).toBe(4);
     expect((await fresh.pool.query('SELECT id FROM users')).rows).toEqual([
       { id: 'baseline-user' },
     ]);
+    expect((await fresh.db.select().from(farms)).length).toBe(3);
   } finally {
     await fresh.pool.end();
     await pool.query(`DROP DATABASE "${name}"`);
@@ -4238,4 +4402,1243 @@ test('driver shops combined quantities, reviews allocations and packs customer o
   );
   await customer.request.dispose();
   await driver.context.close();
+});
+
+test('networks isolate records, memberships, profiles, and MCP tokens while global admins retain platform access', async () => {
+  const admin = await actor('admin');
+  await rejectCode(
+    admin.rpc.networks.create.mutate({
+      name: 'Forbidden',
+      slug: unique('forbidden'),
+    }),
+    'FORBIDDEN',
+  );
+  await rejectCode(
+    admin.rpc.networks.createToken.mutate({ name: 'Forbidden global' }),
+    'FORBIDDEN',
+  );
+  const [other] = await db
+    .insert(networks)
+    .values({ name: 'Independent Sonoma', slug: unique('sonoma') })
+    .returning();
+  const otherRpc = api(admin.request, other!.slug);
+  await rejectCode(
+    otherRpc.admin.createFarm.mutate({
+      name: 'Forbidden farm',
+      location: 'Sonoma',
+    }),
+    'FORBIDDEN',
+  );
+  await rejectCode(otherRpc.networks.current.query(), 'FORBIDDEN');
+  await db.insert(userRoles).values({ userId: admin.id, role: 'global_admin' });
+  const globalMe = await otherRpc.me.query();
+  expect(globalMe).toMatchObject({
+    globalAdmin: true,
+    admin: true,
+    networkAdmin: false,
+    customer: null,
+  });
+  const created = await admin.rpc.networks.create.mutate({
+    name: 'New York',
+    slug: unique('ny'),
+  });
+  expect((await admin.rpc.networks.list.query()).map((n) => n.id)).toContain(
+    created.id,
+  );
+  const localFarm = await admin.rpc.admin.createFarm.mutate({
+    name: 'Shared farm name',
+    location: 'Ojai',
+  });
+  const remoteFarm = await otherRpc.admin.createFarm.mutate({
+    name: 'Shared farm name',
+    location: 'Sonoma',
+  });
+  expect((await admin.rpc.farms.list.query()).map((f) => f.id)).not.toContain(
+    remoteFarm.id,
+  );
+  expect((await otherRpc.farms.list.query()).map((f) => f.id)).toEqual([
+    remoteFarm.id,
+  ]);
+  await rejectCode(
+    admin.rpc.admin.updateFarm.mutate({
+      id: remoteFarm.id,
+      name: 'Intrusion',
+      location: 'Ojai',
+    }),
+    'NOT_FOUND',
+  );
+  expect((await otherRpc.farms.list.query())[0]!.name).toBe('Shared farm name');
+  // Foreign keys enforce network ownership even if application validation is bypassed.
+  await expect(
+    withNetwork(db, OJAI_NETWORK_ID, admin.id, async (scoped) => {
+      await scoped.insert(produce).values({
+        farmId: remoteFarm.id,
+        name: 'Bad link',
+        description: '',
+        category: 'Vegetables',
+        unit: 'each',
+        priceCents: 1,
+        availableQuantity: 1,
+      });
+    }),
+  ).rejects.toThrow();
+  await expect(
+    withNetwork(db, OJAI_NETWORK_ID, admin.id, async (scoped) => {
+      await scoped.insert(farms).values({
+        networkId: other!.id,
+        name: 'Bad owner',
+        location: 'Sonoma',
+      });
+    }),
+  ).rejects.toThrow();
+  await otherRpc.profile.save.mutate({
+    name: 'Local Customer',
+    phone: '7075550101',
+    street: '99 Sonoma Road',
+    city: 'Sonoma',
+    region: 'CA',
+    postalCode: '95476',
+    deliveryNotes: '',
+  });
+  expect((await admin.rpc.me.query())!.customer!.city).toBe('Ojai');
+  expect((await otherRpc.me.query())!.customer!.city).toBe('Sonoma');
+  const localToken = await admin.rpc.admin.createToken.mutate({
+    name: 'Network only',
+  });
+  const globalToken = await admin.rpc.networks.createToken.mutate({
+    name: 'Platform access',
+  });
+  const client = new Client({ name: 'network-isolation', version: '1' });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3101/mcp'), {
+      requestInit: { headers: { Authorization: `Bearer ${localToken.token}` } },
+    }),
+  );
+  expect((await client.listTools()).tools.map((t) => t.name)).not.toContain(
+    'create_network',
+  );
+  const data = await client.callTool({ name: 'list_farms', arguments: {} });
+  expect(JSON.stringify(data.content)).toContain(localFarm.id);
+  expect(JSON.stringify(data.content)).not.toContain(remoteFarm.id);
+  await client.close();
+  const forbidden = await admin.request.post(
+    `http://127.0.0.1:3101/mcp?network=${other!.slug}`,
+    { headers: { Authorization: `Bearer ${localToken.token}` }, data: {} },
+  );
+  expect(forbidden.status()).toBe(403);
+  const platformClient = new Client({ name: 'global-isolation', version: '1' });
+  await platformClient.connect(
+    new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:3101/mcp?network=${other!.slug}`),
+      {
+        requestInit: {
+          headers: { Authorization: `Bearer ${globalToken.token}` },
+        },
+      },
+    ),
+  );
+  expect((await platformClient.listTools()).tools.map((t) => t.name)).toContain(
+    'create_network',
+  );
+  const remote = await platformClient.callTool({
+    name: 'list_farms',
+    arguments: {},
+  });
+  expect(JSON.stringify(remote.content)).toContain(remoteFarm.id);
+  expect(JSON.stringify(remote.content)).not.toContain(localFarm.id);
+  await platformClient.close();
+  // Losing the global role immediately invalidates platform tokens.
+  await db.delete(userRoles).where(eq(userRoles.userId, admin.id));
+  expect(
+    (
+      await admin.request.post('http://127.0.0.1:3101/mcp', {
+        headers: { Authorization: `Bearer ${globalToken.token}` },
+        data: {},
+      })
+    ).status(),
+  ).toBe(401);
+  expect((await admin.rpc.me.query())!.networkAdmin).toBe(true);
+  await admin.request.dispose();
+});
+
+test('network invitations enroll existing accounts without sharing driver approval or administrator roles', async () => {
+  const admin = await actor('admin'),
+    driver = await actor('driver');
+  const [other] = await db
+    .insert(networks)
+    .values({ name: 'Independent network', slug: unique('independent') })
+    .returning();
+  await db.insert(userRoles).values({ userId: admin.id, role: 'global_admin' });
+  const otherAdmin = api(admin.request, other!.slug),
+    otherDriver = api(driver.request, other!.slug);
+  const invitation = await otherAdmin.admin.invite.mutate({
+    email: driver.email,
+    role: 'network_admin',
+  });
+  await otherDriver.acceptInvitation.mutate({ token: invitation.token });
+  expect(await otherDriver.me.query()).toMatchObject({
+    networkAdmin: true,
+    globalAdmin: false,
+    driver: null,
+  });
+  expect((await driver.rpc.me.query())!.driver!.status).toBe('approved');
+  expect((await driver.rpc.me.query())!.networkAdmin).toBe(false);
+  await rejectCode(
+    otherDriver.networks.setMember.mutate({
+      email: driver.email,
+      role: 'member',
+    }),
+    'CONFLICT',
+  );
+  await rejectCode(
+    driver.rpc.acceptInvitation.mutate({ token: invitation.token }),
+    'NOT_FOUND',
+  );
+  // New-account invitations bind signup to the selected network.
+  const email = `${unique('network-signup')}@example.test`;
+  const signupInvite = await otherAdmin.admin.invite.mutate({
+    email,
+    role: 'driver',
+  });
+  const request = await requestFactory.newContext({ baseURL });
+  expect(
+    (
+      await request.post('/api/auth/sign-up/email', {
+        headers: { 'x-invite-token': signupInvite.token },
+        data: { name: 'Network Driver', email, password },
+      })
+    ).status(),
+  ).toBe(403);
+  expect(
+    (
+      await request.post('/api/auth/sign-up/email', {
+        headers: {
+          'x-invite-token': signupInvite.token,
+          'x-network-id': other!.slug,
+        },
+        data: { name: 'Network Driver', email, password },
+      })
+    ).status(),
+  ).toBe(200);
+  expect(await api(request, other!.slug).me.query()).toMatchObject({
+    driver: { status: 'approved' },
+    networkAdmin: false,
+  });
+  expect((await api(request).me.query())!.driver).toBeNull();
+  await rejectCode(api(request).orders.mine.query(), 'FORBIDDEN');
+  await request.dispose();
+  await driver.request.dispose();
+  await admin.request.dispose();
+});
+
+test('MCP edits every Configure setting and administrator role with encrypted, isolated email overrides', async () => {
+  const { networkEmailConfig } = await import('../../apps/api/src/networks.js');
+  const admin = await actor('admin'),
+    member = await actor();
+  const [other] = await db
+    .insert(networks)
+    .values({
+      name: 'Other sender',
+      slug: unique('sender'),
+      location: {
+        autocompleteBias: {
+          postalCode: '10001',
+          latitude: 40.71,
+          longitude: -74.01,
+          radiusMeters: 10000,
+        },
+      },
+    })
+    .returning();
+  await db.insert(networkMemberships).values([
+    { networkId: other!.id, userId: admin.id, role: 'network_admin' },
+    { networkId: other!.id, userId: member.id, role: 'member' },
+  ]);
+  const settings = api(admin.request, other!.slug);
+  const { token } = await settings.admin.createToken.mutate({
+    name: 'Configure app',
+  });
+  const client = new Client({ name: 'configure-e2e', version: '1' });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3101/mcp'), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    }),
+  );
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const result = await client.callTool({ name, arguments: args });
+    expect(result.isError).not.toBe(true);
+    return JSON.parse((result.content as { text: string }[])[0]!.text);
+  };
+  try {
+    const key = 'network-resend-secret-example';
+    const defaults = {
+      secret: 'e2e-only-secret-never-use-in-production-123456789',
+      resendKey: 'platform-key',
+      emailFrom: 'platform@example.test',
+    };
+    const branding = {
+      primaryColor: '#123456',
+      accentColor: '#654321',
+      backgroundColor: '#eef3fa',
+      textColor: '#152030',
+      font: 'rounded',
+      logoUrl: 'https://example.test/logo.png',
+      headerDisplay: 'logo-text',
+    };
+    const response = await call('update_network', {
+      name: 'Configured app',
+      supportEmail: 'help@example.test',
+      supportPhone: '+1 212 555 0101',
+      contactUrl: 'https://example.test/contact',
+      emailReplyTo: 'replies@example.test',
+      location: {
+        city: 'New York',
+        region: 'NY',
+        postalCode: '10001',
+        timezone: 'America/New_York',
+        autocompleteBias: {
+          postalCode: '10001',
+          radiusMeters: 10000,
+        },
+      },
+      emailKey: key,
+      emailFrom: 'app@example.test',
+      branding,
+    });
+    expect(response).toMatchObject({
+      name: 'Configured app',
+      hasEmailKey: true,
+      branding,
+    });
+    const read = await call('get_network');
+    expect(read).toMatchObject({
+      name: 'Configured app',
+      emailFrom: 'app@example.test',
+      supportEmail: 'help@example.test',
+      supportPhone: '+1 212 555 0101',
+      contactUrl: 'https://example.test/contact',
+      emailReplyTo: 'replies@example.test',
+      location: {
+        city: 'New York',
+        region: 'NY',
+        postalCode: '10001',
+        timezone: 'America/New_York',
+      },
+      hasEmailKey: true,
+      branding,
+    });
+    expect(JSON.stringify(read)).not.toContain(key);
+    expect(read).not.toHaveProperty('emailKeyEncrypted');
+    expect(await settings.networks.current.query()).toMatchObject({
+      name: 'Configured app',
+      branding,
+    });
+    const [stored] = await db
+      .select()
+      .from(networks)
+      .where(eq(networks.id, other!.id));
+    expect(stored!.emailKeyEncrypted).not.toContain(key);
+    expect(await networkEmailConfig(db, other!.id, defaults)).toMatchObject({
+      resendKey: key,
+      emailFrom: 'app@example.test',
+    });
+    expect(
+      await networkEmailConfig(db, OJAI_NETWORK_ID, defaults),
+    ).toMatchObject({
+      resendKey: 'platform-key',
+      emailFrom: 'platform@example.test',
+    });
+    await call('set_network_member', {
+      email: member.email,
+      role: 'network_admin',
+    });
+    expect(await call('list_network_members')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ email: member.email, role: 'network_admin' }),
+      ]),
+    );
+    expect(
+      (await api(member.request, other!.slug).me.query())!.networkAdmin,
+    ).toBe(true);
+    await call('set_network_member', { email: member.email, role: 'member' });
+    expect(
+      (await api(member.request, other!.slug).me.query())!.networkAdmin,
+    ).toBe(false);
+    await call('update_network', { branding: { headerDisplay: 'text' } });
+    expect((await call('get_network')).branding).toEqual({
+      ...branding,
+      headerDisplay: 'text',
+    });
+    await call('update_network', {
+      branding: null,
+      emailKey: null,
+      emailFrom: null,
+    });
+    expect(await call('get_network')).toMatchObject({
+      branding: {},
+      hasEmailKey: false,
+      emailFrom: null,
+    });
+    expect(await networkEmailConfig(db, other!.id, defaults)).toMatchObject({
+      resendKey: 'platform-key',
+      emailFrom: 'platform@example.test',
+    });
+  } finally {
+    await client.close();
+    await admin.request.dispose();
+    await member.request.dispose();
+  }
+});
+
+test('global and network dashboards create independent networks and manage local settings', async ({
+  browser,
+}) => {
+  const admin = await actor('admin');
+  await db.insert(userRoles).values({ userId: admin.id, role: 'global_admin' });
+  const context = await browser.newContext({
+    storageState: await admin.request.storageState(),
+  });
+  const page = await context.newPage();
+  await page.goto('/?page=global-administration');
+  await expect(
+    page.getByRole('heading', { name: 'Global administration', exact: true }),
+  ).toBeVisible();
+  const slug = unique('dashboard');
+  await page
+    .getByLabel('Network name', { exact: true })
+    .fill('Dashboard Network');
+  await page.getByLabel('Network slug').fill(slug);
+  await page
+    .getByRole('button', { name: 'Create network', exact: true })
+    .click();
+  const row = page.locator('.list-row').filter({ hasText: slug });
+  await row.getByRole('button', { name: 'Open network' }).click();
+  await expect(page).toHaveURL(new RegExp('network=' + slug));
+  await expect(page.getByLabel('Network', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Operations', exact: true }).click();
+  await page.getByRole('button', { name: 'Configure', exact: true }).click();
+  await page
+    .getByLabel('App name', { exact: true })
+    .fill('Updated Local Network');
+  await page.getByLabel('Sender email override').fill('local@example.test');
+  await page.getByLabel('Resend API key override').fill('write-only-test-key');
+  await page.getByRole('button', { name: 'Save app settings' }).click();
+  await expect(page.getByRole('status')).toContainText('Saved');
+  // Saving must leave both settings cards together below the full-width notice.
+  const grid = page.locator('.configure-layout');
+  await expect
+    .poll(async () => {
+      const [noticeBox, gridBox, settingsBox, brandingBox] = await Promise.all([
+        page.getByRole('status').boundingBox(),
+        grid.boundingBox(),
+        page
+          .getByRole('heading', { name: 'App settings', exact: true })
+          .locator('..')
+          .boundingBox(),
+        page
+          .getByRole('heading', { name: 'Branding', exact: true })
+          .locator('..')
+          .boundingBox(),
+      ]);
+      return (
+        !!noticeBox &&
+        !!gridBox &&
+        !!settingsBox &&
+        !!brandingBox &&
+        Math.abs(noticeBox.width - gridBox.width) < 1 &&
+        settingsBox.y >= noticeBox.y + noticeBox.height &&
+        Math.abs(settingsBox.y - brandingBox.y) < 1
+      );
+    })
+    .toBe(true);
+  const appCard = page
+    .getByRole('heading', { name: 'App settings', exact: true })
+    .locator('..');
+  const supportCard = page
+    .getByRole('heading', { name: 'Support contact', exact: true })
+    .locator('..');
+  const brandingCard = page
+    .getByRole('heading', { name: 'Branding', exact: true })
+    .locator('..');
+  const [appBox, supportBox, brandBox] = await Promise.all([
+    appCard.boundingBox(),
+    supportCard.boundingBox(),
+    brandingCard.boundingBox(),
+  ]);
+  expect(supportBox!.y - (appBox!.y + appBox!.height)).toBeCloseTo(24, 0);
+  expect(supportBox!.y).toBeLessThan(brandBox!.y + brandBox!.height);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(async () => {
+      const [app, support, brand] = await Promise.all([
+        appCard.boundingBox(),
+        supportCard.boundingBox(),
+        brandingCard.boundingBox(),
+      ]);
+      return (
+        !!app &&
+        !!support &&
+        !!brand &&
+        Math.abs(app.x - support.x) < 1 &&
+        Math.abs(app.x - brand.x) < 1 &&
+        Math.abs(app.width - brand.width) < 1
+      );
+    })
+    .toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await expect(page.getByLabel('Resend API key override')).toHaveValue('');
+  expect((await api(admin.request, slug).networks.current.query()).name).toBe(
+    'Updated Local Network',
+  );
+  await context.close();
+  await admin.request.dispose();
+});
+
+test('network branding persists through dashboard and MCP, applies before sign-in, and stays isolated', async ({
+  browser,
+}) => {
+  const admin = await actor('admin');
+  const [network] = await db
+    .insert(networks)
+    .values({ name: 'Branded Market', slug: unique('branded') })
+    .returning();
+  await db.insert(networkMemberships).values({
+    networkId: network!.id,
+    userId: admin.id,
+    role: 'network_admin',
+  });
+  const rpc = api(admin.request, network!.slug);
+  await db.insert(driverProfiles).values({
+    networkId: network!.id,
+    userId: admin.id,
+    phone: '8055550101',
+    vehicle: 'Local van',
+    status: 'approved',
+  });
+  const context = await browser.newContext({
+    storageState: await admin.request.storageState(),
+  });
+  const page = await context.newPage();
+  await page.goto(`/?network=${network!.slug}&page=operations&tab=configure`);
+  await page.getByLabel('Primary color', { exact: true }).fill('#123456');
+  await page.getByLabel('Accent color', { exact: true }).fill('#bc7612');
+  await page.getByLabel('Background color', { exact: true }).fill('#eef3fa');
+  await page.getByLabel('Text color', { exact: true }).fill('#152030');
+  await page.getByLabel('Font', { exact: true }).selectOption('editorial');
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN/0AAAAASUVORK5CYII=',
+    'base64',
+  );
+  await page
+    .getByLabel('Upload logo')
+    .setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: png });
+  await expect(page.locator('html')).toHaveCSS(
+    'background-color',
+    'rgb(238, 243, 250)',
+  );
+  await expect(page.locator('html')).toHaveCSS('font-family', 'Georgia, serif');
+  await expect(page.locator('.brand .network-logo')).toHaveAttribute(
+    'src',
+    /^data:image\/png;base64,/,
+  );
+  expect((await rpc.networks.current.query()).branding).toEqual({});
+  await page
+    .getByRole('button', { name: 'Save branding', exact: true })
+    .click();
+  await expect(page.getByText('Branding saved', { exact: true })).toBeVisible();
+  const logo = page.locator('.brand .network-logo');
+  await expect(logo).toHaveAttribute('src', /^data:image\/png;base64,/);
+  for (const mode of ['text', 'logo-text', 'logo'] as const) {
+    await page.getByLabel('Header display', { exact: true }).selectOption(mode);
+    await page
+      .getByRole('button', { name: 'Save branding', exact: true })
+      .click();
+    await expect(
+      page.getByText('Branding saved', { exact: true }),
+    ).toBeVisible();
+    await expect(logo).toHaveCount(mode === 'text' ? 0 : 1);
+    await expect(page.locator('.brand')).toHaveText(
+      mode === 'logo' ? '' : 'Branded Market',
+    );
+    const savedBranding = (await rpc.networks.current.query()).branding;
+    expect(savedBranding.headerDisplay).toBe(mode);
+    expect(savedBranding.logoUrl).toMatch(/^data:image\/png;base64,/);
+  }
+
+  expect((await rpc.networks.current.query()).branding).toMatchObject({
+    primaryColor: '#123456',
+    font: 'editorial',
+  });
+  await page.reload();
+  await expect(page.locator('html')).toHaveCSS(
+    'background-color',
+    'rgb(238, 243, 250)',
+  );
+  await expect(page.locator('html')).toHaveCSS('font-family', 'Georgia, serif');
+  const activeNavigation = page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .locator('[aria-current="page"]');
+  await expect(activeNavigation).toHaveCSS(
+    'background-color',
+    'rgb(18, 52, 86)',
+  );
+  await expect(activeNavigation).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await expect(page.locator('.brand')).toHaveCSS(
+    'font-family',
+    'Georgia, serif',
+  );
+  await expect(
+    page.getByRole('button', { name: 'Save branding', exact: true }),
+  ).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  const panelBackground = await page
+    .locator('.panel')
+    .first()
+    .evaluate((el) => getComputedStyle(el).backgroundColor);
+  const nav = page.getByRole('navigation', { name: 'Main navigation' });
+  for (const destination of [
+    'Orders',
+    'Profile',
+    'Driver',
+    'Market',
+    'Operations',
+  ]) {
+    await nav.getByRole('button', { name: destination, exact: true }).click();
+    await expect(
+      nav.getByRole('button', { name: destination, exact: true }),
+    ).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('html')).toHaveCSS(
+      'background-color',
+      'rgb(238, 243, 250)',
+    );
+    await expect(page.locator('html')).toHaveCSS('color', 'rgb(21, 32, 48)');
+    await expect(page.locator('h1').first()).toHaveCSS(
+      'font-family',
+      'Georgia, serif',
+    );
+    if (destination !== 'Market')
+      await expect(page.locator('.panel').first()).toHaveCSS(
+        'background-color',
+        panelBackground,
+      );
+    if (destination === 'Profile') {
+      await expect(page.getByLabel('Phone', { exact: true }).first()).toHaveCSS(
+        'font-family',
+        'Georgia, serif',
+      );
+      await expect(page.getByLabel('Phone', { exact: true }).first()).toHaveCSS(
+        'color',
+        'rgb(21, 32, 48)',
+      );
+    }
+  }
+  await page.getByRole('button', { name: 'Configure', exact: true }).click();
+  const publicContext = await browser.newContext();
+  const publicPage = await publicContext.newPage();
+  await publicPage.goto(`/?network=${network!.slug}`);
+  await expect(publicPage.locator('.brand .network-logo')).toHaveAttribute(
+    'alt',
+    'Branded Market',
+  );
+  await expect(publicPage.locator('html')).toHaveCSS(
+    'background-color',
+    'rgb(238, 243, 250)',
+  );
+  await publicPage.goto('/');
+  await expect(publicPage.locator('html')).toHaveCSS(
+    'background-color',
+    'rgb(251, 250, 246)',
+  );
+  await expect(publicPage.locator('.brand .network-logo')).toHaveCount(0);
+  const token = await rpc.admin.createToken.mutate({ name: 'Brand editor' });
+  const client = new Client({ name: 'branding-e2e', version: '1' });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3101/mcp'), {
+      requestInit: { headers: { Authorization: `Bearer ${token.token}` } },
+    }),
+  );
+  const result = await client.callTool({
+    name: 'update_network',
+    arguments: {
+      branding: { accentColor: '#654321', headerDisplay: 'logo-text' },
+    },
+  });
+  expect(result.isError).not.toBe(true);
+  expect((await rpc.networks.current.query()).branding).toMatchObject({
+    primaryColor: '#123456',
+    accentColor: '#654321',
+    font: 'editorial',
+  });
+  await rejectCode(
+    admin.rpc.networks.update.mutate({
+      branding: { logoUrl: 'javascript:alert(1)' },
+    }),
+    'BAD_REQUEST',
+  );
+  await rejectCode(
+    rpc.networks.update.mutate({
+      branding: { primaryColor: 'red;display:none' },
+    }),
+    'BAD_REQUEST',
+  );
+  const outsider = await actor();
+  await rejectCode(
+    api(outsider.request, network!.slug).networks.update.mutate({
+      branding: null,
+    }),
+    'FORBIDDEN',
+  );
+  await page
+    .getByRole('button', { name: 'Reset branding', exact: true })
+    .click();
+  expect((await rpc.networks.current.query()).branding).not.toEqual({});
+  await page
+    .getByRole('button', { name: 'Save branding', exact: true })
+    .click();
+  await expect(
+    page.getByText('Default branding restored', { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('html')).toHaveCSS(
+    'background-color',
+    'rgb(251, 250, 246)',
+  );
+  await expect(page.locator('.brand .network-logo')).toHaveCount(0);
+  await expect(
+    page.getByRole('link', { name: 'Branded Market home', exact: true }),
+  ).toHaveText('Branded Market');
+  expect((await rpc.networks.current.query()).branding).toEqual({});
+  await client.close();
+  await context.close();
+  await publicContext.close();
+  await outsider.request.dispose();
+  await admin.request.dispose();
+});
+
+test('branding previews stay local, cancel restores saved controls, and leaving Configure discards changes', async ({
+  browser,
+}) => {
+  const admin = await actor('admin');
+  const [network] = await db
+    .insert(networks)
+    .values({ name: 'Preview app', slug: unique('preview') })
+    .returning();
+  await db.insert(networkMemberships).values({
+    networkId: network!.id,
+    userId: admin.id,
+    role: 'network_admin',
+  });
+  const settings = api(admin.request, network!.slug);
+  const context = await browser.newContext({
+    storageState: await admin.request.storageState(),
+  });
+  const page = await context.newPage();
+  const publicContext = await browser.newContext(),
+    publicPage = await publicContext.newPage();
+  try {
+    await page.goto(`/?network=${network!.slug}&page=operations&tab=configure`);
+    await page.getByLabel('Background color', { exact: true }).fill('#102030');
+    await page.getByLabel('Font', { exact: true }).selectOption('editorial');
+    await expect(page.locator('html')).toHaveCSS(
+      'background-color',
+      'rgb(16, 32, 48)',
+    );
+    await expect(page.locator('.brand')).toHaveCSS(
+      'font-family',
+      'Georgia, serif',
+    );
+    await expect(
+      page.getByText('Previewing unsaved branding changes', { exact: true }),
+    ).toBeVisible();
+    expect((await settings.networks.current.query()).branding).toEqual({});
+    await publicPage.goto(`/?network=${network!.slug}`);
+    await expect(publicPage.locator('html')).toHaveCSS(
+      'background-color',
+      'rgb(251, 250, 246)',
+    );
+    await page
+      .getByRole('button', { name: 'Cancel changes', exact: true })
+      .click();
+    await expect(page.locator('html')).toHaveCSS(
+      'background-color',
+      'rgb(251, 250, 246)',
+    );
+    await expect(
+      page.getByLabel('Background color', { exact: true }),
+    ).toHaveValue('#fbfaf6');
+    await expect(page.getByLabel('Font', { exact: true })).toHaveValue(
+      'default',
+    );
+    await expect(
+      page.getByText('Previewing unsaved branding changes', { exact: true }),
+    ).toHaveCount(0);
+    await page.getByLabel('Background color', { exact: true }).fill('#102030');
+    await page
+      .getByRole('navigation', { name: 'Main navigation' })
+      .getByRole('button', { name: 'Orders', exact: true })
+      .click();
+    await expect(page.locator('html')).toHaveCSS(
+      'background-color',
+      'rgb(251, 250, 246)',
+    );
+    await page
+      .getByRole('navigation', { name: 'Main navigation' })
+      .getByRole('button', { name: 'Operations', exact: true })
+      .click();
+    await page.getByRole('button', { name: 'Configure', exact: true }).click();
+    await expect(
+      page.getByLabel('Background color', { exact: true }),
+    ).toHaveValue('#fbfaf6');
+    await page.getByLabel('Background color', { exact: true }).fill('#dceeff');
+    await page
+      .getByRole('button', { name: 'Save branding', exact: true })
+      .click();
+    await expect(
+      page.getByText('Branding saved', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText('Previewing unsaved branding changes', { exact: true }),
+    ).toHaveCount(0);
+    expect(
+      (await settings.networks.current.query()).branding.backgroundColor,
+    ).toBe('#dceeff');
+    await publicPage.reload();
+    await expect(publicPage.locator('html')).toHaveCSS(
+      'background-color',
+      'rgb(220, 238, 255)',
+    );
+    await page.getByLabel('Background color', { exact: true }).fill('#102030');
+    await page
+      .getByRole('button', { name: 'Cancel changes', exact: true })
+      .click();
+    await expect(page.locator('html')).toHaveCSS(
+      'background-color',
+      'rgb(220, 238, 255)',
+    );
+    await expect(
+      page.getByLabel('Background color', { exact: true }),
+    ).toHaveValue('#dceeff');
+  } finally {
+    await context.close();
+    await publicContext.close();
+    await admin.request.dispose();
+  }
+});
+
+test('Configure support and location defaults appear on customer pages without replacing saved addresses', async ({
+  browser,
+}) => {
+  const admin = await actor('admin'),
+    customer = await actor();
+  const [n] = await db
+    .insert(networks)
+    .values({
+      name: 'New York Basket',
+      slug: unique('ny-settings'),
+      location: {
+        autocompleteBias: {
+          postalCode: '10001',
+          latitude: 40.71,
+          longitude: -74.01,
+          radiusMeters: 10000,
+        },
+      },
+    })
+    .returning();
+  await db.insert(networkMemberships).values([
+    { networkId: n!.id, userId: admin.id, role: 'network_admin' },
+    { networkId: n!.id, userId: customer.id, role: 'member' },
+  ]);
+  await db
+    .insert(customerProfiles)
+    .values({ networkId: n!.id, userId: customer.id });
+  const adminContext = await browser.newContext({
+    storageState: await admin.request.storageState(),
+  });
+  const page = await adminContext.newPage();
+  const customerContext = await browser.newContext({
+    storageState: await customer.request.storageState(),
+  });
+  const profile = await customerContext.newPage();
+  const anonymous = await browser.newContext(),
+    publicPage = await anonymous.newPage();
+  try {
+    await page.goto(`/?network=${n!.slug}&page=operations&tab=configure`);
+    await page
+      .getByLabel('Support email', { exact: true })
+      .fill('help@example.test');
+    await page
+      .getByLabel('Support phone', { exact: true })
+      .fill('+1 212 555 0101');
+    await page
+      .getByLabel('Contact link', { exact: true })
+      .fill('https://example.test/contact');
+    await page
+      .getByRole('button', { name: 'Save support contact', exact: true })
+      .click();
+    await expect(
+      page.getByText('Support contact saved', { exact: true }),
+    ).toBeVisible();
+    await page.getByLabel('Default city', { exact: true }).fill('New York');
+    await page.getByLabel('Default state', { exact: true }).selectOption('NY');
+    await page.getByLabel('Default ZIP code', { exact: true }).fill('10001');
+    await page
+      .getByLabel('Default timezone', { exact: true })
+      .fill('America/New_York');
+    await page
+      .getByLabel('Search center ZIP code', { exact: true })
+      .fill('10001');
+    await expect(
+      page.getByLabel('Search center latitude', { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByLabel('Search center longitude', { exact: true }),
+    ).toHaveCount(0);
+    await page
+      .getByLabel('Search radius (meters)', { exact: true })
+      .fill('10000');
+    await page
+      .getByRole('button', { name: 'Save location defaults', exact: true })
+      .click();
+    await expect(
+      page.getByText('Location defaults saved', { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByLabel('Email reply-to address', { exact: true })
+      .fill('replies@example.test');
+    await page
+      .getByRole('button', { name: 'Save app settings', exact: true })
+      .click();
+    await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+    expect(
+      (await api(admin.request, n!.slug).networks.current.query()).emailReplyTo,
+    ).toBe('replies@example.test');
+    await profile.goto(`/?network=${n!.slug}&page=profile`);
+    await expect(profile.getByLabel('City', { exact: true })).toHaveValue(
+      'New York',
+    );
+    await expect(profile.getByLabel('State', { exact: true })).toHaveValue(
+      'NY',
+    );
+    await expect(profile.getByLabel('ZIP code', { exact: true })).toHaveValue(
+      '10001',
+    );
+    await expect(
+      profile
+        .locator('main')
+        .getByRole('link', { name: 'Email support', exact: true }),
+    ).toHaveAttribute('href', 'mailto:help@example.test');
+    await profile
+      .getByRole('navigation', { name: 'Main navigation' })
+      .getByRole('button', { name: 'Orders', exact: true })
+      .click();
+    await expect(
+      profile
+        .locator('main')
+        .getByRole('link', { name: 'Contact us', exact: true }),
+    ).toHaveAttribute('href', 'https://example.test/contact');
+    await page.getByLabel('Default city', { exact: true }).fill('Brooklyn');
+    await page
+      .getByRole('button', { name: 'Save location defaults', exact: true })
+      .click();
+    await expect(
+      page.getByText('Location defaults saved', { exact: true }),
+    ).toBeVisible();
+    expect((await customer.rpc.me.query())!.customer!.city).toBe('Ojai');
+    await page.getByRole('button', { name: 'Markets', exact: true }).click();
+    await expect(page.getByLabel('IANA timezone', { exact: true })).toHaveValue(
+      'America/New_York',
+    );
+    await publicPage.goto(`/?network=${n!.slug}`);
+    await expect(
+      publicPage
+        .locator('footer')
+        .getByRole('link', { name: 'Email support', exact: true }),
+    ).toHaveAttribute('href', 'mailto:help@example.test');
+    await expect(
+      publicPage
+        .locator('footer')
+        .getByRole('link', { name: '+1 212 555 0101', exact: true }),
+    ).toHaveAttribute('href', 'tel:+12125550101');
+    const exposed = await api(
+      publicPage.request,
+      n!.slug,
+    ).networks.branding.query();
+    expect(exposed).not.toHaveProperty('emailReplyTo');
+    expect(exposed).not.toHaveProperty('emailFrom');
+    expect(exposed).not.toHaveProperty('emailKeyEncrypted');
+    await publicPage.goto('/');
+    await expect(
+      publicPage.getByRole('link', { name: 'Email support', exact: true }),
+    ).toHaveCount(0);
+    await rejectCode(
+      api(admin.request, n!.slug).networks.update.mutate({
+        contactUrl: 'javascript:alert(1)',
+      }),
+      'BAD_REQUEST',
+    );
+    await rejectCode(
+      api(admin.request, n!.slug).networks.update.mutate({
+        contactUrl: 'invalid-url',
+      }),
+      'BAD_REQUEST',
+    );
+    await rejectCode(
+      api(admin.request, n!.slug).networks.update.mutate({
+        location: { timezone: 'Fake/Zone' },
+      }),
+      'BAD_REQUEST',
+    );
+    await rejectCode(
+      api(customer.request, n!.slug).networks.update.mutate({
+        supportEmail: 'bad@example.test',
+      }),
+      'FORBIDDEN',
+    );
+  } finally {
+    await adminContext.close();
+    await customerContext.close();
+    await anonymous.close();
+    await admin.request.dispose();
+    await customer.request.dispose();
+  }
+});
+
+test('account email identity uses the app name, verified sender and reply-to while Places bias is operator-specific', async () => {
+  const { networkEmailConfig } = await import('../../apps/api/src/networks.js');
+  const admin = await actor('admin');
+  const [n] = await db
+    .insert(networks)
+    .values({
+      name: 'Sonoma Basket',
+      slug: unique('identity'),
+      supportEmail: 'support@example.test',
+      emailReplyTo: 'reply@example.test',
+      emailFrom: 'sender@example.test',
+    })
+    .returning();
+  const config = await networkEmailConfig(db, n!.id, {
+    secret: randomBytes(32).toString('hex'),
+    resendKey: 'mock-key',
+    emailFrom: 'platform@example.test',
+  });
+  const messages: {
+    from: string;
+    reply_to: string;
+    subject: string;
+    text: string;
+  }[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    expect(String(url)).toBe('https://api.resend.com/emails');
+    messages.push(JSON.parse(String(options?.body)));
+    return Response.json({ id: 'mock' });
+  };
+  try {
+    const auth = createAuth(db, {
+      secret: randomBytes(32).toString('hex'),
+      baseURL,
+      webOrigin: baseURL,
+      ...config,
+    });
+    await db
+      .update(user)
+      .set({ emailVerified: false })
+      .where(eq(user.id, admin.id));
+    await auth.api.requestPasswordReset({
+      body: {
+        email: admin.email,
+        redirectTo: baseURL + '/?network=' + n!.slug + '&reset=1',
+      },
+    });
+    await auth.api.sendVerificationEmail({
+      body: {
+        email: admin.email,
+        callbackURL: baseURL + '/?network=' + n!.slug,
+      },
+    });
+    expect(messages.map((m) => m.subject)).toEqual([
+      'Reset your Sonoma Basket password',
+      'Verify your Sonoma Basket email',
+    ]);
+    for (const message of messages) {
+      expect(message.from).toBe('"Sonoma Basket" <sender@example.test>');
+      expect(message.reply_to).toBe('reply@example.test');
+      expect(message.text).toContain('Sonoma Basket');
+    }
+    await db
+      .update(networks)
+      .set({ emailReplyTo: null })
+      .where(eq(networks.id, n!.id));
+    expect(
+      (await networkEmailConfig(db, n!.id, { secret: 'test' })).emailReplyTo,
+    ).toBe('support@example.test');
+  } finally {
+    globalThis.fetch = originalFetch;
+    await db
+      .update(user)
+      .set({ emailVerified: true })
+      .where(eq(user.id, admin.id));
+    await admin.request.dispose();
+  }
+  const bias = { latitude: 38.29, longitude: -122.46, radiusMeters: 15000 };
+  await suggestAddresses(
+    '10 Main',
+    randomUUID(),
+    'mock',
+    async (_url, options) => {
+      expect(JSON.parse(String(options?.body)).locationBias).toEqual({
+        circle: {
+          center: { latitude: bias.latitude, longitude: bias.longitude },
+          radius: 15000,
+        },
+      });
+      return Response.json({ suggestions: [] });
+    },
+    { autocompleteBias: bias },
+  );
+});
+
+test('MCP resolves search ZIPs on the backend, reuses saved coordinates, and preserves settings when lookup fails', async () => {
+  const Fastify: typeof import('fastify').default = createRequire(
+    import.meta.url,
+  )('fastify');
+  const admin = await actor('admin');
+  const [n] = await db
+    .insert(networks)
+    .values({ name: 'ZIP search app', slug: unique('zip-search') })
+    .returning();
+  await db
+    .insert(networkMemberships)
+    .values({ networkId: n!.id, userId: admin.id, role: 'network_admin' });
+  const settings = api(admin.request, n!.slug);
+  const { token } = await settings.admin.createToken.mutate({
+    name: 'ZIP configuration',
+  });
+  const server = Fastify();
+  registerMcp(server, db, baseURL);
+  const previousFetch = globalThis.fetch;
+  const requested: string[] = [];
+  let mode: 'ok' | 'missing' | 'invalid' | 'outage' = 'ok';
+  globalThis.fetch = async (url, options) => {
+    requested.push(String(url));
+    expect(String(url)).toMatch(/^https:\/\/api\.zippopotam\.us\/us\/\d{5}$/);
+    expect(options?.signal).toBeDefined();
+    if (mode === 'outage') throw new Error('Provider unavailable');
+    if (mode === 'missing') return Response.json({}, { status: 404 });
+    const zip = new URL(String(url)).pathname.split('/').at(-1);
+    return Response.json({
+      'post code': zip,
+      'country abbreviation': 'US',
+      places: [
+        {
+          latitude: mode === 'invalid' ? 'invalid' : '34.448',
+          longitude: '-119.243',
+        },
+      ],
+    });
+  };
+  const call = async (arguments_: object) => {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/mcp',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      payload: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'update_network', arguments: arguments_ },
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    return response.json().result;
+  };
+  try {
+    const result = await call({
+      location: {
+        autocompleteBias: { postalCode: '93023', radiusMeters: 30000 },
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(requested).toEqual(['https://api.zippopotam.us/us/93023']);
+    expect(
+      (await settings.networks.current.query()).location.autocompleteBias,
+    ).toEqual({
+      postalCode: '93023',
+      latitude: 34.448,
+      longitude: -119.243,
+      radiusMeters: 30000,
+    });
+    await call({
+      location: {
+        autocompleteBias: { postalCode: '93023', radiusMeters: 12000 },
+      },
+    });
+    expect(requested).toHaveLength(1);
+    expect(
+      (await settings.networks.current.query()).location.autocompleteBias
+        ?.radiusMeters,
+    ).toBe(12000);
+    for (const failure of ['missing', 'invalid', 'outage'] as const) {
+      mode = failure;
+      const failed = await call({
+        name: 'Must not save',
+        location: {
+          autocompleteBias: { postalCode: '10001', radiusMeters: 10000 },
+        },
+      });
+      expect(failed.isError).toBe(true);
+      expect(JSON.parse(failed.content[0].text).code).toBe(
+        failure === 'missing' ? 'BAD_REQUEST' : 'BAD_GATEWAY',
+      );
+      expect(await settings.networks.current.query()).toMatchObject({
+        name: 'ZIP search app',
+        location: {
+          autocompleteBias: {
+            postalCode: '93023',
+            latitude: 34.448,
+            longitude: -119.243,
+            radiusMeters: 12000,
+          },
+        },
+      });
+    }
+    const count = requested.length;
+    expect(
+      (
+        await call({
+          location: {
+            autocompleteBias: { latitude: 0, longitude: 0, radiusMeters: 5000 },
+          },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      (
+        await call({
+          location: {
+            autocompleteBias: { postalCode: 'bad', radiusMeters: 5000 },
+          },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(requested).toHaveLength(count);
+    expect(
+      (await call({ location: { autocompleteBias: null } })).isError,
+    ).not.toBe(true);
+    expect(
+      (await settings.networks.current.query()).location.autocompleteBias,
+    ).toBeNull();
+    expect(requested).toHaveLength(count);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await server.close();
+    await admin.request.dispose();
+  }
 });

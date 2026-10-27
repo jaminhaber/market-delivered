@@ -1,5 +1,10 @@
 import { createAuthClient } from 'better-auth/react';
 export const authClient = createAuthClient({
+  fetchOptions: {
+    headers: new URLSearchParams(location.search).get('network')
+      ? { 'x-network-id': new URLSearchParams(location.search).get('network')! }
+      : {},
+  },
   baseURL: import.meta.env.VITE_AUTH_URL || window.location.origin,
 });
 

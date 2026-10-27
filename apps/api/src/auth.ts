@@ -1,9 +1,15 @@
+import { resolveNetwork } from './networks.js';
 import { createEmailSender } from './email.js';
 import { createHash } from 'node:crypto';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { setSessionCookie } from 'better-auth/cookies';
 import { and, eq, gt, isNull } from 'drizzle-orm';
-import { invitations, customerProfiles, driverProfiles } from '@market/db';
+import {
+  invitations,
+  customerProfiles,
+  driverProfiles,
+  networkMemberships,
+} from '@market/db';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { webOrigins } from './origins.js';
@@ -21,12 +27,18 @@ export type AuthConfig = {
   webOrigin: string;
   resendKey?: string;
   emailFrom?: string;
+  appName?: string;
+  emailReplyTo?: string;
   production?: boolean;
 };
 export function createAuth(db: Database, config: AuthConfig) {
   const sendEmail = createEmailSender(config);
+  const appName = (config.appName || 'Market Delivered').replace(
+    /[\r\n]/g,
+    ' ',
+  );
   return betterAuth({
-    appName: 'Market Delivered',
+    appName,
     secret: config.secret,
     baseURL: config.baseURL,
     trustedOrigins: webOrigins(config),
@@ -96,6 +108,10 @@ export function createAuth(db: Database, config: AuthConfig) {
         create: {
           before: async (person, context) => {
             const token = context?.headers?.get('x-invite-token') ?? '';
+            const network = await resolveNetwork(
+              db,
+              context?.headers?.get('x-network-id') || undefined,
+            );
             const [invite] = await db
               .select()
               .from(invitations)
@@ -105,6 +121,7 @@ export function createAuth(db: Database, config: AuthConfig) {
                     invitations.tokenHash,
                     createHash('sha256').update(token).digest('hex'),
                   ),
+                  eq(invitations.networkId, network.id),
                   eq(invitations.email, person.email.toLowerCase()),
                   isNull(invitations.usedAt),
                   isNull(invitations.revokedAt),
@@ -120,6 +137,10 @@ export function createAuth(db: Database, config: AuthConfig) {
           },
           after: async (person, context) => {
             const token = context?.headers?.get('x-invite-token') ?? '';
+            const network = await resolveNetwork(
+              db,
+              context?.headers?.get('x-network-id') || undefined,
+            );
             await db.transaction(async (tx) => {
               const [invite] = await tx
                 .update(invitations)
@@ -130,6 +151,7 @@ export function createAuth(db: Database, config: AuthConfig) {
                       invitations.tokenHash,
                       createHash('sha256').update(token).digest('hex'),
                     ),
+                    eq(invitations.networkId, network.id),
                     eq(invitations.email, person.email.toLowerCase()),
                     isNull(invitations.usedAt),
                     isNull(invitations.revokedAt),
@@ -141,9 +163,18 @@ export function createAuth(db: Database, config: AuthConfig) {
                 throw new APIError('FORBIDDEN', {
                   message: 'Invitation is no longer available.',
                 });
-              await tx.insert(customerProfiles).values({ userId: person.id });
+              await tx.insert(networkMemberships).values({
+                networkId: invite.networkId,
+                userId: person.id,
+                role:
+                  invite.role === 'network_admin' ? 'network_admin' : 'member',
+              });
+              await tx
+                .insert(customerProfiles)
+                .values({ networkId: invite.networkId, userId: person.id });
               if (invite.role === 'driver')
                 await tx.insert(driverProfiles).values({
+                  networkId: invite.networkId,
                   userId: person.id,
                   phone: '',
                   vehicle: '',
@@ -161,14 +192,14 @@ export function createAuth(db: Database, config: AuthConfig) {
       requireEmailVerification: !!config.production,
       revokeSessionsOnPasswordReset: true,
       sendResetPassword: async ({ user, url }) =>
-        sendEmail(user.email, 'Reset your Market Delivered password', url),
+        sendEmail(user.email, `Reset your ${appName} password`, url),
     },
     emailVerification: {
       sendOnSignUp: false,
       sendOnSignIn: !!config.production,
       autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) =>
-        sendEmail(user.email, 'Verify your Market Delivered email', url),
+        sendEmail(user.email, `Verify your ${appName} email`, url),
     },
     session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
     rateLimit: {

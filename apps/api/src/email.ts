@@ -1,6 +1,8 @@
 export type EmailConfig = {
   resendKey?: string;
   emailFrom?: string;
+  appName?: string;
+  emailReplyTo?: string;
   production?: boolean;
 };
 export function createEmailSender(config: EmailConfig) {
@@ -23,7 +25,17 @@ export function createEmailSender(config: EmailConfig) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: config.emailFrom,
+        from:
+          config.appName && config.emailFrom
+            ? `"${config.appName
+                .replace(/[\r\n]/g, ' ')
+                .replace(/\\/g, '\\\\')
+                .replace(
+                  /"/g,
+                  '\\"',
+                )}" <${config.emailFrom.match(/<([^<>]+)>/)?.[1] || config.emailFrom}>`
+            : config.emailFrom,
+        ...(config.emailReplyTo ? { reply_to: config.emailReplyTo } : {}),
         to,
         subject,
         text: `${message}\n\n${url}\n\nIf you did not request this, ignore this email.`,

@@ -1,7 +1,10 @@
+import { networkIdColumn, networks } from './network-schema.js';
 import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
   check,
+  foreignKey,
+  unique,
   index,
   integer,
   pgEnum,
@@ -33,29 +36,39 @@ const deliveryAddressColumns = () => ({
   geocodedAt: timestamp('geocoded_at', { withTimezone: true }),
   geocoder: text('geocoder'),
 });
-export const customerProfiles = pgTable('customer_profiles', {
-  userId: text('user_id')
-    .primaryKey()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  phone: text('phone').notNull().default(''),
-  address: text('address').notNull().default(''),
-  ...deliveryAddressColumns(),
-  deliveryNotes: text('delivery_notes').notNull().default(''),
-});
+export const customerProfiles = pgTable(
+  'customer_profiles',
+  {
+    networkId: networkIdColumn(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    phone: text('phone').notNull().default(''),
+    address: text('address').notNull().default(''),
+    ...deliveryAddressColumns(),
+    deliveryNotes: text('delivery_notes').notNull().default(''),
+  },
+  (t) => [primaryKey({ columns: [t.networkId, t.userId] })],
+);
 export const driverStatus = pgEnum('driver_status', [
   'pending',
   'approved',
   'suspended',
 ]);
-export const driverProfiles = pgTable('driver_profiles', {
-  userId: text('user_id')
-    .primaryKey()
-    .references(() => user.id, { onDelete: 'restrict' }),
-  phone: text('phone').notNull(),
-  vehicle: text('vehicle').notNull(),
-  status: driverStatus('status').notNull().default('pending'),
-  createdAt: created(),
-});
+export const driverProfiles = pgTable(
+  'driver_profiles',
+  {
+    networkId: networkIdColumn(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    phone: text('phone').notNull(),
+    vehicle: text('vehicle').notNull(),
+    status: driverStatus('status').notNull().default('pending'),
+    createdAt: created(),
+  },
+  (t) => [primaryKey({ columns: [t.networkId, t.userId] })],
+);
 // Text roles permit new roles without changing users or an enum. Only trusted administration grants roles.
 export const userRoles = pgTable(
   'user_roles',
@@ -67,13 +80,18 @@ export const userRoles = pgTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.role] })],
 );
-export const markets = pgTable('markets', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: text('name').notNull(),
-  address: text('address').notNull(),
-  timezone: text('timezone').notNull().default('America/Los_Angeles'),
-  createdAt: created(),
-});
+export const markets = pgTable(
+  'markets',
+  {
+    networkId: networkIdColumn(),
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: text('name').notNull(),
+    address: text('address').notNull(),
+    timezone: text('timezone').notNull().default('America/Los_Angeles'),
+    createdAt: created(),
+  },
+  (t) => [unique('markets_network_identity').on(t.networkId, t.id)],
+);
 export const runStatus = pgEnum('run_status', [
   'scheduled',
   'shopping',
@@ -84,6 +102,7 @@ export const runStatus = pgEnum('run_status', [
 export const marketRuns = pgTable(
   'market_runs',
   {
+    networkId: networkIdColumn(),
     id: uuid('id').defaultRandom().primaryKey(),
     marketId: uuid('market_id')
       .notNull()
@@ -105,6 +124,17 @@ export const marketRuns = pgTable(
     createdAt: created(),
   },
   (t) => [
+    unique('market_runs_network_identity').on(t.networkId, t.id),
+    foreignKey({
+      name: 'market_runs_market_id_network_fk',
+      columns: [t.networkId, t.marketId],
+      foreignColumns: [markets.networkId, markets.id],
+    }),
+    foreignKey({
+      name: 'market_runs_schedule_id_network_fk',
+      columns: [t.networkId, t.scheduleId],
+      foreignColumns: [marketSchedules.networkId, marketSchedules.id],
+    }),
     index('runs_schedule_idx').on(t.startsAt),
     check(
       'run_dates_valid',
@@ -117,6 +147,7 @@ export const marketRuns = pgTable(
 export const inventory = pgTable(
   'inventory',
   {
+    networkId: networkIdColumn(),
     id: uuid('id').defaultRandom().primaryKey(),
     runId: uuid('run_id')
       .notNull()
@@ -130,6 +161,17 @@ export const inventory = pgTable(
     active: boolean('active').notNull().default(true),
   },
   (t) => [
+    unique('inventory_network_identity').on(t.networkId, t.id),
+    foreignKey({
+      name: 'inventory_run_id_network_fk',
+      columns: [t.networkId, t.runId],
+      foreignColumns: [marketRuns.networkId, marketRuns.id],
+    }),
+    foreignKey({
+      name: 'inventory_produce_id_network_fk',
+      columns: [t.networkId, t.produceId],
+      foreignColumns: [produce.networkId, produce.id],
+    }),
     uniqueIndex('inventory_run_produce_unique').on(t.runId, t.produceId),
     check(
       'inventory_valid',
@@ -151,15 +193,16 @@ export const orderStatus = pgEnum('order_status', [
 export const orders = pgTable(
   'orders',
   {
+    networkId: networkIdColumn(),
     id: uuid('id').defaultRandom().primaryKey(),
     customerId: text('customer_id')
       .notNull()
-      .references(() => customerProfiles.userId),
+      .references(() => user.id),
     runId: uuid('run_id')
       .notNull()
       .references(() => marketRuns.id),
     requestId: uuid('request_id').notNull(),
-    driverId: text('driver_id').references(() => driverProfiles.userId),
+    driverId: text('driver_id').references(() => user.id),
     claimedAt: timestamp('claimed_at', { withTimezone: true }),
     status: orderStatus('status').notNull().default('placed'),
     customerName: text('customer_name').notNull(),
@@ -178,7 +221,27 @@ export const orders = pgTable(
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
   },
   (t) => [
-    uniqueIndex('orders_customer_request_unique').on(t.customerId, t.requestId),
+    unique('orders_network_identity').on(t.networkId, t.id),
+    foreignKey({
+      name: 'orders_run_id_network_fk',
+      columns: [t.networkId, t.runId],
+      foreignColumns: [marketRuns.networkId, marketRuns.id],
+    }),
+    foreignKey({
+      name: 'orders_customer_id_network_fk',
+      columns: [t.networkId, t.customerId],
+      foreignColumns: [customerProfiles.networkId, customerProfiles.userId],
+    }),
+    foreignKey({
+      name: 'orders_driver_id_network_fk',
+      columns: [t.networkId, t.driverId],
+      foreignColumns: [driverProfiles.networkId, driverProfiles.userId],
+    }),
+    uniqueIndex('orders_customer_request_unique').on(
+      t.networkId,
+      t.customerId,
+      t.requestId,
+    ),
     index('orders_run_idx').on(t.runId),
     index('orders_driver_idx').on(t.driverId),
     check(
@@ -199,6 +262,7 @@ export const orders = pgTable(
 export const orderItems = pgTable(
   'order_items',
   {
+    networkId: networkIdColumn(),
     id: uuid('id').defaultRandom().primaryKey(),
     orderId: uuid('order_id')
       .notNull()
@@ -220,6 +284,22 @@ export const orderItems = pgTable(
     packedAt: timestamp('packed_at', { withTimezone: true }),
   },
   (t) => [
+    unique('order_items_network_identity').on(t.networkId, t.id),
+    foreignKey({
+      name: 'order_items_order_id_network_fk',
+      columns: [t.networkId, t.orderId],
+      foreignColumns: [orders.networkId, orders.id],
+    }),
+    foreignKey({
+      name: 'order_items_inventory_id_network_fk',
+      columns: [t.networkId, t.inventoryId],
+      foreignColumns: [inventory.networkId, inventory.id],
+    }),
+    foreignKey({
+      name: 'order_items_farm_id_network_fk',
+      columns: [t.networkId, t.farmId],
+      foreignColumns: [farms.networkId, farms.id],
+    }),
     check(
       'packed_item_valid',
       sql`${t.packedAt} IS NULL OR (${t.fulfilledQuantity} IS NOT NULL AND ${t.fulfilledQuantity} > 0)`,
@@ -235,6 +315,7 @@ export const orderItems = pgTable(
 export const purchases = pgTable(
   'purchases',
   {
+    networkId: networkIdColumn(),
     orderItemId: uuid('order_item_id')
       .primaryKey()
       .references(() => orderItems.id),
@@ -248,6 +329,11 @@ export const purchases = pgTable(
       .notNull(),
   },
   (t) => [
+    foreignKey({
+      name: 'purchases_order_item_id_network_fk',
+      columns: [t.networkId, t.orderItemId],
+      foreignColumns: [orderItems.networkId, orderItems.id],
+    }),
     check(
       'purchase_valid',
       sql`${t.quantity} >= 0 AND ${t.totalCostCents} >= 0 AND (${t.quantity} > 0 OR ${t.totalCostCents} = 0)`,
@@ -257,6 +343,7 @@ export const purchases = pgTable(
 export const orderEvents = pgTable(
   'order_events',
   {
+    networkId: networkIdColumn(),
     id: uuid('id').defaultRandom().primaryKey(),
     orderId: uuid('order_id')
       .notNull()
@@ -267,11 +354,21 @@ export const orderEvents = pgTable(
     note: text('note').notNull().default(''),
     createdAt: created(),
   },
-  (t) => [index('order_events_order_idx').on(t.orderId)],
+  (t) => [
+    foreignKey({
+      name: 'order_events_order_id_network_fk',
+      columns: [t.networkId, t.orderId],
+      foreignColumns: [orders.networkId, orders.id],
+    }),
+    index('order_events_order_idx').on(t.orderId),
+  ],
 );
 export const apiTokens = pgTable(
   'api_tokens',
   {
+    networkId: uuid('network_id').default(
+      sql`coalesce(nullif(current_setting('app.network_id', true), '')::uuid, '00000000-0000-4000-8000-000000000001'::uuid)`,
+    ),
     id: uuid('id').defaultRandom().primaryKey(),
     userId: text('user_id')
       .notNull()
@@ -283,9 +380,17 @@ export const apiTokens = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: created(),
   },
-  (t) => [index('api_tokens_user_idx').on(t.userId)],
+  (t) => [
+    foreignKey({
+      name: 'api_tokens_network_fk',
+      columns: [t.networkId],
+      foreignColumns: [networks.id],
+    }),
+    index('api_tokens_user_idx').on(t.userId),
+  ],
 );
 export const auditEvents = pgTable('audit_events', {
+  networkId: networkIdColumn(),
   id: uuid('id').defaultRandom().primaryKey(),
   actorId: text('actor_id')
     .notNull()
@@ -297,6 +402,7 @@ export const auditEvents = pgTable('audit_events', {
 export const invitations = pgTable(
   'invitations',
   {
+    networkId: networkIdColumn(),
     id: uuid('id').defaultRandom().primaryKey(),
     email: text('email').notNull(),
     role: text('role').notNull(),
@@ -310,13 +416,17 @@ export const invitations = pgTable(
   },
   (t) => [
     index('invitations_email_idx').on(t.email),
-    check('invitation_role_valid', sql`${t.role} IN ('customer','driver')`),
+    check(
+      'invitation_role_valid',
+      sql`${t.role} IN ('customer','driver','network_admin')`,
+    ),
   ],
 );
 
 export const marketSchedules = pgTable(
   'market_schedules',
   {
+    networkId: networkIdColumn(),
     id: uuid('id').defaultRandom().primaryKey(),
     marketId: uuid('market_id')
       .notNull()
@@ -336,6 +446,12 @@ export const marketSchedules = pgTable(
     active: boolean('active').notNull().default(true),
   },
   (t) => [
+    unique('market_schedules_network_identity').on(t.networkId, t.id),
+    foreignKey({
+      name: 'market_schedules_market_id_network_fk',
+      columns: [t.networkId, t.marketId],
+      foreignColumns: [markets.networkId, markets.id],
+    }),
     uniqueIndex('market_schedule_weekday_unique').on(t.marketId, t.weekday),
     check(
       'schedule_delivery_during_market',
@@ -350,6 +466,7 @@ export const marketSchedules = pgTable(
 export const scheduleInventory = pgTable(
   'schedule_inventory',
   {
+    networkId: networkIdColumn(),
     scheduleId: uuid('schedule_id')
       .notNull()
       .references(() => marketSchedules.id),
@@ -361,6 +478,16 @@ export const scheduleInventory = pgTable(
     active: boolean('active').notNull().default(true),
   },
   (t) => [
+    foreignKey({
+      name: 'schedule_inventory_schedule_id_network_fk',
+      columns: [t.networkId, t.scheduleId],
+      foreignColumns: [marketSchedules.networkId, marketSchedules.id],
+    }),
+    foreignKey({
+      name: 'schedule_inventory_produce_id_network_fk',
+      columns: [t.networkId, t.produceId],
+      foreignColumns: [produce.networkId, produce.id],
+    }),
     primaryKey({ columns: [t.scheduleId, t.produceId] }),
     check(
       'schedule_inventory_valid',
@@ -372,6 +499,7 @@ export const scheduleInventory = pgTable(
 export const backgroundJobRuns = pgTable(
   'background_job_runs',
   {
+    networkId: networkIdColumn(),
     id: uuid('id').defaultRandom().primaryKey(),
     name: text('name').notNull(),
     source: text('source').notNull(),
