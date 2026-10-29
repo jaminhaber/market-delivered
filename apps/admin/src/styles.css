@@ -349,12 +349,6 @@ main {
 .mcp-endpoint {
   overflow-wrap: anywhere;
 }
-.mcp-new-token {
-  padding: 1rem;
-  background: #edf5ed;
-  border: 1px solid #d0ded0;
-  border-radius: 6px;
-}
 details {
   margin: 1rem 0;
 }

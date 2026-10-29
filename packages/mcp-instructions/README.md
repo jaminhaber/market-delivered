@@ -12,16 +12,16 @@ import {
   getSetupInstructions,
 } from '@market/mcp-instructions';
 
-const providers = listProviders(); // ChatGPT, Claude, API token / automation
+const providers = listProviders(); // ChatGPT and Claude
 const interfaces = listInterfaces('chatgpt');
 
 const setup = getSetupInstructions({
   provider: 'chatgpt',
   interface: 'desktop',
-  serverName: 'silverstreak',
-  displayName: 'Silverstreak',
-  serverUrl: 'https://example.com/networks/silverstreak/mcp',
-  examplePrompt: 'Use Silverstreak to list upcoming markets.',
+  serverName: 'market-delivered',
+  displayName: 'Market Delivered',
+  serverUrl: 'https://admin.example.com/mcp',
+  examplePrompt: 'Use Market Delivered to list my networks.',
 });
 ```
 
@@ -32,40 +32,10 @@ Copy blocks include their label, button label, value, and kind (`address` or
 OAuth consent button name; it defaults to `Allow access to <displayName>`.
 
 `listInterfaces('chatgpt')` and `listInterfaces('claude')` return Desktop app
-and Terminal. These providers use OAuth. `listInterfaces('token')` returns
-ChatGPT (Codex) and Claude Code. Each provider includes `auth` and
-`interfaceLabel`, so renderers can show the relevant second selector and
-credential controls without a separate authentication selector.
-
-For token-based automation, use `provider: 'token'`, `interface: 'chatgpt'` or
-`'claude'`, and a `tokenFile` path relative to the user's home directory:
-
-```ts
-const setup = getSetupInstructions({
-  provider: 'token',
-  interface: 'claude',
-  tokenFile: '.config/example/mcp.headers',
-  serverName: 'example',
-  displayName: 'Example',
-  serverUrl: 'https://example.com/mcp',
-});
-```
-
-Unsupported provider/interface combinations throw an error. The generated
-command reads an Authorization
-header from that file through `mcp-remote`; it never embeds a token in MCP client
-configuration. The client needs Node.js and its assistant's CLI installed.
-
-Use `getTokenSaveCommand({ token, tokenFile })` when displaying a newly issued
-token. It returns a shell command that writes the header into a private file.
-The command contains the token: show it only in the credential-creation result,
-never in persistent setup content, logs, or analytics. Absolute paths, traversal,
-and shell metacharacters in `tokenFile` are rejected. File commands target
-Mac/Linux shells; they are not PowerShell commands.
+and Terminal. Both use the same account-wide OAuth connection. API token creation
+and credential-file instructions are not supported.
 
 Silverstreak uses the Astro renderer in
 `apps/silverstreak/src/components/McpInstructionBlocks.astro`. The admin app uses
 the React renderer in `apps/admin/src/McpSetupInstructions.tsx`. Apps own provider
-selection, clipboard behavior, access checks, token issuance, and disconnecting
-connections. The provider’s authentication method must match the endpoint: instruction
-generation does not enable OAuth on a token-only server.
+selection, clipboard behavior, and navigation to the central OAuth flow.

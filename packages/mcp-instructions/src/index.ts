@@ -1,8 +1,8 @@
 export type AssistantId = 'chatgpt' | 'claude';
-export type ProviderId = AssistantId | 'token';
+export type ProviderId = AssistantId;
 export type OAuthInterfaceId = 'desktop' | 'terminal';
-export type InterfaceId = OAuthInterfaceId | AssistantId;
-export type AuthMethod = 'oauth' | 'token';
+export type InterfaceId = OAuthInterfaceId;
+export type AuthMethod = 'oauth';
 export type Provider = {
   id: ProviderId;
   name: string;
@@ -28,15 +28,11 @@ type ServerOptions = {
   serverUrl: string;
   examplePrompt?: string;
 };
-export type SetupOptions = ServerOptions &
-  (
-    | {
-        provider: AssistantId;
-        interface: OAuthInterfaceId;
-        approvalLabel?: string;
-      }
-    | { provider: 'token'; interface: AssistantId; tokenFile: string }
-  );
+export type SetupOptions = ServerOptions & {
+  provider: ProviderId;
+  interface: InterfaceId;
+  approvalLabel?: string;
+};
 export type SetupInstructions = {
   provider: Provider;
   interface: SetupInterface;
@@ -61,12 +57,6 @@ const providers: readonly Provider[] = [
     auth: 'oauth',
     interfaceLabel: 'How do you use it?',
   },
-  {
-    id: 'token',
-    name: 'API token / automation',
-    auth: 'token',
-    interfaceLabel: 'Which assistant do you use?',
-  },
 ];
 const interfaces: readonly SetupInterface[] = [
   { id: 'desktop', name: 'Desktop app' },
@@ -77,14 +67,9 @@ export function listProviders(): Provider[] {
   return providers.map((provider) => ({ ...provider }));
 }
 
-/** OAuth providers offer app/terminal choices; token setup offers assistant choices. */
+/** Supported app and terminal interfaces. */
 export function listInterfaces(provider: ProviderId): SetupInterface[] {
   getProvider(provider);
-  if (provider === 'token')
-    return [
-      { id: 'chatgpt', name: 'ChatGPT (Codex)' },
-      { id: 'claude', name: 'Claude Code' },
-    ];
   return interfaces.map((item) => ({ ...item }));
 }
 
@@ -96,33 +81,6 @@ function getProvider(id: ProviderId): Provider {
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-function validateTokenFile(file: string) {
-  if (
-    !/^[a-zA-Z0-9._/-]+$/.test(file) ||
-    file.split('/').some((part) => !part || part === '.' || part === '..')
-  )
-    throw new Error(
-      'tokenFile must be a relative path inside the home directory',
-    );
-}
-
-/** Builds a private credential-file command without putting the token in MCP configuration. */
-export function getTokenSaveCommand(options: {
-  token: string;
-  tokenFile: string;
-}): string {
-  validateTokenFile(options.tokenFile);
-  if (!options.token || /[\r\n]/.test(options.token))
-    throw new Error('Expected a single-line token');
-  const parent = options.tokenFile.includes('/')
-    ? options.tokenFile.slice(0, options.tokenFile.lastIndexOf('/'))
-    : '';
-  const directory = parent
-    ? `mkdir -p "$HOME/${parent}" && chmod 700 "$HOME/${parent}" && `
-    : '';
-  return `(umask 077 && ${directory}touch "$HOME/${options.tokenFile}" && chmod 600 "$HOME/${options.tokenFile}" && printf '%s\\n' ${shellQuote(`Authorization: Bearer ${options.token}`)} > "$HOME/${options.tokenFile}")`;
-}
-
 export function getSetupInstructions(options: SetupOptions): SetupInstructions {
   const provider = getProvider(options.provider);
   const selectedInterface = listInterfaces(provider.id).find(
@@ -132,8 +90,7 @@ export function getSetupInstructions(options: SetupOptions): SetupInstructions {
     throw new Error(
       `Unsupported MCP setup: ${provider.id}/${options.interface}`,
     );
-  const assistantId =
-    options.provider === 'token' ? options.interface : options.provider;
+  const assistantId = options.provider;
   const assistant = assistants[assistantId];
   if (!/^[a-zA-Z0-9_-]+$/.test(options.serverName))
     throw new Error('Invalid MCP server name');
@@ -159,30 +116,10 @@ export function getSetupInstructions(options: SetupOptions): SetupInstructions {
       kind: 'command',
     });
   const approval =
-    options.provider !== 'token'
-      ? (options.approvalLabel ?? `Allow access to ${options.displayName}`)
-      : '';
+    options.approvalLabel ?? `Allow access to ${options.displayName}`;
   const signIn = `Sign in to ${options.displayName} and choose “${approval}”.`;
 
-  if (options.provider === 'token') {
-    validateTokenFile(options.tokenFile);
-    blocks.push({ type: 'heading', text: '1. Save your token' });
-    paragraph(
-      `Create a token, then run its “Copy save command” in Terminal. This saves the credential privately at ~/${options.tokenFile}.`,
-    );
-    blocks.push({ type: 'heading', text: '2. Connect your assistant' });
-    paragraph(
-      `With Node.js and ${assistant.terminalName} installed, copy and run this setup in Terminal.`,
-    );
-    const register =
-      assistantId === 'chatgpt'
-        ? `codex mcp add ${options.serverName}`
-        : `claude mcp add --scope user --transport stdio ${options.serverName}`;
-    command(
-      `chmod 600 "$HOME/${options.tokenFile}" &&\n${register} -- npx -y mcp-remote ${shellQuote(serverUrl)} --transport http-only --header-file "$HOME/${options.tokenFile}"`,
-    );
-    paragraph('Restart your assistant after setup.');
-  } else if (selectedInterface.id === 'desktop') {
+  if (selectedInterface.id === 'desktop') {
     blocks.push({
       type: 'steps',
       items:

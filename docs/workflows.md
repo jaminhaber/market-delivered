@@ -38,7 +38,7 @@ contains only members of this business. Network settings and global roles remain
 platform-admin operations.
 
 Driver shopping, packing, shortages, delivery, and cash recording remain available
-through the business API and network-scoped MCP.
+through the business API and MCP with explicit network IDs.
 
 Approved drivers can claim orders, shop and pack them, then record delivery and
 cash. Suspended drivers cannot claim work. Orders preserve the customer and item
@@ -46,8 +46,9 @@ snapshots from placement; later catalog/address edits do not change those record
 
 ## Platform administration
 
-The dashboard provides global administrator sign-in, OAuth setup and connection
-management, and optional API tokens for automation.
-Network provisioning, settings, and membership belong to the admin API or platform
-MCP. There is no network configuration screen in the dashboard and no network
+The dashboard provides global administrator sign-in and statistics. Account-wide
+assistant setup and connection management live at `/oauth/connect` and accept
+existing user accounts.
+Network provisioning, settings, and membership belong to the admin API or shared
+MCP, with current global permission checks. There is no network configuration screen in the dashboard and no network
 selection or management UI in Silverstreak.

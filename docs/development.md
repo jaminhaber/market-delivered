@@ -5,7 +5,7 @@ separate public/admin router registries. `apps/admin` is a minimal React/Vite
 application. `apps/silverstreak` uses Astro SSR and server-side typed API calls.
 
 `packages/mcp-instructions` provides shared MCP provider/interface discovery and
-structured OAuth or token setup instructions. Both frontends render this content
+structured OAuth setup instructions. Both frontends render this content
 with their own components. See its [package guide](../packages/mcp-instructions/README.md)
 when adding a provider, changing setup steps, or integrating another frontend.
 

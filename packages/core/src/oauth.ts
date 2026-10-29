@@ -1,73 +1,49 @@
-import { createHash } from 'node:crypto';
 import { mcp } from '@better-auth/mcp';
 import { createCimdClientDiscovery } from '@better-auth/cimd';
 import { fetchClientMetadataResource } from '@better-auth/cimd/node';
+import { getOAuthProviderApi } from '@better-auth/oauth-provider';
 import { APIError } from 'better-auth/api';
-import { permissions } from './networks.js';
-import type { Database } from '@market/db';
-import type { drizzleAdapter } from '@better-auth/drizzle-adapter';
+import { and, eq } from 'drizzle-orm';
+import * as s from '@market/db';
+import type { Auth } from './auth.js';
 
+export const MCP_SCOPE = 'mcp';
 export const OAUTH_ACCESS_PREFIX = 'md_oauth_';
 export const OAUTH_REFRESH_PREFIX = 'md_refresh_';
-export const MCP_SCOPE = 'mcp:business';
-export const ADMIN_MCP_SCOPE = 'mcp:platform';
-export const ADMIN_OAUTH_REFERENCE = 'platform';
-export const hashOAuthToken = (token: string) =>
-  createHash('sha256').update(token).digest('hex');
-export const networkMcpPath = (networkSlug: string) =>
-  `/networks/${encodeURIComponent(networkSlug)}/mcp`;
-export const networkOAuthPath = (networkSlug: string) =>
-  `/networks/${encodeURIComponent(networkSlug)}/auth`;
-export type McpOAuth = { networkId: string | null; resource: string };
+export const OAUTH_BASE_PATH = '/oauth/auth';
+export type McpOAuth = { resource: string };
+type OAuthContext = Parameters<typeof getOAuthProviderApi>[0];
 
-export function scopeOAuthAdapter(
-  factory: ReturnType<typeof drizzleAdapter>,
-  oauth?: McpOAuth,
-): ReturnType<typeof drizzleAdapter> {
-  return (options) => {
-    const adapter = factory(options);
-    if (!oauth) return adapter;
-    const referenceId = oauth.networkId ?? ADMIN_OAUTH_REFERENCE;
-    // The provider invalidates replayed refresh-token families by client/user.
-    // Restrict its family lookup and deletion to this authorization surface.
-    const scope = <
-      T extends { model: string; where?: { field: string; value: unknown }[] },
-    >(
-      data: T,
-    ) =>
-      data.model === 'oauthRefreshToken'
-        ? {
-            ...data,
-            where: [
-              ...(data.where ?? []),
-              { field: 'referenceId', value: referenceId },
-            ],
-          }
-        : data;
-    return {
-      ...adapter,
-      findMany: (data) => adapter.findMany(scope(data)),
-      deleteMany: (data) => adapter.deleteMany(scope(data)),
-    };
-  };
-}
-
-export function oauthPlugins(db: Database, oauth: McpOAuth) {
-  const referenceId = oauth.networkId ?? ADMIN_OAUTH_REFERENCE;
-  const scope = oauth.networkId ? MCP_SCOPE : ADMIN_MCP_SCOPE;
-  const consentPage = oauth.networkId ? '/mcp/authorize' : '/oauth/authorize';
+export function oauthPlugins(oauth: McpOAuth) {
   const discovery = createCimdClientDiscovery({
     fetchClientMetadataResource,
     metadataProfile: 'mcp-2026-07-28',
   });
   return [
     mcp({
+      resource: oauth.resource,
+      loginPage: '/oauth/login',
+      consentPage: '/oauth/authorize',
+      disableJwtPlugin: true,
+      scopes: [MCP_SCOPE, 'offline_access'],
+      dpop: { signingAlgorithms: [] },
+      grantTypes: ['authorization_code', 'refresh_token'],
+      accessTokenExpiresIn: 15 * 60,
+      refreshTokenExpiresIn: 90 * 24 * 60 * 60,
+      refreshTokenReuseInterval: 0,
+      prefix: {
+        opaqueAccessToken: OAUTH_ACCESS_PREFIX,
+        refreshToken: OAUTH_REFRESH_PREFIX,
+      },
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      clientRegistrationDefaultApplicationType: 'infer',
+      clientPrivileges: () => false,
       extensions: [
         {
           clientDiscovery: {
             ...discovery,
             async resolve(...args) {
-              // Inspect the client only after CIMD's bounded fetch and validation.
               const client = await discovery.resolve(...args);
               if (client?.dpopBoundAccessTokens)
                 throw new APIError('BAD_REQUEST', {
@@ -80,66 +56,113 @@ export function oauthPlugins(db: Database, oauth: McpOAuth) {
           },
         },
       ],
-      resource: oauth.resource,
-      loginPage: oauth.networkId ? '/mcp/login' : '/oauth/login',
-      consentPage,
-      // Opaque tokens allow immediate revocation with the existing database.
-      disableJwtPlugin: true,
-      // CIMD client records are shared across issuers. Persist the same client
-      // capabilities everywhere; each surface restricts actual grants below.
-      scopes: [MCP_SCOPE, ADMIN_MCP_SCOPE, 'offline_access'],
-      advertisedMetadata: { scopes_supported: [scope, 'offline_access'] },
-      dpop: { signingAlgorithms: [] },
-      grantTypes: ['authorization_code', 'refresh_token'],
-      accessTokenExpiresIn: 15 * 60,
-      refreshTokenExpiresIn: 90 * 24 * 60 * 60,
-      refreshTokenReuseInterval: 0,
-      storeTokens: { hash: hashOAuthToken },
-      prefix: {
-        opaqueAccessToken: OAUTH_ACCESS_PREFIX,
-        refreshToken: OAUTH_REFRESH_PREFIX,
-      },
-      allowDynamicClientRegistration: true,
-      allowUnauthenticatedClientRegistration: true,
-      clientRegistrationDefaultApplicationType: 'infer',
-      clientPrivileges: () => false,
-      postLogin: {
-        page: consentPage,
-        shouldRedirect: () => false,
-        consentReferenceId: async ({ user }) => {
-          const access = await permissions(
-            db,
-            user.id,
-            oauth.networkId ?? undefined,
-          );
-          if (!access.globalAdmin && !(oauth.networkId && access.networkAdmin))
-            throw new APIError('FORBIDDEN', {
-              message: 'Administrator access is required.',
-            });
-          return referenceId;
-        },
-      },
-      customTokenResponseFields: async ({
-        user,
-        verificationValue,
-        scopes,
-      }) => {
-        if (
-          !user ||
-          (verificationValue &&
-            verificationValue.referenceId !== referenceId) ||
-          scopes.some((value) => value !== scope && value !== 'offline_access')
-        )
-          throw new APIError('BAD_REQUEST', { error: 'invalid_grant' });
-        const access = await permissions(
-          db,
-          user.id,
-          oauth.networkId ?? undefined,
-        );
-        if (!access.globalAdmin && !(oauth.networkId && access.networkAdmin))
-          throw new APIError('FORBIDDEN', { error: 'access_denied' });
-        return {};
-      },
     }),
   ];
+}
+
+// Keep the provider's revocation implementation, but reject cross-client token
+// ownership before its revoked-token replay cleanup can affect another client.
+export async function checkOAuthRequest(ctx: OAuthContext) {
+  if (!ctx.path?.startsWith('/oauth2/')) return;
+  if (
+    ctx.headers?.has('dpop') ||
+    ctx.query?.dpop_jkt !== undefined ||
+    ctx.body?.dpop_jkt !== undefined ||
+    ctx.body?.dpop_bound_access_tokens === true
+  )
+    throw new APIError('BAD_REQUEST', {
+      error: 'invalid_request',
+      error_description: 'DPoP is not supported. Use Bearer tokens.',
+    });
+  if (ctx.path !== '/oauth2/revoke' || typeof ctx.body?.token !== 'string')
+    return;
+  const token = ctx.body.token.replace(/^(?:Bearer|DPoP) +/i, '');
+  if (!token.startsWith(OAUTH_REFRESH_PREFIX)) return;
+  let clientId = ctx.body.client_id;
+  const authorization = ctx.headers?.get('authorization');
+  try {
+    if (authorization && /^Basic +/i.test(authorization)) {
+      const credentials = Buffer.from(
+        authorization.replace(/^Basic +/i, ''),
+        'base64',
+      ).toString();
+      clientId = decodeURIComponent(
+        credentials.slice(0, credentials.indexOf(':')).replace(/\+/g, ' '),
+      );
+    } else if (!clientId && typeof ctx.body.client_assertion === 'string') {
+      // This only checks consistency; the provider verifies the assertion later.
+      clientId = JSON.parse(
+        Buffer.from(
+          ctx.body.client_assertion.split('.')[1] || '',
+          'base64url',
+        ).toString(),
+      ).iss;
+    }
+  } catch {
+    throw new APIError('BAD_REQUEST', { error: 'invalid_client' });
+  }
+  const provider = getOAuthProviderApi(
+    ctx,
+    ctx.context.getPlugin('oauth-provider')!.options,
+  );
+  const stored = await ctx.context.adapter.findOne<{ clientId: string }>({
+    model: 'oauthRefreshToken',
+    where: [
+      {
+        field: 'token',
+        value: await provider.hashToken(
+          token.slice(OAUTH_REFRESH_PREFIX.length),
+          'refresh_token',
+        ),
+      },
+    ],
+  });
+  if (stored && stored.clientId !== clientId)
+    throw new APIError('BAD_REQUEST', { error: 'invalid_grant' });
+}
+
+export async function oauthIdentity(
+  db: s.Database,
+  auth: Auth,
+  headers: Headers,
+  resource: string,
+) {
+  const authorization = headers.get('authorization');
+  if (!authorization?.startsWith('Bearer ')) return null;
+  const context = await auth.$context;
+  const provider = getOAuthProviderApi(
+    { context, headers } as OAuthContext,
+    context.getPlugin('oauth-provider')!.options,
+  );
+  try {
+    const claims = await provider.requireActiveAccessToken(
+      authorization.slice(7),
+    );
+    const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (
+      claims.iss !== context.baseURL ||
+      !audiences.includes(resource) ||
+      typeof claims.sub !== 'string' ||
+      typeof claims.client_id !== 'string' ||
+      !String(claims.scope || '')
+        .split(' ')
+        .includes(MCP_SCOPE) ||
+      claims.cnf
+    )
+      return null;
+    // Disconnect applies immediately, including to a token issued concurrently.
+    const [consent] = await db
+      .select({ id: s.oauthConsent.id })
+      .from(s.oauthConsent)
+      .where(
+        and(
+          eq(s.oauthConsent.userId, claims.sub),
+          eq(s.oauthConsent.clientId, claims.client_id),
+        ),
+      );
+    return consent ? claims.sub : null;
+  } catch (error) {
+    if (error instanceof APIError) return null;
+    throw error;
+  }
 }

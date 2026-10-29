@@ -1,8 +1,8 @@
 import type { APIContext } from 'astro';
 import { marketConfig } from './market';
 
-// This proxy only forwards the storefront API. Business MCP uses its dedicated
-// proxy below; network management, platform administration, and jobs stay private.
+// Only storefront API calls are proxied. OAuth and MCP live on the shared
+// Market Delivered origin.
 const storefrontProcedures = new Set([
   'me',
   'produce.categories',
@@ -101,101 +101,6 @@ export async function proxyMarketRequest({ request, url }: APIContext) {
     console.error('Market Delivered request failed');
     return json(
       'The shop is temporarily unavailable. Please try again shortly.',
-      502,
-    );
-  }
-}
-
-// Public OAuth exchanges and authenticated MCP traffic use the fixed business
-// context from server configuration. Callers cannot choose another network.
-export async function proxyMcpRequest({ request, url }: APIContext) {
-  const config = marketConfig();
-  // The backend resolves the slug and checks it against this site's fixed ID.
-  const permitted =
-    /^\/networks\/[^/]+\/(?:mcp|auth\/.+)$/.test(url.pathname) ||
-    /^\/\.well-known\/oauth-protected-resource\/networks\/[^/]+\/mcp$/.test(
-      url.pathname,
-    ) ||
-    /^\/\.well-known\/oauth-authorization-server\/networks\/[^/]+\/auth$/.test(
-      url.pathname,
-    );
-  if (!permitted) return json('Not found', 404);
-  const origin = request.headers.get('origin');
-  if (origin && origin !== url.origin) return json('Origin not allowed', 403);
-  if (
-    request.method === 'POST' &&
-    (url.pathname.endsWith('/oauth2/consent') ||
-      url.pathname.endsWith('/connections')) &&
-    origin !== url.origin
-  )
-    return json('Origin not allowed', 403);
-  const upstream = new URL(url.pathname + url.search, config.origin);
-  const headers = new Headers({ 'x-network-id': config.networkId });
-  for (const name of [
-    'accept',
-    'content-type',
-    'cookie',
-    'origin',
-    'authorization',
-    'dpop',
-    'mcp-protocol-version',
-    'sec-fetch-mode',
-    'sec-fetch-dest',
-    'sec-fetch-site',
-  ]) {
-    const value = request.headers.get(name);
-    if (value) headers.set(name, value);
-  }
-  try {
-    const response = await fetch(upstream, {
-      method: request.method,
-      headers,
-      body: request.method === 'POST' ? await request.text() : undefined,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(30_000),
-    });
-    const outgoing = new Headers({ 'Cache-Control': 'no-store' });
-    // The upstream call is a fetch, so Better Auth can return a JSON redirect.
-    // Turn that back into navigation for the browser's authorization request.
-    if (
-      request.method === 'GET' &&
-      url.pathname.endsWith('/oauth2/authorize') &&
-      request.headers.get('accept')?.includes('text/html') &&
-      response.ok &&
-      response.headers.get('content-type')?.includes('application/json')
-    ) {
-      const result = await response.json();
-      if (result.redirect === true && typeof result.url === 'string') {
-        outgoing.set('location', result.url);
-        outgoing.set('Referrer-Policy', 'no-referrer');
-        for (const cookie of response.headers.getSetCookie())
-          outgoing.append('set-cookie', cookie);
-        return new Response(null, { status: 303, headers: outgoing });
-      }
-      return Response.json(result, {
-        status: response.status,
-        headers: outgoing,
-      });
-    }
-    for (const name of [
-      'content-type',
-      'www-authenticate',
-      'location',
-      'allow',
-      'retry-after',
-    ]) {
-      const value = response.headers.get(name);
-      if (value) outgoing.set(name, value);
-    }
-    for (const cookie of response.headers.getSetCookie())
-      outgoing.append('set-cookie', cookie);
-    return new Response(response.body, {
-      status: response.status,
-      headers: outgoing,
-    });
-  } catch {
-    return json(
-      'The connection is temporarily unavailable. Please try again.',
       502,
     );
   }

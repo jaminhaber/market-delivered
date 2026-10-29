@@ -5,15 +5,14 @@ import { next, rewrite } from '@vercel/functions';
 export default function proxy(request: Request) {
   const url = new URL(request.url);
   if (
-    !/^\/\.well-known\/oauth-(?:protected-resource\/admin\/mcp|authorization-server\/admin\/auth)$/.test(
+    !/^\/(?:mcp|oauth\/auth\/.+|admin\/(?:trpc(?:\/[^/]+)?|auth\/.+))$/.test(
       url.pathname,
     ) &&
-    !/^\/admin\/(trpc(?:\/[^/]+)?|auth\/[^/]+(?:\/[^/]+)*|mcp)$/.test(
+    !/^\/\.well-known\/oauth-(?:protected-resource\/mcp|authorization-server\/oauth\/auth)$/.test(
       url.pathname,
     )
-  ) {
+  )
     return next();
-  }
   try {
     const target = new URL(process.env.MARKET_API_ORIGIN || '');
     if (

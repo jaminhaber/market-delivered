@@ -542,14 +542,6 @@ h1 em {
 .mcp-command > button {
   margin: 16px 0 8px;
 }
-.mcp-connections {
-  margin-top: 32px;
-  padding-top: 20px;
-  border-top: 1px solid var(--ink);
-}
-.mcp-connections summary {
-  cursor: pointer;
-}
 .business-admin-tabs {
   display: flex;
   flex-wrap: wrap;

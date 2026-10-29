@@ -2,77 +2,67 @@
 
 ## Applications and boundaries
 
-Market Delivered runs one Fastify backend (`apps/api`) with separate route registries:
+Market Delivered runs one Fastify backend (`apps/api`).
 
-| Routes                                       | Purpose                                                     |
-| -------------------------------------------- | ----------------------------------------------------------- |
-| `/trpc`, `/api/auth/*`, `/mcp`               | Network-scoped business API, authentication, and MCP        |
-| `/admin/trpc`, `/admin/auth/*`, `/admin/mcp` | Global administration API, authentication, and platform MCP |
-| `/health`, `/ready`, `/internal/jobs/*`      | Backend health and protected scheduled jobs                 |
+| Routes                                   | Purpose                                                               |
+| ---------------------------------------- | --------------------------------------------------------------------- |
+| `/trpc`, `/api/auth/*`                   | Business API and browser authentication with explicit network context |
+| `/admin/trpc`, `/admin/auth/*`           | Global administration API and dashboard authentication                |
+| `/mcp`, `/oauth/auth/*`, OAuth discovery | Account-wide assistant access and a single OAuth provider             |
+| `/health`, `/ready`, `/internal/jobs/*`  | Health checks and protected scheduled jobs                            |
 
-Both namespaces use the same process, PostgreSQL pool, and deployment. Business
-and administrator routes are encapsulated separately, with independent CORS
-allowlists, authentication secrets, cookies, router registries, and MCP catalogs.
-An admin URL does not bypass authorization. No network selector is needed for
-global administration.
+All routes share one PostgreSQL pool and deployment. Browser business and admin
+sessions have separate secrets, cookie names, origin policies, and router
+registries. OAuth identifies an existing user; application permissions determine
+what that user can do. Neither a route nor a token type grants administrator roles.
 
-`apps/admin` calls only the admin API. It provides global MCP credentials and cross-network statistics. It has no storefront,
-business operations, branding, or network configuration controls. `apps/silverstreak` is an Astro SSR
-application with its own routes and presentation. Server-rendered shopping/account pages call the business API;
-browser API calls use a restricted same-origin proxy.
+`apps/admin` provides global statistics, OAuth onboarding, and account-wide
+assistant connection management. `apps/silverstreak` is a bespoke Astro SSR site.
+Its server calls the business API with its fixed configured network ID; its
+restricted browser proxy exposes only storefront routes. Its MCP setup page links
+to the central OAuth flow rather than running its own issuer or MCP proxy.
 
-## Network context
+## Network context and permissions
 
 Business API and browser-auth requests supply `X-Network-Id` (UUID or slug).
-Missing selectors fail; there is no default network. Public MCP and OAuth URLs
-identify the network by its unique slug. Business MCP credentials carry an
-immutable UUID binding. Changing a URL or header cannot change that binding.
+Silverstreak supplies its server-configured ID rather than accepting a selector
+from its browser. Other businesses can host their own frontends against the same API.
 
-Silverstreak reads its fixed ID from server configuration, never from a URL,
-cookie, form, or browser header. Another business can implement its own frontend
-on another host/domain and use the same APIs with its own fixed context.
+MCP has one endpoint and credential model. Assistants call `list_networks`, then
+supply an explicit `networkId` to every business tool. Each invocation resolves the
+network and reads current membership/global roles before constructing a scoped
+database context. A role change affects existing assistant connections immediately.
+Global administrators can use the same connection for platform and business tools.
+Consent covers acting as the user across their current and future permissions.
 
-The API scopes application queries and mutations with network predicates.
-Composite foreign keys reject cross-network references. Jobs explicitly iterate
-networks. Authentication identities are shared, while memberships, profiles,
-driver approvals, business tokens, and business data are independent.
+Application queries include network predicates, and composite foreign keys reject
+cross-network references. Jobs explicitly iterate networks. User identities are
+shared; memberships, customer profiles, driver approvals, catalogs, and orders are
+network-owned. Network slugs are presentation identifiers, not token boundaries.
 
 ## Authentication and domains
 
-Admin cookies use `md-admin` and `ADMIN_AUTH_SECRET`. Business cookies use
-`md-business-<network UUID>` and `BETTER_AUTH_SECRET`. Neither cookie authenticates
-the other surface. Administrator signup is disabled; bootstrap is a trusted CLI.
-Management procedures and platform MCP check the current global role on every use.
+Dashboard cookies use `md-admin` and `ADMIN_AUTH_SECRET`; business cookies use
+`md-business-<network UUID>` and `BETTER_AUTH_SECRET`. Each network registers one
+`frontendOrigin` for its browser Origin allowlist and account/invitation links.
+Neither website relies on cross-site cookies. Public administrator signup is
+disabled, and global roles require trusted provisioning.
 
-Each network registers one `frontendOrigin`. The API validates browser Origin
-against that network, uses that domain for authentication callbacks, and sends
-invitation links to its `/account` page. Local loopback aliases are accepted only
-in development. Production requires HTTPS. An unregistered frontend cannot log in
-by supplying an arbitrary Origin.
-
-Silverstreak forwards host-only cookies through its own origin, so its users do
-not rely on cross-site cookies. Network selection does not grant membership.
-Global tokens work only on the platform MCP endpoint; business tokens work only
-on the public MCP endpoint.
-
-Business OAuth grants bind one user and client to one network and the canonical
-MCP URL on that network's registered website. The website proxies its network's
-OAuth discovery and exchanges to the shared backend, reusing its host-only
-sign-in cookie. Opaque OAuth tokens are hashed in the database and checked for
-expiry, revocation, consent, session validity, and current administrator access.
-The platform MCP shares this OAuth implementation with a separate `mcp:platform`
-scope, `platform` grant reference, admin-origin audience, and admin sign-in. It
-requires current global administrator access. Both MCP surfaces also accept
-their respective manual API tokens.
+OAuth is centralized on `ADMIN_ORIGIN` using `/oauth/auth`, `md-oauth` cookies,
+and `ADMIN_AUTH_SECRET`. It permits existing accounts regardless of global role.
+The sole MCP resource is `ADMIN_ORIGIN/mcp`, with `mcp` and `offline_access` scopes.
+Better Auth handles the protocol and validates opaque tokens; the application
+checks consent and uses current permissions for each operation. See [MCP](mcp.md).
+There are no manual API tokens or per-network/per-platform OAuth instances.
 
 ## Deployment
 
 Three Vercel projects share one repository:
 
-1. Root: one backend service containing business and admin routes, both MCP catalogs, and protected jobs.
-2. `apps/admin`: React dashboard on the administrator domain. Its routing proxy forwards only `/admin/*` API paths to the shared backend.
-3. `apps/silverstreak`: Astro SSR frontend on Silverstreak's own domain.
+1. Root: the shared backend, MCP, OAuth, and protected jobs.
+2. `apps/admin`: the dashboard and central assistant login/consent pages. Its proxy
+   forwards admin API, OAuth, MCP, and discovery requests to the backend.
+3. `apps/silverstreak`: the business website on its own domain.
 
-Network creation adds database records, not another API instance or database.
-Backend instances scale with traffic; each frontend deploys independently. Production PostgreSQL and
-email delivery remain managed services configured through environment variables.
+A new business adds database records and a frontend, not an API deployment,
+OAuth issuer, or database. PostgreSQL and email remain configured managed services.

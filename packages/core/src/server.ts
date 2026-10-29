@@ -13,7 +13,7 @@ import { registerMcp } from './mcp.js';
 import { webOrigins } from './origins.js';
 import { createHttpServer, forwardAuth } from './http.js';
 import { registerAdminRoutes } from './admin-routes.js';
-import { registerNetworkOAuth } from './oauth-routes.js';
+import { createOAuth, registerOAuthRoutes } from './oauth-routes.js';
 
 export type ServerConfig = {
   secret: string;
@@ -27,34 +27,45 @@ export type ServerConfig = {
 };
 export async function createServer(db: Database, config: ServerConfig) {
   const server = createHttpServer(db);
+  const oauth = createOAuth(db, config);
   await server.register(async (server) => {
-    await server.register(cors, {
-      credentials: true,
-      exposedHeaders: ['WWW-Authenticate'],
-      origin(origin, callback) {
-        if (!origin) return callback(null, false);
-        void db
-          .select({ origin: networks.frontendOrigin })
-          .from(networks)
-          .where(isNull(networks.deletedAt))
-          .then(
-            (rows) => {
-              callback(
-                null,
-                rows.some(
-                  (row) =>
-                    row.origin &&
-                    webOrigins({
-                      webOrigin: row.origin,
-                      production: config.production,
-                    }).includes(origin),
-                ),
-              );
-            },
-            () => callback(new Error('Unable to validate origin'), false),
-          );
-      },
+    await server.register(cors, () => async (request: FastifyRequest) => {
+      const identityRoute =
+        request.url.split('?')[0] === '/mcp' ||
+        request.url.startsWith('/oauth/auth/') ||
+        request.url.startsWith('/.well-known/oauth-');
+      if (identityRoute)
+        return {
+          origin: true,
+          credentials: false,
+          exposedHeaders: ['WWW-Authenticate'],
+        };
+      const origin = request.headers.origin;
+      const rows = origin
+        ? await db
+            .select({ origin: networks.frontendOrigin })
+            .from(networks)
+            .where(isNull(networks.deletedAt))
+        : [];
+      return {
+        credentials: true,
+        exposedHeaders: ['WWW-Authenticate'],
+        origin:
+          origin &&
+          rows.some(
+            (row) =>
+              row.origin &&
+              webOrigins({
+                webOrigin: row.origin,
+                production: config.production,
+              }).includes(origin),
+          )
+            ? origin
+            : false,
+      };
     });
+    await registerOAuthRoutes(server, db, oauth);
+    registerMcp(server, db, config, oauth);
     async function requestAuth(headers: {
       [key: string]: string | string[] | undefined;
     }) {
@@ -119,6 +130,7 @@ export async function createServer(db: Database, config: ServerConfig) {
             db,
             network,
             googleMapsKey: config.googleMapsKey,
+            oauthOrigin: config.adminOrigin,
             actor:
               current && access
                 ? {
@@ -133,26 +145,19 @@ export async function createServer(db: Database, config: ServerConfig) {
         },
       },
     });
-    registerMcp(server, db, config);
-    registerNetworkOAuth(server, db, config);
     registerJobs(server, db, config.cronSecret);
   });
   await server.register(
     async (admin) => {
-      await registerAdminRoutes(
-        admin,
-        db,
-        {
-          secret: config.adminSecret,
-          networkSecret: config.secret,
-          baseURL: config.adminOrigin,
-          webOrigin: config.adminOrigin,
-          production: config.production,
-          resendKey: config.resendKey,
-          emailFrom: config.emailFrom,
-        },
-        server,
-      );
+      await registerAdminRoutes(admin, db, {
+        secret: config.adminSecret,
+        networkSecret: config.secret,
+        baseURL: config.adminOrigin,
+        webOrigin: config.adminOrigin,
+        production: config.production,
+        resendKey: config.resendKey,
+        emailFrom: config.emailFrom,
+      });
     },
     { prefix: '/admin' },
   );

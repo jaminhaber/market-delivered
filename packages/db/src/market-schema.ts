@@ -389,35 +389,6 @@ export const orderEvents = pgTable(
     index('order_events_order_idx').on(t.orderId),
   ],
 );
-export const apiTokens = pgTable(
-  'api_tokens',
-  {
-    networkId: uuid('network_id'),
-    id: uuid('id').defaultRandom().primaryKey(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    name: text('name').notNull(),
-    tokenHash: text('token_hash').notNull().unique(),
-    lastFour: text('last_four').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    revokedAt: timestamp('revoked_at', { withTimezone: true }),
-    createdAt: created(),
-  },
-  (t) => [
-    foreignKey({
-      name: 'api_tokens_network_fk',
-      columns: [t.networkId],
-      foreignColumns: [networks.id],
-    }),
-    index('api_tokens_user_idx').on(t.userId),
-    index('api_tokens_network_user_created_idx').on(
-      t.networkId,
-      t.userId,
-      t.createdAt,
-    ),
-  ],
-);
 export const auditEvents = pgTable('audit_events', {
   networkId: uuid('network_id').references(() => networks.id),
   id: uuid('id').defaultRandom().primaryKey(),

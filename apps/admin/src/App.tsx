@@ -4,11 +4,15 @@ import { Sprout } from 'lucide-react';
 import { api } from './api';
 import { signOut } from './auth';
 import { AuthForm } from './Account';
-import { OAuthConsent } from './OAuthConsent';
+import { OAuthPage } from './OAuthConsent';
 import { GlobalAdmin } from './GlobalAdmin';
 import { ErrorState, Loading, Panel } from './ui';
 
 export function App() {
+  return location.pathname.startsWith('/oauth/') ? <OAuthPage /> : <AdminApp />;
+}
+
+function AdminApp() {
   const me = useQuery(api.me.queryOptions());
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<unknown>(null);
@@ -55,7 +59,7 @@ export function App() {
           <Loading />
         ) : me.isError ? (
           <ErrorState error={me.error} />
-        ) : accountLink || !me.data || location.pathname === '/oauth/login' ? (
+        ) : accountLink || !me.data ? (
           <div className="account-page">
             <AuthForm />
           </div>
@@ -68,8 +72,6 @@ export function App() {
               </p>
             </Panel>
           </div>
-        ) : location.pathname === '/oauth/authorize' ? (
-          <OAuthConsent />
         ) : (
           <GlobalAdmin />
         )}

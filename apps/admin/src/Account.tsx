@@ -1,11 +1,14 @@
 import { useState, type FormEvent } from 'react';
-import { authClient } from './auth';
+import { authClient as adminClient, oauthClient } from './auth';
 import { Panel, useAction } from './ui';
 
-export function AuthForm() {
+export function AuthForm({ oauth = false }: { oauth?: boolean }) {
+  const authClient = oauth ? oauthClient : adminClient;
   const params = new URLSearchParams(location.search);
-  const returnTo = location.pathname.startsWith('/oauth/')
-    ? '/oauth/authorize' + location.search
+  const returnTo = oauth
+    ? params.has('client_id')
+      ? '/oauth/authorize' + location.search
+      : '/oauth/connect'
     : '/';
   const token = params.get('token') || '';
   const [mode, setMode] = useState<'signin' | 'forgot' | 'reset'>(
@@ -26,7 +29,9 @@ export function AuthForm() {
             : mode === 'forgot'
               ? await authClient.requestPasswordReset({
                   email,
-                  redirectTo: location.origin + '/',
+                  redirectTo:
+                    location.origin +
+                    (oauth ? '/oauth/login' + location.search : '/'),
                 })
               : await authClient.resetPassword({
                   newPassword: password,
@@ -57,13 +62,19 @@ export function AuthForm() {
     <Panel
       title={
         mode === 'signin'
-          ? 'Administrator sign in'
+          ? oauth
+            ? 'Sign in to Market Delivered'
+            : 'Administrator sign in'
           : mode === 'forgot'
             ? 'Reset your password'
             : 'Choose a new password'
       }
     >
-      <p>Sign in with your Market Delivered global administrator account.</p>
+      <p>
+        {oauth
+          ? 'Sign in with your existing Market Delivered account.'
+          : 'Sign in with your Market Delivered global administrator account.'}
+      </p>
       {notice}
       {params.has('error') && (
         <p role="alert">

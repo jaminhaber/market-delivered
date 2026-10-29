@@ -1,5 +1,5 @@
 import { initTRPC, TRPCError } from '@trpc/server';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { isNull, sql } from 'drizzle-orm';
 import * as s from '@market/db';
 import { z } from 'zod';
 import {
@@ -127,31 +127,6 @@ export const adminRouter = t.router({
     setMember: globalAdmin
       .input(z.object({ networkId: z.uuid(), ...membershipInput.shape }))
       .mutation(({ ctx, input }) => ops(ctx, input.networkId).setMember(input)),
-  }),
-  tokens: t.router({
-    list: globalAdmin.query(({ ctx }) =>
-      ctx.db
-        .select({
-          id: s.apiTokens.id,
-          name: s.apiTokens.name,
-          lastFour: s.apiTokens.lastFour,
-          expiresAt: s.apiTokens.expiresAt,
-          revokedAt: s.apiTokens.revokedAt,
-        })
-        .from(s.apiTokens)
-        .where(
-          and(
-            eq(s.apiTokens.userId, ctx.actor.id),
-            isNull(s.apiTokens.networkId),
-          ),
-        ),
-    ),
-    create: globalAdmin
-      .input(z.object({ name: z.string().trim().min(2).max(100) }))
-      .mutation(({ ctx, input }) => ops(ctx).createGlobalToken(input.name)),
-    revoke: globalAdmin
-      .input(id)
-      .mutation(({ ctx, input }) => ops(ctx).revokeGlobalToken(input.id)),
   }),
 });
 export type AdminRouter = typeof adminRouter;

@@ -10,9 +10,10 @@ export default defineConfig({
       [
         '/admin/trpc',
         '/admin/auth',
-        '/admin/mcp',
-        '/.well-known/oauth-protected-resource/admin/mcp',
-        '/.well-known/oauth-authorization-server/admin/auth',
+        '/mcp',
+        '^/oauth/auth/',
+        '/.well-known/oauth-protected-resource/mcp',
+        '/.well-known/oauth-authorization-server/oauth/auth',
       ].map((path) => [
         path,
         `http://127.0.0.1:${process.env.API_PORT ?? '3001'}`,

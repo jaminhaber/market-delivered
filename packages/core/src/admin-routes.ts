@@ -7,14 +7,12 @@ import { adminRouter } from './admin-router.js';
 import { createAuth, type AuthConfig } from './auth.js';
 import { permissions } from './networks.js';
 import { webOrigins } from './origins.js';
-import { registerAdminOAuth } from './oauth-routes.js';
-import { registerAdminMcp } from './admin-mcp.js';
+import { forwardAuth } from './http.js';
 
 export async function registerAdminRoutes(
   server: FastifyInstance,
   db: Database,
   config: AuthConfig & { networkSecret: string },
-  rootServer: FastifyInstance,
 ) {
   const auth = createAuth(db, {
     ...config,
@@ -22,10 +20,6 @@ export async function registerAdminRoutes(
     basePath: '/admin/auth',
     cookiePrefix: 'md-admin',
     appName: 'Market Delivered',
-    oauth: {
-      networkId: null,
-      resource: new URL('/admin/mcp', config.baseURL).href,
-    },
   });
   const origins = webOrigins(config);
   await server.register(cors, {
@@ -37,7 +31,12 @@ export async function registerAdminRoutes(
     if (request.headers.origin && !origins.includes(request.headers.origin))
       return reply.code(403).send({ error: 'Origin not allowed' });
   });
-  registerAdminOAuth(rootServer, db, config, auth, server);
+  server.route({
+    method: ['GET', 'POST'],
+    url: '/auth/*',
+    handler: (request, reply) =>
+      forwardAuth(auth, config.baseURL, request, reply),
+  });
   await server.register(fastifyTRPCPlugin, {
     prefix: '/trpc',
     trpcOptions: {
@@ -65,5 +64,4 @@ export async function registerAdminRoutes(
       },
     },
   });
-  registerAdminMcp(server, db, config);
 }
