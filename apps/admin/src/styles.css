@@ -22,6 +22,7 @@ a {
 }
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -55,12 +56,14 @@ button.secondary:hover {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible,
 summary:focus-visible {
   outline: 3px solid #608c6c;
   outline-offset: 3px;
 }
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #bdc9c0;
@@ -74,6 +77,39 @@ label {
   gap: 0.45rem;
   font-size: 0.9rem;
   font-weight: 600;
+}
+.mcp-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 1rem;
+  max-width: 48rem;
+  margin-bottom: 1.5rem;
+}
+.mcp-choices > label {
+  min-width: 0;
+  align-content: end;
+  gap: 0.6rem;
+}
+.mcp-setup select {
+  appearance: none;
+  min-height: 48px;
+  padding: 0.8rem 2.75rem 0.8rem 1rem;
+  border-color: #ccd5ce;
+  border-radius: 10px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%235c7061' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.9rem center;
+  box-shadow: 0 1px 2px rgb(37 55 44 / 5%);
+  cursor: pointer;
+}
+.mcp-setup select:hover {
+  border-color: #608c6c;
+}
+@media (forced-colors: active) {
+  .mcp-setup select {
+    appearance: auto;
+    background-image: none;
+  }
 }
 h1 {
   font-size: clamp(1.75rem, 4vw, 2.3rem);
@@ -312,12 +348,6 @@ main {
 }
 .mcp-endpoint {
   overflow-wrap: anywhere;
-}
-.mcp-new-token {
-  padding: 1rem;
-  background: #edf5ed;
-  border: 1px solid #d0ded0;
-  border-radius: 6px;
 }
 details {
   margin: 1rem 0;

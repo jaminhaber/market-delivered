@@ -21,7 +21,7 @@ entry and the rest of the API do not require it.
 
 A network's `frontendOrigin` is an HTTP loopback origin in development or an HTTPS
 origin in production, with no path, credentials, query, or fragment. Configure it
-through admin `networks.create`/`networks.update`, platform MCP, or the trusted
+through admin `networks.create`/`networks.update`, MCP, or the trusted
 `network:create`/`network:configure` CLI. Missing configuration fails explicitly.
 There is no shared global business URL or inferred/default network.
 
@@ -44,11 +44,10 @@ logo, color, or network-branding settings from the API.
 
 ## Administrator frontend
 
-`apps/admin` calls `/admin/trpc` and `/admin/auth` through its own origin. Locally,
-Vite forwards those paths and `/admin/mcp` to `API_PORT` (default 3001). On Vercel,
-set server-only `MARKET_API_ORIGIN=https://api.marketdelivered.com` on the admin
-frontend project. Its routing proxy rewrites those paths to the same backend,
-preserving cookies and the browser Origin. No database credentials or signing
-secrets belong in the dashboard deployment. Configure the backend's `ADMIN_ORIGIN`
-to the dashboard's exact HTTPS domain. Administrator MCP is also directly
-available at the backend's `/admin/mcp` path.
+`apps/admin` calls `/admin/trpc` and `/admin/auth` through its own origin.
+It also hosts account-wide assistant pages at `/oauth/login`, `/oauth/authorize`,
+and `/oauth/connect`, and proxies `/mcp`, `/oauth/auth/*`, and OAuth discovery.
+Vite forwards these API paths to `API_PORT` locally. On Vercel, set server-only
+`MARKET_API_ORIGIN` to the backend origin. No database or signing credentials
+belong in frontend deployments. Set the backend’s `ADMIN_ORIGIN` to this
+frontend’s exact HTTPS domain; it is the sole OAuth/MCP public origin.

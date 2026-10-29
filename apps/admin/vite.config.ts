@@ -7,7 +7,14 @@ export default defineConfig({
     port: Number(process.env.ADMIN_PORT ?? '5173'),
     strictPort: true,
     proxy: Object.fromEntries(
-      ['/admin/trpc', '/admin/auth', '/admin/mcp'].map((path) => [
+      [
+        '/admin/trpc',
+        '/admin/auth',
+        '/mcp',
+        '^/oauth/auth/',
+        '/.well-known/oauth-protected-resource/mcp',
+        '/.well-known/oauth-authorization-server/oauth/auth',
+      ].map((path) => [
         path,
         `http://127.0.0.1:${process.env.API_PORT ?? '3001'}`,
       ]),

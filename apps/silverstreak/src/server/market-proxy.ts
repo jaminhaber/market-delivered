@@ -1,8 +1,8 @@
 import type { APIContext } from 'astro';
 import { marketConfig } from './market';
 
-// Only the storefront's API surface belongs on this origin. In particular,
-// network management, platform administration, MCP, and jobs are not proxied.
+// Only storefront API calls are proxied. OAuth and MCP live on the shared
+// Market Delivered origin.
 const storefrontProcedures = new Set([
   'me',
   'produce.categories',

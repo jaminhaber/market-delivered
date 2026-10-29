@@ -1,9 +1,15 @@
 import { useState, type FormEvent } from 'react';
-import { authClient } from './auth';
+import { authClient as adminClient, oauthClient } from './auth';
 import { Panel, useAction } from './ui';
 
-export function AuthForm() {
+export function AuthForm({ oauth = false }: { oauth?: boolean }) {
+  const authClient = oauth ? oauthClient : adminClient;
   const params = new URLSearchParams(location.search);
+  const returnTo = oauth
+    ? params.has('client_id')
+      ? '/oauth/authorize' + location.search
+      : '/oauth/connect'
+    : '/';
   const token = params.get('token') || '';
   const [mode, setMode] = useState<'signin' | 'forgot' | 'reset'>(
     token ? 'reset' : 'signin',
@@ -23,7 +29,9 @@ export function AuthForm() {
             : mode === 'forgot'
               ? await authClient.requestPasswordReset({
                   email,
-                  redirectTo: location.origin + '/',
+                  redirectTo:
+                    location.origin +
+                    (oauth ? '/oauth/login' + location.search : '/'),
                 })
               : await authClient.resetPassword({
                   newPassword: password,
@@ -35,7 +43,7 @@ export function AuthForm() {
             response.error.message || 'Unable to complete the request.',
           );
         }
-        if (mode !== 'forgot') location.replace('/');
+        if (mode !== 'forgot') location.replace(returnTo);
       },
       mode === 'forgot'
         ? 'If that account exists, a reset link has been sent.'
@@ -44,7 +52,7 @@ export function AuthForm() {
   }
 
   function backToSignIn() {
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', returnTo);
     setPassword('');
     setNeedsVerification(false);
     setMode('signin');
@@ -54,13 +62,19 @@ export function AuthForm() {
     <Panel
       title={
         mode === 'signin'
-          ? 'Administrator sign in'
+          ? oauth
+            ? 'Sign in to Market Delivered'
+            : 'Administrator sign in'
           : mode === 'forgot'
             ? 'Reset your password'
             : 'Choose a new password'
       }
     >
-      <p>Sign in with your Market Delivered global administrator account.</p>
+      <p>
+        {oauth
+          ? 'Sign in with your existing Market Delivered account.'
+          : 'Sign in with your Market Delivered global administrator account.'}
+      </p>
       {notice}
       {params.has('error') && (
         <p role="alert">
@@ -129,7 +143,7 @@ export function AuthForm() {
               void act(async () => {
                 const response = await authClient.sendVerificationEmail({
                   email,
-                  callbackURL: location.origin + '/',
+                  callbackURL: location.origin + returnTo,
                 });
                 if (response.error) throw new Error(response.error.message);
               }, 'If your account needs verification, a new link has been sent.')

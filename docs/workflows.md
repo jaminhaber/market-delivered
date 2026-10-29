@@ -2,7 +2,7 @@
 
 ## Silverstreak customers
 
-- `/` introduces Silverstreak using the supplied photo; `/about` explains it.
+- `/` introduces Silverstreak; `/about` explains the service.
 - `/account?invite=...` accepts an emailed/CLI invitation. Signup remains invite-only.
 - `/account` supports sign-in, password recovery, sign-out, and delivery details.
 - `/order` lists open market dates and available inventory. The API calculates
@@ -26,8 +26,7 @@ Silverstreak requests an explicit list of non-cancelled order statuses by defaul
 Both views use `orders.list`: `scope: "mine"` (the default) restricts results to the
 signed-in customer; `scope: "network"` requires administrator access. The endpoint
 accepts an optional `statuses` array;
-omitting it or passing `[]` returns all statuses. The older `orders.mine` and
-`admin.orders` endpoints remain compatible. Filtering happens in SQL before
+omitting it or passing `[]` returns all statuses. Filtering happens in SQL before
 pagination. The subdued
 **Show cancelled orders** toggle below the list updates automatically and is
 preserved when paging. Jobs similarly hide zero-impact runs, with an **Include
@@ -39,7 +38,7 @@ contains only members of this business. Network settings and global roles remain
 platform-admin operations.
 
 Driver shopping, packing, shortages, delivery, and cash recording remain available
-through the business API and network-scoped MCP.
+through the business API and MCP with explicit network IDs.
 
 Approved drivers can claim orders, shop and pack them, then record delivery and
 cash. Suspended drivers cannot claim work. Orders preserve the customer and item
@@ -47,7 +46,9 @@ snapshots from placement; later catalog/address edits do not change those record
 
 ## Platform administration
 
-The dashboard provides global-admin authentication and global MCP token management.
-Network provisioning, settings, and membership belong to the admin API or platform
-MCP. There is no network configuration screen in the dashboard and no network
+The dashboard provides global administrator sign-in and statistics. Account-wide
+assistant setup and connection management live at `/oauth/connect` and accept
+existing user accounts.
+Network provisioning, settings, and membership belong to the admin API or shared
+MCP, with current global permission checks. There is no network configuration screen in the dashboard and no network
 selection or management UI in Silverstreak.

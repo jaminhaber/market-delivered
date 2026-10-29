@@ -43,6 +43,20 @@
       "when": 1793249439888,
       "tag": "0005_job_impacts",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793252741846,
+      "tag": "0006_nifty_wolfsbane",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793303661766,
+      "tag": "0007_account_oauth",
+      "breakpoints": true
     }
   ]
 }

@@ -72,6 +72,9 @@ export const locationInput = z.object({
 });
 export const networkSettingsInput = z
   .object({
+    slug: networkInput.shape.slug
+      .optional()
+      .describe('Network slug. Only global administrators can change it.'),
     frontendOrigin: networkInput.shape.frontendOrigin,
     supportEmail: optionalEmail.describe(
       'Public customer support email; null clears it.',
@@ -310,52 +313,6 @@ export function networkOperations(
     });
   }
   return {
-    async createGlobalToken(name: string) {
-      global();
-      return db.transaction(async (tx) => {
-        const token = `md_${randomBytes(32).toString('hex')}`;
-        const [saved] = await tx
-          .insert(s.apiTokens)
-          .values({
-            networkId: null,
-            userId: actor.id,
-            name,
-            tokenHash: createHash('sha256').update(token).digest('hex'),
-            lastFour: token.slice(-4),
-            expiresAt: new Date(Date.now() + 90 * 86400000),
-          })
-          .returning({ id: s.apiTokens.id });
-        await audit(
-          tx as unknown as s.Database,
-          'global_api_token.created',
-          saved!.id,
-        );
-        return { token };
-      });
-    },
-    async revokeGlobalToken(id: string) {
-      global();
-      return db.transaction(async (tx) => {
-        const [saved] = await tx
-          .update(s.apiTokens)
-          .set({ revokedAt: new Date() })
-          .where(
-            and(
-              eq(s.apiTokens.id, id),
-              eq(s.apiTokens.userId, actor.id),
-              sql`${s.apiTokens.networkId} IS NULL`,
-            ),
-          )
-          .returning({ id: s.apiTokens.id });
-        if (saved)
-          await audit(
-            tx as unknown as s.Database,
-            'global_api_token.revoked',
-            saved.id,
-          );
-        return { success: true };
-      });
-    },
     async list() {
       global();
       return db
@@ -386,6 +343,7 @@ export function networkOperations(
     },
     async update(input: z.infer<typeof networkSettingsInput>) {
       const networkId = admin();
+      if (input.slug !== undefined) global();
       const { autocompleteBias: bias, ...locationDefaults } =
         input.location || {};
       let location: Partial<s.NetworkLocation> | null | undefined =
@@ -415,6 +373,7 @@ export function networkOperations(
         const [n] = await tx
           .update(s.networks)
           .set({
+            ...(input.slug !== undefined ? { slug: input.slug } : {}),
             ...(input.frontendOrigin !== undefined
               ? { frontendOrigin: input.frontendOrigin }
               : {}),

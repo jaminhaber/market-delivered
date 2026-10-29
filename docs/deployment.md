@@ -24,16 +24,12 @@ existing business secret because it also encrypts network email keys.
 Use the database provider's verified TLS/pooling configuration; never disable
 certificate verification. API instance pools are lifecycle-managed on Vercel.
 
-The shared backend serves:
-
-- `/trpc`, `/api/auth/*`, `/mcp`: business routes, with explicit network context.
-- `/admin/trpc`, `/admin/auth/*`, `/admin/mcp`: global administration, with its own
-  authentication, origin allowlist, cookies, and token requirements.
-- `/health`, `/ready`, and protected `/internal/jobs/*` endpoints.
-
-The admin routes are reachable on the API domain but require global authorization.
-They do not appear in the business router or business MCP tool catalog. No second
-backend deployment or admin API port is required.
+The shared backend serves business API/browser auth at `/trpc` and `/api/auth/*`,
+global dashboard API/auth at `/admin/trpc` and `/admin/auth/*`, and account-wide
+assistant access at `/mcp` with one OAuth issuer at `/oauth/auth`. The OAuth and
+MCP public origin is `ADMIN_ORIGIN`. Network tools require an explicit network ID
+and current permissions; there are no network-specific OAuth deployments.
+Health endpoints and protected `/internal/jobs/*` run in the same service.
 
 ## Frontend environment and domains
 
@@ -42,12 +38,12 @@ frontend projects. Silverstreak additionally needs `SILVERSTREAK_NETWORK_ID=<UUI
 No database credentials, signing secrets, or browser-prefixed secrets belong in
 these frontend projects.
 
-The admin frontend's Vercel routing proxy forwards `/admin/trpc`, `/admin/auth/*`,
-and `/admin/mcp` to the configured backend. Vite provides the same forwarding in
-local development. Silverstreak uses its existing restricted proxy and SSR calls.
-Cookies remain host-only on each frontend; neither frontend relies on cross-site
-browser cookies. The proxies only forward requests; all API, authentication, MCP,
-and database logic runs in `apps/api`.
+The administrator frontend proxies `/admin/trpc`, `/admin/auth/*`, `/mcp`,
+`/oauth/auth/*`, and OAuth discovery paths to the configured backend. Vite provides
+the same forwarding locally. Its `/oauth/*` browser pages serve centralized
+assistant login, consent, setup, and disconnection. Silverstreak only proxies
+storefront calls and links to this central connection flow. Cookies are host-only.
+See [MCP](mcp.md) for the exact discovery URLs.
 
 Attach each domain in Vercel Settings > Domains and apply the DNS records Vercel
 provides. Register Silverstreak's exact HTTPS origin as its network's
@@ -71,8 +67,9 @@ registering their domains and network context; they share the same backend.
    Use the returned production UUID for Silverstreak; local demo data is not
    automatically transferred.
 5. Configure and deploy both frontend projects. Sign into global administration,
-   issue a global MCP token, and use `/admin/mcp` to issue network-scoped business
-   tokens. Populate business catalogs and schedules through the business MCP.
+   connect an assistant through **Assistant connection** or `/oauth/connect`.
+   Use the same `/mcp` connection for network management and business tools,
+   supplying explicit network IDs.
 6. Verify invitations, login/reset email links, order review/placement/cancellation,
    and statistics. Check foreign origins, missing selectors, and token swaps are
    rejected. Use a test network and staging email credentials first.

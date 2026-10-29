@@ -1,0 +1,40 @@
+---
+import type { InstructionBlock } from '@market/mcp-instructions';
+interface Props {
+  blocks: readonly InstructionBlock[];
+}
+const { blocks } = Astro.props;
+---
+
+{blocks.map((block) =>
+  block.type === 'heading' ? (
+    <h3>{block.text}</h3>
+  ) : block.type === 'paragraph' ? (
+    <p>{block.text}</p>
+  ) : block.type === 'steps' ? (
+    <ol>
+      {block.items.map((item) => (
+        <li>{item}</li>
+      ))}
+    </ol>
+  ) : (
+    <div class="mcp-command">
+      {block.kind === 'address' && (
+        <label>
+          {block.label}
+          <input readonly value={block.value} />
+        </label>
+      )}
+      <button
+        type="button"
+        class="button button-dark"
+        data-copy-url={block.kind === 'address' ? block.value : undefined}
+        data-copy-command={block.kind === 'command' ? true : undefined}
+      >
+        {block.copyLabel}
+      </button>
+      {block.kind === 'command' && <pre><code>{block.value}</code></pre>}
+      <span aria-live="polite"></span>
+    </div>
+  ),
+)}

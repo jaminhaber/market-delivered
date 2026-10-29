@@ -7,6 +7,7 @@ export default defineConfig({
     './src/auth-schema.ts',
     './src/market-schema.ts',
     './src/network-schema.ts',
+    './src/oauth-schema.ts',
   ],
   out: './drizzle',
 });

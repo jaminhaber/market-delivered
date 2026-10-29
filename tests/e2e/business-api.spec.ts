@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { connectAssistant } from './oauth';
+import { createOAuth } from '../../packages/core/src/oauth-routes.js';
 import { registerMcp } from '../../packages/core/src/mcp.js';
 import {
   addressInput,
@@ -29,7 +31,7 @@ import {
   orders,
   inventory,
   orderItems,
-  apiTokens,
+  oauthAccessToken,
   marketSchedules,
   runMarketRunsJob,
   runCloseMarketsJob,
@@ -428,20 +430,25 @@ test('MCP invitations email usable signup links and revoke failed sends', async 
     import.meta.url,
   )('fastify');
   const admin = await actor('admin');
-  const { token } = await admin.rpc.admin.createToken.mutate({
-    name: 'Invite users',
-  });
+  const { token } = await connectAssistant(admin.email, password);
   const config = {
     secret: randomBytes(32).toString('hex'),
+    adminSecret: 'e2e-admin-only-secret-not-for-production-123456789',
+    adminOrigin: 'http://localhost:5190',
     baseURL,
     webOrigin: baseURL,
     resendKey: 'local-stub-only',
     emailFrom: 'accounts@example.test',
   };
   const server = Fastify();
-  registerMcp(server, db, config);
+  registerMcp(server, db, config, createOAuth(db, config));
   const unconfigured = Fastify();
-  registerMcp(unconfigured, db, { secret: config.secret });
+  const missingConfig = {
+    secret: config.secret,
+    adminSecret: config.adminSecret,
+    adminOrigin: config.adminOrigin,
+  };
+  registerMcp(unconfigured, db, missingConfig, createOAuth(db, missingConfig));
   const messages: { to: string; subject: string; text: string }[] = [];
   let failEmail = false;
   const originalFetch = globalThis.fetch;
@@ -463,7 +470,10 @@ test('MCP invitations email usable signup links and revoke failed sends', async 
         jsonrpc: '2.0',
         id: 1,
         method: 'tools/call',
-        params: { name: 'invite_user', arguments: arguments_ },
+        params: {
+          name: 'invite_user',
+          arguments: { networkId: TEST_NETWORK_ID, ...arguments_ },
+        },
       },
     });
     return response;
@@ -549,9 +559,8 @@ test('MCP invitations email usable signup links and revoke failed sends', async 
 
 test('authenticated MCP schedules markets and inventory; invalid, expired, revoked, and demoted tokens fail', async () => {
   const { admin, produce, farm } = await setup();
-  const { token } = await admin.rpc.admin.createToken.mutate({
-    name: 'E2E MCP',
-  });
+  const grant = await connectAssistant(admin.email, password);
+  const { token } = grant;
   const unauth = await fetch('http://127.0.0.1:5180/mcp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -559,6 +568,11 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   });
   expect(unauth.status).toBe(401);
   const client = new Client({ name: 'e2e', version: '1.0.0' });
+  const callTool = (params: Parameters<typeof client.callTool>[0]) =>
+    client.callTool({
+      ...params,
+      arguments: { networkId: TEST_NETWORK_ID, ...params.arguments },
+    });
   await client.connect(
     new StreamableHTTPClientTransport(new URL('http://127.0.0.1:5180/mcp'), {
       requestInit: { headers: { Authorization: `Bearer ${token}` } },
@@ -566,7 +580,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   );
   const tools = await client.listTools();
   expect(tools.tools.map((t) => t.name)).toContain('schedule_run');
-  const marketResult = await client.callTool({
+  const marketResult = await callTool({
     name: 'create_market',
     arguments: {
       name: unique('MCP market'),
@@ -579,7 +593,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
     (marketResult.content as { text: string }[])[0]!.text,
   ) as { id: string };
   const now = Date.now();
-  const runResult = await client.callTool({
+  const runResult = await callTool({
     name: 'schedule_run',
     arguments: {
       marketId: market.id,
@@ -595,7 +609,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   const run = JSON.parse(
     (runResult.content as { text: string }[])[0]!.text,
   ) as { id: string };
-  const stock = await client.callTool({
+  const stock = await callTool({
     name: 'save_inventory',
     arguments: {
       runId: run.id,
@@ -610,7 +624,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
     (await admin.rpc.markets.inventory.query({ id: run.id }))[0]!.quantity,
   ).toBe(15);
   const tool = async (name: string, args: Record<string, unknown> = {}) => {
-    const response = await client.callTool({ name, arguments: args });
+    const response = await callTool({ name, arguments: args });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     return JSON.parse((response.content as { text: string }[])[0]!.text);
   };
@@ -737,7 +751,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
     priceCents: 500,
     source: 'Valley Orchard',
   });
-  const unitChange = await client.callTool({
+  const unitChange = await callTool({
     name: 'update_produce',
     arguments: { id: catalog.id, ...catalogInput, unit: 'lb' },
   });
@@ -836,7 +850,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   ).toEqual([]);
   expect(
     (
-      await client.callTool({
+      await callTool({
         name: 'get_order',
         arguments: { id: randomUUID() },
       })
@@ -844,7 +858,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   ).toBe(true);
   expect(
     (
-      await client.callTool({
+      await callTool({
         name: 'list_orders',
         arguments: {
           from: new Date(now + 86400000).toISOString(),
@@ -854,7 +868,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
     ).isError,
   ).toBe(true);
   expect(await customer.rpc.orders.mine.query()).toEqual(beforeReads);
-  const rejectedCancel = await client.callTool({
+  const rejectedCancel = await callTool({
     name: 'cancel_run',
     arguments: { id: run.id },
   });
@@ -899,12 +913,12 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
     'cancelled',
   );
 
-  const bookedEdit = await client.callTool({
+  const bookedEdit = await callTool({
     name: 'update_run',
     arguments: { id: run.id, ...runFields, deliveryFeeCents: 0 },
   });
   expect(bookedEdit.isError).toBe(true);
-  const reduceStock = await client.callTool({
+  const reduceStock = await callTool({
     name: 'save_inventory',
     arguments: {
       runId: run.id,
@@ -930,7 +944,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   ).toBe(250);
   expect(
     (
-      await client.callTool({
+      await callTool({
         name: 'get_market',
         arguments: { id: randomUUID() },
       })
@@ -938,7 +952,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   ).toBe(true);
   expect(
     (
-      await client.callTool({
+      await callTool({
         name: 'list_inventory',
         arguments: { runId: randomUUID() },
       })
@@ -951,7 +965,7 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   );
   expect(events?.count).toBeGreaterThanOrEqual(3);
   await customer.request.dispose();
-  const invalid = await client.callTool({
+  const invalid = await callTool({
     name: 'schedule_run',
     arguments: { marketId: market.id, cutoffAt: 'invalid' },
   });
@@ -959,44 +973,39 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
   await client.close();
   const [row] = await db
     .select()
-    .from(apiTokens)
-    .where(
-      eq(apiTokens.tokenHash, createHash('sha256').update(token).digest('hex')),
-    );
-  expect(row!.tokenHash).not.toBe(token);
-  await admin.rpc.admin.revokeToken.mutate({ id: row!.id });
-  const revoked = await fetch('http://127.0.0.1:5180/mcp', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
+    .from(oauthAccessToken)
+    .where(eq(oauthAccessToken.clientId, grant.clientId));
+  expect(row!.token).not.toBe(token);
+  const revoked = await fetch(
+    'http://localhost:5190/oauth/auth/oauth2/revoke',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: grant.clientId,
+        token: grant.refreshToken,
+        token_type_hint: 'refresh_token',
+      }),
     },
-    body: '{}',
-  });
-  expect(revoked.status).toBe(401);
-  const expired = await admin.rpc.admin.createToken.mutate({ name: 'Expired' });
+  );
+  expect(revoked.status).toBe(200);
+  const probe = (bearer: string) =>
+    fetch('http://127.0.0.1:5180/mcp', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    });
+  expect((await probe(token)).status).toBe(401);
+  const expired = await connectAssistant(admin.email, password);
   await db
-    .update(apiTokens)
+    .update(oauthAccessToken)
     .set({ expiresAt: new Date(0) })
-    .where(
-      eq(
-        apiTokens.tokenHash,
-        createHash('sha256').update(expired.token).digest('hex'),
-      ),
-    );
-  expect(
-    (
-      await fetch('http://127.0.0.1:5180/mcp', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${expired.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: '{}',
-      })
-    ).status,
-  ).toBe(401);
-  const demoted = await admin.rpc.admin.createToken.mutate({ name: 'Demoted' });
+    .where(eq(oauthAccessToken.clientId, expired.clientId));
+  expect((await probe(expired.token)).status).toBe(401);
+  const demoted = await connectAssistant(admin.email, password);
   await db
     .update(networkMemberships)
     .set({ role: 'member' })
@@ -1006,18 +1015,22 @@ test('authenticated MCP schedules markets and inventory; invalid, expired, revok
         eq(networkMemberships.networkId, TEST_NETWORK_ID),
       ),
     );
-  expect(
-    (
-      await fetch('http://127.0.0.1:5180/mcp', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${demoted.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: '{}',
-      })
-    ).status,
-  ).toBe(401);
+  const denied = await fetch('http://127.0.0.1:5180/mcp', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${demoted.token}`,
+      'content-type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'list_farms', arguments: { networkId: TEST_NETWORK_ID } },
+    }),
+  });
+  expect(denied.status).toBe(200);
+  expect((await denied.json()).result.isError).toBe(true);
 });
 
 test('expired and revoked invitations fail, used invitation cannot create another account', async () => {
@@ -1957,7 +1970,7 @@ test('fresh migrations create no network or implicit business ownership and rema
           'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
         )
       ).rows[0]!.count,
-    ).toBe(6);
+    ).toBe(8);
     const { createServer } = await import('../../packages/core/src/server.js');
     const { bootstrapGlobalAdmin } =
       await import('../../packages/core/src/bootstrap.js');
@@ -1990,27 +2003,12 @@ test('fresh migrations create no network or implicit business ownership and rema
         headers: { cookie },
       });
       expect(me.json().result.data).toMatchObject({ globalAdmin: true });
-      const created = await platform.inject({
-        method: 'POST',
-        url: '/admin/trpc/tokens.create',
-        headers: { origin: adminOrigin, cookie },
-        payload: { name: 'Empty platform token' },
-      });
-      expect(created.statusCode, created.body).toBe(200);
-      const token = created.json().result.data.token;
       const tools = await platform.inject({
         method: 'POST',
-        url: '/admin/mcp',
-        headers: {
-          authorization: `Bearer ${token}`,
-          accept: 'application/json, text/event-stream',
-        },
+        url: '/mcp',
         payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       });
-      expect(tools.statusCode, tools.body).toBe(200);
-      expect(
-        tools.json().result.tools.map((tool: { name: string }) => tool.name),
-      ).toContain('create_network');
+      expect(tools.statusCode).toBe(401);
       expect(await fresh.db.select().from(networks)).toEqual([]);
     } finally {
       await platform.close();

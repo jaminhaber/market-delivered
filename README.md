@@ -2,7 +2,7 @@
 
 Market Delivered is a shared delivery platform. Independently operated businesses
 are **networks**: each owns its catalog, markets, inventory, orders, memberships,
-invitations, integration tokens, email identity, and job history.
+invitations, email identity, and job history.
 
 Silverstreak is a bespoke application on this API. Its server supplies one fixed
 network ID; its pages have no network selector or platform configuration.
@@ -10,16 +10,17 @@ network ID; its pages have no network selector or platform configuration.
 | Workspace           | Purpose                                                | Local address              |
 | ------------------- | ------------------------------------------------------ | -------------------------- |
 | `apps/api`          | Shared backend: business/admin APIs, MCP, and jobs     | http://localhost:3001      |
-| `apps/admin`        | Global-admin sign-in and MCP token management          | http://localhost:5173      |
+| `apps/admin`        | Dashboard and account-wide assistant connections       | http://localhost:5173      |
 | `apps/silverstreak` | Astro SSR website, customer accounts, shopping, orders | http://localhost:4321      |
 | `packages/core`     | Shared backend implementation                          | Used by the shared backend |
 | `packages/db`       | PostgreSQL schema, migrations, network scoping, jobs   | Managed PostgreSQL         |
 
-One backend serves business routes at `/trpc` and `/mcp`, with global
-administration at `/admin/trpc`, `/admin/auth`, and `/admin/mcp`. The business
-router and MCP catalog do not expose network-management tools. Admin and business authentication use separate signing secrets and cookie
-names. Network management belongs to the administrator API; the minimal dashboard
-provides global MCP credentials rather than network configuration screens.
+One backend serves business routes at `/trpc`, global administration at
+`/admin/trpc`, and one account-wide assistant endpoint at `/mcp`. Assistant OAuth
+runs at `ADMIN_ORIGIN/oauth/auth`; users connect through `/oauth/connect`.
+The same token identifies the user for platform and business tools, which check
+current roles on every operation. Business tools require an explicit `networkId`.
+Business website and administrator dashboard sessions remain separate.
 
 ## Run locally
 
@@ -68,7 +69,7 @@ a delivery address, order from an open market, and view/cancel their orders.
 Orders use cash on delivery and the existing fulfillment model. Silverstreak
 administrators use the **Admin** profile-menu entry for business management tabs
 and MCP setup. Driver fulfillment remains available through the business API or
-network-scoped MCP.
+MCP with an explicit network ID.
 
 ## Checks
 
@@ -82,7 +83,7 @@ npm run test:e2e
 
 Integration tests use only a database ending in `_e2e` and dedicated test ports.
 They retain business invariants and cover the API boundary, independent auth,
-MCP scopes, registered origins, and both frontends.
+MCP identity and live permissions, registered origins, and both frontends.
 
 ## Hosting
 

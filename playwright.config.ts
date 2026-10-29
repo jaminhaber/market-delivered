@@ -13,7 +13,7 @@ export default defineConfig({
   },
   webServer: {
     command: 'node --import tsx scripts/e2e-server.ts',
-    url: 'http://localhost:5190',
+    url: 'http://127.0.0.1:5180/ready',
     reuseExistingServer: false,
     timeout: 60000,
   },

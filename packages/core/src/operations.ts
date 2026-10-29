@@ -549,44 +549,6 @@ export function operations(db: s.Database, actor: Actor) {
         return { success: true };
       });
     },
-    async createApiToken(name: string) {
-      admin();
-      return db.transaction(async (tx) => {
-        const token = `md_${randomBytes(32).toString('hex')}`;
-        const [saved] = await tx
-          .insert(s.apiTokens)
-          .values(
-            s.networkValues(tx, {
-              userId: actor.id,
-              name,
-              tokenHash: createHash('sha256').update(token).digest('hex'),
-              lastFour: token.slice(-4),
-              expiresAt: new Date(Date.now() + 90 * 86400000),
-            }),
-          )
-          .returning({ id: s.apiTokens.id });
-        await audit(tx, actor, 'api_token.created', saved!.id);
-        return { token };
-      });
-    },
-    async revokeApiToken(id: string) {
-      admin();
-      return db.transaction(async (tx) => {
-        const [saved] = await tx
-          .update(s.apiTokens)
-          .set({ revokedAt: new Date() })
-          .where(
-            s.networkWhere(
-              tx,
-              s.apiTokens,
-              and(eq(s.apiTokens.id, id), eq(s.apiTokens.userId, actor.id)),
-            ),
-          )
-          .returning({ id: s.apiTokens.id });
-        if (saved) await audit(tx, actor, 'api_token.revoked', id);
-        return { success: true };
-      });
-    },
     async createFarm(input: z.infer<typeof farmInput>) {
       admin();
       return db.transaction(async (tx) => {

@@ -41,6 +41,7 @@ export type Context = {
   db: s.Database;
   actor: Actor | null;
   googleMapsKey?: string;
+  oauthOrigin: string;
   network: Awaited<ReturnType<typeof resolveNetwork>>;
 };
 const t = initTRPC.context<Context>().create({
@@ -98,6 +99,10 @@ const orderListInput = z.object({
   offset: z.number().int().min(0).max(1000000).default(0),
 });
 export const appRouter = t.router({
+  assistantConnection: t.procedure.query(({ ctx }) => ({
+    url: new URL('/mcp', ctx.oauthOrigin).href,
+    connectUrl: new URL('/oauth/connect', ctx.oauthOrigin).href,
+  })),
   me: t.procedure.query(async ({ ctx }) => {
     if (!ctx.actor) return null;
     const db = s.networkDatabase(ctx.db, ctx.network.id, ctx.actor.id);
@@ -755,30 +760,6 @@ export const appRouter = t.router({
         z.object({ orderId: z.uuid(), driverId: z.string().min(1).nullable() }),
       )
       .mutation(({ ctx, input }) => ctx.ops.assignDriver(input)),
-    tokens: admin.query(({ ctx }) =>
-      ctx.db
-        .select({
-          id: s.apiTokens.id,
-          name: s.apiTokens.name,
-          lastFour: s.apiTokens.lastFour,
-          expiresAt: s.apiTokens.expiresAt,
-          revokedAt: s.apiTokens.revokedAt,
-        })
-        .from(s.apiTokens)
-        .where(
-          s.networkWhere(
-            ctx.db,
-            s.apiTokens,
-            eq(s.apiTokens.userId, ctx.actor.id),
-          ),
-        ),
-    ),
-    createToken: admin
-      .input(z.object({ name: z.string().trim().min(2).max(100) }))
-      .mutation(({ ctx, input }) => ctx.ops.createApiToken(input.name)),
-    revokeToken: admin
-      .input(id)
-      .mutation(({ ctx, input }) => ctx.ops.revokeApiToken(input.id)),
   }),
 });
 export type AppRouter = typeof appRouter;

@@ -8,7 +8,6 @@ import { createAuth, type AuthConfig } from './auth.js';
 import { permissions } from './networks.js';
 import { webOrigins } from './origins.js';
 import { forwardAuth } from './http.js';
-import { registerAdminMcp } from './admin-mcp.js';
 
 export async function registerAdminRoutes(
   server: FastifyInstance,
@@ -23,7 +22,11 @@ export async function registerAdminRoutes(
     appName: 'Market Delivered',
   });
   const origins = webOrigins(config);
-  await server.register(cors, { origin: origins, credentials: true });
+  await server.register(cors, {
+    origin: origins,
+    credentials: true,
+    exposedHeaders: ['WWW-Authenticate'],
+  });
   server.addHook('onRequest', async (request, reply) => {
     if (request.headers.origin && !origins.includes(request.headers.origin))
       return reply.code(403).send({ error: 'Origin not allowed' });
@@ -61,5 +64,4 @@ export async function registerAdminRoutes(
       },
     },
   });
-  registerAdminMcp(server, db, config);
 }

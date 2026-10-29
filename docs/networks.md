@@ -7,15 +7,15 @@ addresses, approvals, orders, or credentials.
 
 ## Onboarding another business
 
-1. Use the admin API or platform MCP to create a network with a unique slug and
+1. Use the admin API or MCP to create a network with a unique slug and
    that business's `frontendOrigin`.
 2. Assign its existing owner with `networks.setMember`, or use the trusted CLI to
    create an invitation for `network_admin`.
 3. Configure email identity and business support/location settings on the admin API.
 4. Deploy its own frontend, pointing its server at the shared public API and
    attaching its fixed `X-Network-Id` on every business/auth request.
-5. Issue a network-scoped MCP token through business administration or the platform
-   MCP `create_network_token` tool. It cannot access platform management.
+5. Have the owner connect an assistant at `ADMIN_ORIGIN/oauth/connect`. The same
+   connection follows their current permissions; business tools take explicit network IDs.
 
 No backend deployment or database is created per business. Browser authentication
 uses the registered frontend origin and host-only cookies; use a same-origin

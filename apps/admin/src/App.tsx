@@ -4,10 +4,15 @@ import { Sprout } from 'lucide-react';
 import { api } from './api';
 import { signOut } from './auth';
 import { AuthForm } from './Account';
+import { OAuthPage } from './OAuthConsent';
 import { GlobalAdmin } from './GlobalAdmin';
 import { ErrorState, Loading, Panel } from './ui';
 
 export function App() {
+  return location.pathname.startsWith('/oauth/') ? <OAuthPage /> : <AdminApp />;
+}
+
+function AdminApp() {
   const me = useQuery(api.me.queryOptions());
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<unknown>(null);

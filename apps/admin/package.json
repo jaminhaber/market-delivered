@@ -17,7 +17,8 @@
     "react-dom": "^19.0.0",
     "better-auth": "^1.7.12",
     "@market/api": "*",
-    "@vercel/functions": "^3.10.2"
+    "@vercel/functions": "^3.10.2",
+    "@market/mcp-instructions": "*"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

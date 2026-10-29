@@ -4,6 +4,11 @@ export const authClient = createAuthClient({
   basePath: '/admin/auth',
 });
 
+export const oauthClient = createAuthClient({
+  baseURL: window.location.origin,
+  basePath: '/oauth/auth',
+});
+
 export async function signOut() {
   const response = await authClient.signOut();
   if (response.error) throw new Error(response.error.message);

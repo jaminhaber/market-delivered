@@ -13,6 +13,8 @@ import {
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { webOrigins } from './origins.js';
+import * as oauthSchema from '@market/db';
+import { oauthPlugins, checkOAuthRequest, type McpOAuth } from './oauth.js';
 import {
   account,
   rateLimit,
@@ -31,8 +33,9 @@ export type AuthConfig = {
   appName?: string;
   emailReplyTo?: string;
   production?: boolean;
-  surface?: 'business' | 'admin';
+  surface?: 'business' | 'admin' | 'oauth';
   cookiePrefix?: string;
+  oauth?: McpOAuth;
 };
 export function createAuth(db: Database, config: AuthConfig) {
   const sendEmail = createEmailSender(config);
@@ -50,12 +53,21 @@ export function createAuth(db: Database, config: AuthConfig) {
     baseURL: config.baseURL,
     basePath: config.basePath,
     trustedOrigins: webOrigins(config),
+    plugins: config.oauth ? oauthPlugins(config.oauth) : [],
     database: drizzleAdapter(db, {
       provider: 'pg',
-      schema: { user, session, account, verification, rateLimit },
+      schema: {
+        ...oauthSchema,
+        user,
+        session,
+        account,
+        verification,
+        rateLimit,
+      },
     }),
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (config.oauth) await checkOAuthRequest(ctx);
         if (ctx.path !== '/reset-password') return;
         const token = ctx.body?.token || ctx.query?.token;
         if (typeof token !== 'string') return;
@@ -209,7 +221,7 @@ export function createAuth(db: Database, config: AuthConfig) {
     },
     emailAndPassword: {
       enabled: true,
-      disableSignUp: config.surface === 'admin',
+      disableSignUp: config.surface === 'admin' || config.surface === 'oauth',
       minPasswordLength: 12,
       maxPasswordLength: 128,
       requireEmailVerification: !!config.production,

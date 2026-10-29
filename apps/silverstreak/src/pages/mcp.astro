@@ -1,64 +1,54 @@
 ---
 import Site from '../layouts/Site.astro';
 import AdminNav from '../components/AdminNav.astro';
-import { marketApi, marketConfig, messageFor } from '../server/market';
-
+import McpInstructionBlocks from '../components/McpInstructionBlocks.astro';
+import {
+  listProviders,
+  listInterfaces,
+  getSetupInstructions,
+  type ProviderId,
+  type InterfaceId,
+} from '@market/mcp-instructions';
+import { marketApi, messageFor } from '../server/market';
 Astro.response.headers.set('Cache-Control', 'no-store');
-Astro.response.headers.set('Referrer-Policy', 'same-origin');
-let authorized = false;
 let error = '';
-let token = '';
-let endpoint = '';
-let tokens: Awaited<
-  ReturnType<ReturnType<typeof marketApi>['admin']['tokens']['query']>
-> = [];
+let connection: { url: string; connectUrl: string } | null = null;
 try {
   const api = marketApi(Astro);
   const me = await api.me.query();
   if (!me) return Astro.redirect('/account', 303);
   if (!me.admin) {
     Astro.response.status = 403;
-    error = 'Administrator access is required to manage AI connections.';
-  } else {
-    authorized = true;
-    endpoint = new URL('/mcp', marketConfig().origin).href;
-    if (Astro.request.method === 'POST') {
-      if (Astro.request.headers.get('origin') !== Astro.url.origin) {
-        return new Response('Origin not allowed', {
-          status: 403,
-          headers: { 'Cache-Control': 'no-store' },
-        });
-      }
-      const form = await Astro.request.formData();
-      if (form.get('intent') === 'create') {
-        const result = await api.admin.createToken.mutate({
-          name: String(form.get('name') || ''),
-        });
-        token = result.token;
-      } else if (form.get('intent') === 'revoke') {
-        await api.admin.revokeToken.mutate({
-          id: String(form.get('id') || ''),
-        });
-        return Astro.redirect('/mcp?revoked=1', 303);
-      } else {
-        throw new Error('Choose a valid action.');
-      }
-    }
-    tokens = await api.admin.tokens.query();
+    throw new Error(
+      'Administrator access is required to connect an assistant.',
+    );
   }
+  connection = await api.assistantConnection.query();
 } catch (problem) {
   error = messageFor(problem);
 }
-
-const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-const keyFile = '.config/market-delivered/silverstreak.headers';
-const saveCommand = token
-  ? `(umask 077 && mkdir -p "$HOME/.config/market-delivered" && chmod 700 "$HOME/.config/market-delivered" && touch "$HOME/${keyFile}" && chmod 600 "$HOME/${keyFile}" && printf '%s\\n' ${shellQuote(`Authorization: Bearer ${token}`)} > "$HOME/${keyFile}")`
-  : '';
-const connection = `npx -y mcp-remote ${shellQuote(endpoint)} --transport http-only --header-file "$HOME/${keyFile}"`;
+const providers = listProviders();
+const selected = Astro.url.searchParams.get('provider');
+const provider: ProviderId = selected === 'claude' ? 'claude' : 'chatgpt';
+const surface: InterfaceId =
+  Astro.url.searchParams.get('interface') === 'terminal'
+    ? 'terminal'
+    : 'desktop';
+const setup = connection
+  ? getSetupInstructions({
+      provider,
+      interface: surface,
+      serverName: 'market-delivered',
+      displayName: 'Market Delivered',
+      serverUrl: connection.url,
+      approvalLabel: 'Allow access as me',
+      examplePrompt:
+        'Use Market Delivered to list the networks I can access, then list Silverstreak’s upcoming markets.',
+    })
+  : null;
 ---
 
-<Site title="Admin — Silverstreak">
+<Site title="Connect your assistant — Silverstreak">
   <section class="shop-page mcp-page">
     <p class="small-label">Silverstreak administration</p>
     <h1>Admin.</h1>
@@ -67,174 +57,71 @@ const connection = `npx -y mcp-remote ${shellQuote(endpoint)} --transport http-o
         {error}
       </p>
     )}
-    {authorized && (
+    {connection && setup && (
       <>
         <AdminNav />
-        <h2>MCP setup</h2>
-        <p>
-          Give your AI assistant access to Silverstreak’s catalog, market dates,
-          inventory, and orders. Each token grants business administrator access
-          to Silverstreak only.
-        </p>
-        {Astro.url.searchParams.has('revoked') && (
-          <p class="shop-notice" role="status">
-            Token revoked. The assistant can no longer use it.
-          </p>
-        )}
-        <section aria-labelledby="create-token-heading">
-          <h2 id="create-token-heading">1. Create a token</h2>
+        <section class="mcp-setup">
+          <h2>Connect your assistant</h2>
           <p>
-            Use a separate token for each assistant. Tokens expire after 90 days
-            and can be revoked below.
+            Connect once to Market Delivered. Your assistant uses your current
+            permissions across the networks you administer, including platform
+            administration if you have that permission.
           </p>
-          <form method="post" class="shop-form">
-            <input type="hidden" name="intent" value="create" />
+          <form method="get" class="mcp-choices">
             <label>
-              Token name
-              <input
-                name="name"
-                required
-                minlength="2"
-                maxlength="100"
-                placeholder="My AI assistant"
-              />
+              Which assistant?
+              <select name="provider" id="setup-provider">
+                {providers.map((item) => (
+                  <option value={item.id} selected={provider === item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
             </label>
-            <button class="button button-dark">Create token</button>
+            <label>
+              How do you use it?
+              <select name="interface" id="setup-surface">
+                {listInterfaces(provider).map((item) => (
+                  <option value={item.id} selected={surface === item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button class="quiet-button">Show instructions</button>
           </form>
-          {token && (
-            <div class="mcp-token-result">
-              <p role="status">
-                Token created. Save it now; it will only be shown once.
-              </p>
-              <label>
-                New token (shown once)
-                <input
-                  readonly
-                  value={token}
-                  autocomplete="off"
-                  spellcheck="false"
-                />
-              </label>
-              <details>
-                <summary>Manual connection details</summary>
-                <p>For clients that support a custom Authorization header:</p>
-                <pre><code>{`Authorization: Bearer ${token}`}</code></pre>
-              </details>
-              <h3>Save the token on your computer</h3>
-              <p>
-                On Mac or Linux, copy and run this command in Terminal. It saves
-                the token in a private file.
-              </p>
-              <div class="mcp-command">
-                <button type="button" class="quiet-button" data-copy-command>
-                  Copy save command
-                </button>
-                <pre><code>{saveCommand}</code></pre>
-                <span aria-live="polite"></span>
-              </div>
-            </div>
-          )}
-        </section>
-        <section aria-labelledby="connect-heading">
-          <h2 id="connect-heading">2. Connect your assistant</h2>
+          <McpInstructionBlocks blocks={setup.blocks} />
           <p>
-            These commands require Node.js and the assistant’s command-line app
-            on your computer. Save the token file first, then run the command
-            for your assistant.
+            <a href={connection.connectUrl}>
+              Manage assistant connections in Market Delivered
+            </a>
           </p>
-          <label>
-            MCP server URL
-            <input readonly value={endpoint} />
-          </label>
-          {[
-            ['Codex', `codex mcp add silverstreak -- ${connection}`],
-            [
-              'Claude Code',
-              `claude mcp add --scope user --transport stdio silverstreak -- ${connection}`,
-            ],
-          ].map(([name, command]) => (
-            <div class="mcp-command">
-              <h3>{name}</h3>
-              <button type="button" class="quiet-button" data-copy-command>
-                Copy {name} command
-              </button>
-              <pre><code>{command}</code></pre>
-              <span aria-live="polite"></span>
-            </div>
-          ))}
-          <p>
-            Restart your assistant after setup, then ask it to list
-            Silverstreak’s upcoming markets. This token-file setup is for
-            compatible desktop and command-line clients; browser OAuth sign-in
-            is not available yet.
-          </p>
-        </section>
-        <section aria-labelledby="tokens-heading">
-          <h2 id="tokens-heading">Your tokens</h2>
-          {!tokens.length && <p>No tokens yet.</p>}
-          {tokens.map((item) => {
-            const expired = new Date(item.expiresAt) <= new Date();
-            return (
-              <div class="mcp-token-row">
-                <div>
-                  <strong>{item.name}</strong>
-                  <p>
-                    Ending in {item.lastFour} ·{' '}
-                    {item.revokedAt
-                      ? 'Revoked'
-                      : expired
-                        ? 'Expired'
-                        : `Expires ${new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'America/Los_Angeles' }).format(new Date(item.expiresAt))}`}
-                  </p>
-                </div>
-                {!item.revokedAt && !expired && (
-                  <form method="post" data-confirm-revoke>
-                    <input type="hidden" name="intent" value="revoke" />
-                    <input type="hidden" name="id" value={item.id} />
-                    <button
-                      class="quiet-button"
-                      aria-label={`Revoke ${item.name}`}
-                    >
-                      Revoke token
-                    </button>
-                  </form>
-                )}
-              </div>
-            );
-          })}
         </section>
       </>
     )}
   </section>
 </Site>
-
 <script>
   document
-    .querySelectorAll<HTMLButtonElement>('[data-copy-command]')
-    .forEach((button) => {
+    .querySelectorAll<HTMLSelectElement>('.mcp-choices select')
+    .forEach((select) =>
+      select.addEventListener('change', () => select.form?.requestSubmit()),
+    );
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-copy-command], [data-copy-url]')
+    .forEach((button) =>
       button.addEventListener('click', async () => {
         const block = button.closest('.mcp-command');
-        const text = block?.querySelector('code')?.textContent;
+        const text =
+          button.dataset.copyUrl || block?.querySelector('code')?.textContent;
         const status = block?.querySelector('span');
         if (!text || !status) return;
         try {
           await navigator.clipboard.writeText(text);
-          status.textContent = 'Copied. Paste and run it in Terminal.';
+          status.textContent = 'Copied.';
         } catch {
-          status.textContent = 'Select the command above and copy it manually.';
+          status.textContent = 'Select the text above and copy it.';
         }
-      });
-    });
-  document
-    .querySelectorAll<HTMLFormElement>('[data-confirm-revoke]')
-    .forEach((form) => {
-      form.addEventListener('submit', (event) => {
-        if (
-          !window.confirm(
-            'Revoke this token? The assistant will lose access immediately.',
-          )
-        )
-          event.preventDefault();
-      });
-    });
+      }),
+    );
 </script>
