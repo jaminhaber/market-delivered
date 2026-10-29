@@ -11,16 +11,6 @@ import {
 } from 'drizzle-orm/pg-core';
 import { user } from './auth-schema.js';
 
-export type NetworkBranding = {
-  primaryColor?: string | null;
-  accentColor?: string | null;
-  backgroundColor?: string | null;
-  textColor?: string | null;
-  font?: 'default' | 'modern' | 'editorial' | 'rounded' | null;
-  logoUrl?: string | null;
-  headerDisplay?: 'logo' | 'text' | 'logo-text' | null;
-};
-
 export type NetworkLocation = {
   city?: string | null;
   region?: string | null;
@@ -42,7 +32,12 @@ export const networks = pgTable('networks', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
-  branding: jsonb('branding').$type<NetworkBranding>().notNull().default({}),
+  frontendOrigin: text('frontend_origin'),
+  // Preserve stored legacy metadata without exposing it through current APIs.
+  branding: jsonb('branding')
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   supportEmail: text('support_email'),
   supportPhone: text('support_phone'),

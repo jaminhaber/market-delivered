@@ -5,7 +5,7 @@ import {
   networkMemberships,
   networks,
 } from '../packages/db/src/index.js';
-import { eq, and, asc, isNull } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 const email = process.argv[2]?.toLowerCase();
 if (!email || !process.env.DATABASE_URL)
   throw new Error(
@@ -24,16 +24,14 @@ try {
       .values({ userId: person.id, role })
       .onConflictDoNothing();
   else {
+    if (!process.argv[4])
+      throw new Error('A network slug is required for network_admin grants');
     const [network] = await db
       .select()
       .from(networks)
       .where(
-        and(
-          isNull(networks.deletedAt),
-          process.argv[4] ? eq(networks.slug, process.argv[4]) : undefined,
-        ),
+        and(isNull(networks.deletedAt), eq(networks.slug, process.argv[4]!)),
       )
-      .orderBy(asc(networks.createdAt), asc(networks.id))
       .limit(1);
     if (!network) throw new Error('Network not found');
     await db

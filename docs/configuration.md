@@ -1,92 +1,54 @@
-# App configuration
+# Configuration
 
-[Documentation](README.md) · [Project README](../README.md)
+## Environment
 
-Each operator manages its app in **Operations → Configure**. Network administrators manage their own app; global administrators can configure any network. All controls are also available through [MCP](mcp.md#configure-through-mcp).
+The root `.env.example` is the reference. The backend needs `DATABASE_URL` and the
+stable `BETTER_AUTH_SECRET` (32+ characters). The latter signs business sessions
+and encrypts per-network email credentials; rotating it requires a deliberate
+credential migration.
 
-## Authentication and platform email
+The same backend also requires a distinct `ADMIN_AUTH_SECRET` (32+ characters)
+and `ADMIN_ORIGIN`. The backend port defaults to 3001; the dashboard defaults
+to 5173. `API_HOST=0.0.0.0` is appropriate for containers. Node 24 is the supported
+runtime. Global auth has no dependency on a network record.
 
-Better Auth manages password hashing, database-backed sessions, sign-in, sign-out, email verification, and password resets. Customer and driver profiles point to the core `users` table; a person can have both profiles. Session cookies are HTTP-only and are secured by Better Auth for HTTPS deployments. API authorization and origin checks are enforced independently of UI navigation.
+`RESEND_API_KEY` and `EMAIL_FROM` are required for production email. Development
+without a provider prints account links to local API logs. `CRON_SECRET` protects
+scheduled endpoints. `GOOGLE_MAPS_API_KEY` enables address lookup; manual address
+entry and the rest of the API do not require it.
 
-Local password-reset and verification links are printed to the API terminal instead of sending email. The reset UI is accessible from **Sign in → Forgot password?** Production requires `RESEND_API_KEY`, `EMAIL_FROM`, `BETTER_AUTH_SECRET`, and correct HTTPS `BETTER_AUTH_URL` / `WEB_ORIGIN`. Production signup requires email verification. Unverified sign-in attempts resend verification, and the sign-in/signup screen offers an explicit resend action (limited to five requests per IP per minute). Verification redirects back to the frontend, with secure HTTP-only sessions. Email requests time out after 10 seconds so provider outages cannot indefinitely hold an API request. Configure a verified Resend sender domain before inviting real users.
+## Registered business frontend
 
-`GOOGLE_MAPS_API_KEY` configures server-side Google Address Validation. Set it in the root `.env` locally and in the shared Vercel project environment when deployed. The key is never sent to the frontend.
+A network's `frontendOrigin` is an HTTP loopback origin in development or an HTTPS
+origin in production, with no path, credentials, query, or fragment. Configure it
+through admin `networks.create`/`networks.update`, platform MCP, or the trusted
+`network:create`/`network:configure` CLI. Missing configuration fails explicitly.
+There is no shared global business URL or inferred/default network.
 
-Auth rate limits use PostgreSQL so they work across API processes. The isolated E2E server runs with `NODE_ENV=test` and disables auth rate limiting so repeated test-account setup does not exhaust it. Do not run a deployed app in test mode.
+Each business supplies its own frontend and fixed API context. Silverstreak stores
+`MARKET_API_ORIGIN` and `SILVERSTREAK_NETWORK_ID` in its server environment. Its
+cookie proxy preserves the real browser Origin and overwrites incoming selectors.
+Use separate staging values for previews.
 
-## Email overrides
+## Email, support, and location
 
-**Operations → Configure**, or MCP `update_network`, can override `emailFrom` and
-`emailKey` (Resend) independently. Missing overrides inherit `EMAIL_FROM` and
-`RESEND_API_KEY`. Set a field to `null` to clear it; omitting it preserves its
-current value. Keys are write-only, encrypted with AES-256-GCM using a key derived
-from `BETTER_AUTH_SECRET` and bound to the network ID. Responses expose only
-`hasEmailKey`, never the key or ciphertext. Re-enter stored network keys after
-rotating `BETTER_AUTH_SECRET`. Sender addresses must be verified in the selected
-Resend account.
+Admin `networks.update` and MCP `update_network` accept explicit network IDs.
+Settings include business name, support contacts, US location/timezone defaults,
+Places search bias, and email sender/reply-to/key overrides. Keys are write-only,
+encrypted at rest, and never returned. Senders must be verified with the email
+provider. Invitation links use the registered frontend's `/account` route and
+never include a network selector.
 
-Overrides apply to MCP invitation mail and verification/password-reset mail
-initiated from that network. Platform email defaults are still required for
-production authentication. Database URLs, auth secrets, trusted origins, and cron
-secrets remain platform configuration. Custom domains and DNS are not part of this layer.
+Presentation belongs to each bespoke frontend. Silverstreak does not load theme,
+logo, color, or network-branding settings from the API.
 
-## Branding
+## Administrator frontend
 
-Use **Operations → Configure → Branding** to set primary, accent, background,
-and text colors, choose a font preset, and upload a PNG/JPEG/WebP logo (up to 200 KB)
-or supply an HTTPS image URL. The theme applies to the sign-in page, storefront,
-and dashboards. Fonts use the existing DM Sans/DM Serif pair or installed Arial,
-Georgia, or Trebuchet fonts; no custom CSS or font downloads are accepted.
-**Header display** selects Logo, Text (the network name), or Logo + text.
-Logo modes fall back to the network name when no logo is configured.
-**Branding edits preview immediately in your browser** without changing the saved
-app. **Save branding** publishes them; **Cancel changes** restores saved settings.
-Leaving Configure discards unsaved edits. **Reset branding** previews the default
-theme and logo; save to publish that reset.
-
-MCP `get_network` returns branding. `update_network` accepts a `branding` object
-with `primaryColor`, `accentColor`, `backgroundColor`, `textColor` (six-digit hex),
-`font` (`default`, `modern`, `editorial`, `rounded`), and `logoUrl`, plus `headerDisplay` (`logo`, `text`, `logo-text`). Supplied fields
-merge with saved branding. Set individual fields to `null` to restore their defaults,
-or set `branding: null` to reset everything. Network administrators manage their
-own branding; global administrators can manage any network. Public branding reads
-contain no email settings or secrets.
-
-## Support, location defaults, and email identity
-
-**Operations → Configure** includes support email, support phone, and an HTTPS
-contact link. Configured contacts appear on account/profile and order pages and
-in the shared footer. Blank contacts are hidden. These details are public; email
-provider credentials and the reply-to override are not exposed by public reads.
-
-Location defaults include city, US state, ZIP, and IANA timezone. They prefill
-new delivery profiles and new markets; saved addresses and market timezones stay
-unchanged. Address autocomplete can optionally use a five-digit search ZIP code and radius
-in meters (1–50,000). The backend resolves the ZIP center through
-[Zippopotam.us](https://docs.zippopotam.us/docs/getting-started/) (GeoNames data)
-when settings are saved, and stores the ZIP with its latitude/longitude. Unchanged
-ZIP codes reuse the saved center; lookup failures leave all settings unchanged.
-No API key or new Google API needs to be configured. This biases suggestions, without
-restricting delivery eligibility. Without a search center, autocomplete uses its
-default US search. New operators have no location-specific defaults; configure them explicitly.
-
-Invitations, verification emails, and password resets automatically use the app
-name in their subject and sender display name. Sending still uses the configured,
-verified sender email address and Resend account. **Email reply-to address** can
-override where replies go; otherwise the support email is used when configured.
-
-MCP `get_network` and `update_network` support `supportEmail`, `supportPhone`,
-`contactUrl`, `emailReplyTo`, and `location`. Location fields are `city`, `region`,
-`postalCode`, `timezone`, and `autocompleteBias: { postalCode, radiusMeters }`.
-Coordinates are returned as saved data, but cannot be supplied as update inputs.
-Set `autocompleteBias: null` to remove the search bias. Existing coordinate-only
-centers remain active until replaced with a ZIP or explicitly cleared. Partial location updates merge with saved values. Set individual
-fields to `null` to clear them, or `location: null` to clear all location defaults.
-The supported address format remains US/USD; these settings do not introduce
-international address or currency support.
-
-## Related guides
-
-- [Ownership and administrator roles](networks.md)
-- [Configure through MCP](mcp.md#configure-through-mcp)
-- [Deployment environment variables](deployment.md#vercel-test-deployment)
+`apps/admin` calls `/admin/trpc` and `/admin/auth` through its own origin. Locally,
+Vite forwards those paths and `/admin/mcp` to `API_PORT` (default 3001). On Vercel,
+set server-only `MARKET_API_ORIGIN=https://api.marketdelivered.com` on the admin
+frontend project. Its routing proxy rewrites those paths to the same backend,
+preserving cookies and the browser Origin. No database credentials or signing
+secrets belong in the dashboard deployment. Configure the backend's `ADMIN_ORIGIN`
+to the dashboard's exact HTTPS domain. Administrator MCP is also directly
+available at the backend's `/admin/mcp` path.

@@ -7,10 +7,11 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=22.12.0"
+    "node": "24.x"
   },
   "scripts": {
-    "dev": "npm run db:migrate && dotenv -- concurrently -k -n api,web,jobs -c green,cyan,yellow \"npm run dev -w @market/api\" \"npm run dev -w @market/web\" \"tsx scripts/jobs-worker.ts\"",
+    "dev:silverstreak": "npm run dev -w @market/silverstreak",
+    "dev": "npm run db:migrate && dotenv -- concurrently -k -n api,admin,silverstreak,jobs -c green,cyan,blue,yellow \"npm run dev -w @market/api\" \"npm run dev -w @market/admin\" \"npm run dev -w @market/silverstreak\" \"tsx scripts/jobs-worker.ts\"",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces",
     "format": "prettier --write .",
@@ -28,28 +29,43 @@
     "typecheck:e2e": "tsc -p tests/tsconfig.json",
     "jobs:run": "dotenv -- tsx scripts/run-jobs.ts",
     "jobs:worker": "dotenv -- tsx scripts/jobs-worker.ts",
-    "dev:apps": "dotenv -- concurrently -k -n api,web -c green,cyan \"npm run dev -w @market/api\" \"npm run dev -w @market/web\"",
+    "dev:apps": "dotenv -- concurrently -k -n api,admin,silverstreak -c green,cyan,blue \"npm run dev -w @market/api\" \"npm run dev -w @market/admin\" \"npm run dev -w @market/silverstreak\"",
     "db:reset:local": "dotenv -- tsx scripts/reset-local-db.ts && npm run db:setup",
     "jobs:close": "dotenv -- tsx scripts/run-jobs.ts close-markets",
     "db:setup": "npm run db:migrate",
-    "admin:bootstrap": "dotenv -- tsx scripts/bootstrap-admin.ts"
+    "admin:bootstrap": "dotenv -- tsx scripts/bootstrap-admin.ts",
+    "network:create": "dotenv -- tsx scripts/create-network.ts",
+    "network:configure": "dotenv -- tsx scripts/configure-network.ts",
+    "setup:local": "tsx scripts/setup-local.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.19.2",
     "concurrently": "^9.0.0",
     "dotenv-cli": "^8.0.0",
+    "node-cron": "^4.0.0",
     "prettier": "^3.0.0",
+    "prettier-plugin-astro": "^1.1.2",
     "tsx": "^4.0.0",
-    "typescript": "^5.9.0",
-    "@playwright/test": "^1.58.0",
-    "node-cron": "^4.0.0"
+    "typescript": "^5.9.0"
   },
   "overrides": {
+    "@vercel/cli-config": {
+      "zod": "^4.6.7"
+    },
+    "@vercel/routing-utils": {
+      "path-to-regexp": "^6.3.0"
+    },
     "@esbuild-kit/core-utils": {
       "esbuild": "^0.25.12"
     },
     "tsup": {
       "esbuild": "^0.28.1"
     }
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
   }
 }

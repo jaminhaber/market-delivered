@@ -35,6 +35,7 @@ try {
     id: '00000000-0000-4000-8000-000000000001',
     name: 'Ojai',
     slug: 'ojai',
+    frontendOrigin: 'http://localhost:5180',
     location: {
       city: 'Ojai',
       region: 'CA',
@@ -47,6 +48,20 @@ try {
       },
     },
   });
+  await db.insert(networks).values([
+    {
+      id: '00000000-0000-4000-8000-000000000002',
+      name: 'Silverstreak',
+      slug: 'silverstreak',
+      frontendOrigin: 'http://localhost:4322',
+    },
+    {
+      id: '00000000-0000-4000-8000-000000000003',
+      name: 'Partner',
+      slug: 'partner',
+      frontendOrigin: 'http://localhost:4333',
+    },
+  ]);
 } finally {
   await pool.end();
 }
@@ -54,16 +69,19 @@ const env = {
   ...process.env,
   NODE_ENV: 'test',
   DATABASE_URL: databaseURL,
-  API_PORT: '3101',
-  WEB_PORT: '5180',
-  WEB_ORIGIN: 'http://localhost:5180',
-  BETTER_AUTH_URL: 'http://localhost:5180',
+  API_PORT: '5180',
+  ADMIN_PORT: '5190',
+  ADMIN_ORIGIN: 'http://localhost:5190',
+  ADMIN_AUTH_SECRET: 'e2e-admin-only-secret-not-for-production-123456789',
   BETTER_AUTH_SECRET: 'e2e-only-secret-never-use-in-production-123456789',
   RESEND_API_KEY: '',
   GOOGLE_MAPS_API_KEY: '',
   JOBS_WORKER_DISABLED: '1',
   CRON_SECRET: 'e2e-only-cron-secret-not-for-production-123456789',
   EMAIL_FROM: '',
+  SILVERSTREAK_PORT: '4322',
+  MARKET_API_ORIGIN: 'http://127.0.0.1:5180',
+  SILVERSTREAK_NETWORK_ID: '00000000-0000-4000-8000-000000000002',
 };
 const child = spawn('npm', ['run', 'dev:apps'], { env, stdio: 'inherit' });
 for (const signal of ['SIGTERM', 'SIGINT'] as const)

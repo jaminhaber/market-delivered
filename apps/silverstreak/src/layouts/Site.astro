@@ -1,0 +1,91 @@
+---
+import '../styles/site.css';
+import ProfileMenu from '../components/ProfileMenu.astro';
+import { marketApi } from '../server/market';
+
+interface Props {
+  title?: string;
+  description?: string;
+  home?: boolean;
+}
+
+const {
+  title = 'Silverstreak — Good things, brought home.',
+  description = 'A little closer to the source. Farmers market delivery by Silverstreak.',
+  home = false,
+} = Astro.props;
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+let profile: { name: string } | null = null;
+if (Astro.request.headers.has('cookie')) {
+  try {
+    profile = await marketApi(Astro).me.query();
+  } catch {
+    // Keep the public navigation available if the API cannot resolve a session.
+  }
+}
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#eeece2" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title}</title>
+  </head>
+  <body class:list={[{ 'is-home': home }]}>
+    <a class="skip-link" href="#main">
+      Skip to content
+    </a>
+    <div class="site-shell">
+      <header class="masthead">
+        <div class="masthead-top">
+          <a
+            class="small-label home-link"
+            href="/"
+            aria-label="Silverstreak home"
+          >
+            <span class="streak" aria-hidden="true">
+              ↠
+            </span>{' '}
+            From the market. To your door.
+          </a>
+          <nav aria-label="Main navigation">
+            <a
+              href="/order"
+              aria-current={
+                Astro.url.pathname === '/order' ? 'page' : undefined
+              }
+            >
+              Order now <span aria-hidden="true">↗</span>
+            </a>
+            <a
+              href="/about"
+              aria-current={
+                Astro.url.pathname === '/about' ? 'page' : undefined
+              }
+            >
+              About us
+            </a>
+            {profile && <ProfileMenu name={profile.name} />}
+          </nav>
+        </div>
+        <a class="wordmark" href="/" aria-label="Silverstreak home">
+          SILVERSTREAK
+        </a>
+      </header>
+      <main id="main" tabindex="-1">
+        <slot />
+      </main>
+      <footer class="site-footer small-label">
+        <span>Good things, brought home.</span>
+        <span>
+          Silverstreak <span aria-hidden="true">↠</span>
+        </span>
+      </footer>
+    </div>
+  </body>
+</html>

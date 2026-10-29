@@ -1,0 +1,45 @@
+---
+interface Props {
+  name: string;
+}
+const firstName = Astro.props.name.trim().split(/\s+/)[0];
+---
+
+<details class="profile-menu">
+  <summary>
+    {firstName ? `Hello ${firstName}` : 'Your profile'}
+    <span aria-hidden="true">⌄</span>
+  </summary>
+  <div class="profile-menu-links">
+    <a
+      href="/account"
+      aria-current={Astro.url.pathname === '/account' ? 'page' : undefined}
+    >
+      Manage account
+    </a>
+    <a
+      href="/orders"
+      aria-current={Astro.url.pathname === '/orders' ? 'page' : undefined}
+    >
+      See orders
+    </a>
+  </div>
+</details>
+
+<script>
+  document
+    .querySelectorAll<HTMLDetailsElement>('.profile-menu')
+    .forEach((menu) => {
+      document.addEventListener('click', (event) => {
+        if (event.target instanceof Node && !menu.contains(event.target)) {
+          menu.open = false;
+        }
+      });
+      menu.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && menu.open) {
+          menu.open = false;
+          menu.querySelector('summary')?.focus();
+        }
+      });
+    });
+</script>

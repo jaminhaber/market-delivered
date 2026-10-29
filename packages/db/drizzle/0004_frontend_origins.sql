@@ -1,0 +1,1 @@
+ALTER TABLE "networks" ADD COLUMN "frontend_origin" text;

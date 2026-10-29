@@ -1,0 +1,290 @@
+---
+import Site from '../layouts/Site.astro';
+import {
+  marketApi,
+  authRequest,
+  redirectAfterAuth,
+  messageFor,
+} from '../server/market';
+Astro.response.headers.set('Cache-Control', 'no-store');
+const params = Astro.url.searchParams;
+const invite = params.get('invite') || '';
+const token = params.get('token') || '';
+const mode = token
+  ? 'reset'
+  : params.get('mode') === 'forgot'
+    ? 'forgot'
+    : invite && params.get('mode') !== 'signin'
+      ? 'signup'
+      : 'signin';
+let error = params.has('error')
+  ? 'This email link is invalid or expired. Request a new link.'
+  : '';
+let notice = '';
+let invitation: { email: string } | null = null;
+let me: Awaited<ReturnType<ReturnType<typeof marketApi>['me']['query']>> = null;
+let api: ReturnType<typeof marketApi> | undefined;
+try {
+  api = marketApi(Astro);
+  me = await api.me.query();
+  if (invite && !me) invitation = await api.invitation.query({ token: invite });
+  if (Astro.request.method === 'POST') {
+    const form = await Astro.request.formData();
+    const field = (name: string) => String(form.get(name) || '');
+    const intent = field('intent');
+    if (intent === 'profile') {
+      await api.profile.save.mutate({
+        name: field('name'),
+        phone: field('phone'),
+        street: field('street'),
+        unit: field('unit'),
+        city: field('city'),
+        region: field('region'),
+        postalCode: field('postalCode'),
+        deliveryNotes: field('deliveryNotes'),
+      });
+      return Astro.redirect('/account?saved=1', 303);
+    }
+    if (intent === 'accept') {
+      await api.acceptInvitation.mutate({ token: invite });
+      return Astro.redirect('/order', 303);
+    }
+    const path =
+      intent === 'signout'
+        ? 'sign-out'
+        : intent === 'forgot'
+          ? 'request-password-reset'
+          : intent === 'reset'
+            ? 'reset-password'
+            : intent === 'signup'
+              ? 'sign-up/email'
+              : 'sign-in/email';
+    const body =
+      intent === 'signout'
+        ? {}
+        : intent === 'forgot'
+          ? { email: field('email'), redirectTo: Astro.url.origin + '/account' }
+          : intent === 'reset'
+            ? { newPassword: field('password'), token }
+            : {
+                email: invitation?.email || field('email'),
+                password: field('password'),
+                ...(intent === 'signup'
+                  ? {
+                      name: field('name'),
+                      callbackURL: Astro.url.origin + '/order',
+                    }
+                  : {}),
+              };
+    const response = await authRequest(Astro, path, body, invite);
+    const result = await response.json();
+    if (!response.ok || result.error)
+      throw new Error(
+        result.message ||
+          result.error?.message ||
+          'Unable to complete the request.',
+      );
+    if (intent === 'forgot')
+      notice = 'If that account exists, a password reset link has been sent.';
+    else
+      return redirectAfterAuth(
+        response,
+        intent === 'signout'
+          ? '/'
+          : invite && intent === 'signin'
+            ? '/account?invite=' + encodeURIComponent(invite)
+            : '/order',
+      );
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+const profile = me?.customer;
+---
+
+<Site title="Your account — Silverstreak">
+  <section class="shop-page account-content">
+    <p class="small-label">A seat at the table</p>
+    <h1>
+      {me && !token
+        ? 'Your account.'
+        : mode === 'signup'
+          ? 'Welcome home.'
+          : mode === 'forgot' || mode === 'reset'
+            ? 'A fresh start.'
+            : 'Welcome back.'}
+    </h1>
+    {error && (
+      <p class="shop-notice" role="alert">
+        {error}
+      </p>
+    )}
+    {notice && (
+      <p class="shop-notice" role="status">
+        {notice}
+      </p>
+    )}
+    {params.has('saved') && (
+      <p class="shop-notice" role="status">
+        Your delivery details have been saved.
+      </p>
+    )}
+    {me && !token ? (
+      <>
+        <p>Signed in as {me.email}.</p>
+        {invite && (
+          <form method="post">
+            <input type="hidden" name="intent" value="accept" />
+            <button class="button button-dark">Accept invitation</button>
+          </form>
+        )}
+        <h2>Where should we bring your groceries?</h2>
+        <form method="post" class="shop-form">
+          <input type="hidden" name="intent" value="profile" />
+          <label>
+            Name
+            <input name="name" required value={me.name} autocomplete="name" />
+          </label>
+          <label>
+            Phone
+            <input
+              name="phone"
+              type="tel"
+              required
+              value={profile?.phone || ''}
+              autocomplete="tel"
+            />
+          </label>
+          <label>
+            Street address
+            <input
+              name="street"
+              required
+              value={profile?.street || ''}
+              autocomplete="address-line1"
+            />
+          </label>
+          <label>
+            Apartment or unit
+            <input
+              name="unit"
+              value={profile?.unit || ''}
+              autocomplete="address-line2"
+            />
+          </label>
+          <label>
+            City
+            <input
+              name="city"
+              required
+              value={profile?.city || ''}
+              autocomplete="address-level2"
+            />
+          </label>
+          <div class="form-pair">
+            <label>
+              State
+              <input
+                name="region"
+                required
+                minlength="2"
+                maxlength="2"
+                value={profile?.region || 'CA'}
+                autocomplete="address-level1"
+              />
+            </label>
+            <label>
+              ZIP code
+              <input
+                name="postalCode"
+                required
+                pattern="[0-9]{5}"
+                value={profile?.postalCode || ''}
+                autocomplete="postal-code"
+              />
+            </label>
+          </div>
+          <label>
+            Delivery notes
+            <textarea name="deliveryNotes">{profile?.deliveryNotes || ''}</textarea>
+          </label>
+          <button class="button button-dark">Save delivery details</button>
+        </form>
+        <form method="post">
+          <input type="hidden" name="intent" value="signout" />
+          <button class="quiet-button">Sign out</button>
+        </form>
+      </>
+    ) : (
+      <>
+        {mode === 'signup' && (
+          <p>
+            Join Silverstreak with your invitation, or sign in if you already
+            have an account.
+          </p>
+        )}
+        <form method="post" class="shop-form">
+          <input type="hidden" name="intent" value={mode} />
+          {mode === 'signup' && (
+            <label>
+              Name
+              <input name="name" required autocomplete="name" />
+            </label>
+          )}
+          {mode !== 'reset' && (
+            <label>
+              Email
+              <input
+                name="email"
+                type="email"
+                required
+                value={invitation?.email || ''}
+                readonly={mode === 'signup'}
+                autocomplete="email"
+              />
+            </label>
+          )}
+          {mode !== 'forgot' && (
+            <label>
+              Password
+              <input
+                name="password"
+                type="password"
+                required
+                minlength={mode === 'signin' ? 1 : 12}
+                maxlength="128"
+                autocomplete={
+                  mode === 'signin' ? 'current-password' : 'new-password'
+                }
+              />
+            </label>
+          )}
+          <button
+            class="button button-dark"
+            disabled={mode === 'signup' && !invitation}
+          >
+            {mode === 'signup'
+              ? 'Create account'
+              : mode === 'forgot'
+                ? 'Send reset link'
+                : mode === 'reset'
+                  ? 'Reset password'
+                  : 'Sign in'}
+          </button>
+        </form>
+        <div class="account-links">
+          <a
+            href={
+              invite
+                ? '/account?mode=signin&invite=' + encodeURIComponent(invite)
+                : '/account'
+            }
+          >
+            Sign in
+          </a>
+          <a href="/account?mode=forgot">Forgot password?</a>
+        </div>
+      </>
+    )}
+  </section>
+</Site>

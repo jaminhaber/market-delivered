@@ -1,0 +1,279 @@
+---
+import { randomUUID } from 'node:crypto';
+import Site from '../layouts/Site.astro';
+import { marketApi, messageFor, money, dateLabel } from '../server/market';
+Astro.response.headers.set('Cache-Control', 'no-store');
+type Api = ReturnType<typeof marketApi>;
+let me: Awaited<ReturnType<Api['me']['query']>> = null;
+let runs: Awaited<ReturnType<Api['markets']['runs']['query']>> = [];
+let inventory: Awaited<ReturnType<Api['markets']['inventory']['query']>> = [];
+let error = '';
+let selectedId = Astro.url.searchParams.get('market') || '';
+let requestId: string = randomUUID();
+let reviewing = false;
+const quantities = new Map<string, number>();
+try {
+  const api = marketApi(Astro);
+  me = await api.me.query();
+  if (me) {
+    const form =
+      Astro.request.method === 'POST' ? await Astro.request.formData() : null;
+    if (form) {
+      selectedId = String(form.get('runId') || '');
+      requestId = String(form.get('requestId') || requestId);
+      for (const [key, value] of form.entries()) {
+        if (key.startsWith('quantity:'))
+          quantities.set(key.slice('quantity:'.length), Number(value));
+      }
+    }
+    runs = await api.markets.runs.query();
+    selectedId ||= runs[0]?.id || '';
+    if (selectedId && runs.some((run) => run.id === selectedId))
+      inventory = await api.markets.inventory.query({ id: selectedId });
+    if (form && form.get('intent') !== 'edit') {
+      const items = [...quantities]
+        .filter(([, quantity]) => quantity !== 0)
+        .map(([inventoryId, quantity]) => ({ inventoryId, quantity }));
+      if (!items.length)
+        throw new Error('Choose at least one item for your order.');
+      if (!runs.some((run) => run.id === selectedId))
+        throw new Error('Choose an available market date.');
+      for (const item of items) {
+        const stock = inventory.find((stock) => stock.id === item.inventoryId);
+        if (
+          !Number.isInteger(item.quantity) ||
+          item.quantity < 1 ||
+          item.quantity > 1000 ||
+          !stock ||
+          !stock.active ||
+          item.quantity > stock.availableQuantity
+        ) {
+          throw new Error(
+            'Some quantities are no longer available. Please review your selections.',
+          );
+        }
+      }
+      if (form.get('intent') === 'place') {
+        await api.orders.place.mutate({ runId: selectedId, requestId, items });
+        return Astro.redirect('/orders?placed=1', 303);
+      }
+      reviewing = true;
+    }
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+const selected = runs.find((run) => run.id === selectedId);
+const lines = inventory
+  .filter((item) => (quantities.get(item.id) || 0) > 0)
+  .map((item) => ({ ...item, selectedQuantity: quantities.get(item.id)! }));
+const subtotal = lines.reduce(
+  (sum, item) => sum + item.priceCents * item.selectedQuantity,
+  0,
+);
+const customer = me?.customer;
+const deliveryReady =
+  customer &&
+  customer.street.length >= 3 &&
+  customer.city &&
+  customer.region.length === 2 &&
+  customer.postalCode.length >= 5 &&
+  customer.phone.length >= 7;
+---
+
+<Site title="Order — Silverstreak">
+  <section class="shop-page">
+    <p class="small-label">Your next market morning</p>
+    <h1>
+      {reviewing ? (
+        <>
+          Review your <em>order.</em>
+        </>
+      ) : (
+        <>
+          Good things
+          <br />
+          <em>for your table.</em>
+        </>
+      )}
+    </h1>
+    {error && (
+      <p class="shop-notice" role="alert">
+        {error}
+      </p>
+    )}
+    {!me ? (
+      <div class="shop-empty">
+        <p>
+          Sign in to shop the market. New to Silverstreak? Use your invitation
+          to join.
+        </p>
+        <a class="button button-dark" href="/account">
+          Sign in <span aria-hidden="true">↗</span>
+        </a>
+      </div>
+    ) : !runs.length ? (
+      <div class="shop-empty">
+        <p>No market dates are open for orders right now. Check back soon.</p>
+        <a href="/orders" class="quiet-link">
+          View your orders
+        </a>
+      </div>
+    ) : reviewing && selected ? (
+      <form method="post" class="shop-form order-review">
+        <input type="hidden" name="runId" value={selectedId} />
+        <input type="hidden" name="requestId" value={requestId} />
+        <h2>{selected.marketName}</h2>
+        <p>
+          Delivery: {dateLabel(selected.deliveryStartAt, selected.timezone)} –{' '}
+          {dateLabel(selected.deliveryEndAt, selected.timezone)}.
+        </p>
+        <ul class="review-items">
+          {lines.map((item) => (
+            <li>
+              <input
+                type="hidden"
+                name={'quantity:' + item.id}
+                value={item.selectedQuantity}
+              />
+              <div>
+                <strong>{item.name}</strong>
+                <span>
+                  {item.source} · {item.selectedQuantity} ×{' '}
+                  {money(item.priceCents)} / {item.unit}
+                </span>
+              </div>
+              <span>{money(item.selectedQuantity * item.priceCents)}</span>
+            </li>
+          ))}
+        </ul>
+        <dl class="review-totals">
+          <div>
+            <dt>Produce subtotal</dt>
+            <dd>{money(subtotal)}</dd>
+          </div>
+          <div>
+            <dt>Delivery fee</dt>
+            <dd>{money(selected.deliveryFeeCents)}</dd>
+          </div>
+          <div class="review-total">
+            <dt>Estimated total</dt>
+            <dd>{money(subtotal + selected.deliveryFeeCents)}</dd>
+          </div>
+        </dl>
+        <section aria-labelledby="delivery-heading">
+          <h2 id="delivery-heading">Deliver to</h2>
+          {deliveryReady ? (
+            <>
+              <p>
+                {me.name}
+                <br />
+                {customer.street}
+                {customer.unit && `, ${customer.unit}`}
+                <br />
+                {customer.city}, {customer.region} {customer.postalCode}
+                <br />
+                {customer.phone}
+              </p>
+              {customer.deliveryNotes && (
+                <p>Delivery notes: {customer.deliveryNotes}</p>
+              )}
+            </>
+          ) : (
+            <p class="shop-notice" role="alert">
+              Save your delivery address and phone in your account before
+              placing your order.
+            </p>
+          )}
+          <a href="/account">Manage delivery details</a>
+        </section>
+        <p>
+          Pay cash on delivery. This is an estimate; your final total reflects
+          the items available at the market.
+        </p>
+        <div class="shop-links">
+          <button type="submit" name="intent" value="edit" class="quiet-button">
+            Edit order
+          </button>
+          <button
+            type="submit"
+            name="intent"
+            value="place"
+            class="button button-dark"
+            disabled={!deliveryReady}
+          >
+            Confirm and place order <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </form>
+    ) : (
+      <>
+        <form method="get" class="market-picker">
+          <label>
+            Choose your market date
+            <select name="market">
+              {runs.map((run) => (
+                <option value={run.id} selected={run.id === selectedId}>
+                  {run.marketName} — {dateLabel(run.startsAt, run.timezone)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button class="button button-dark">View market</button>
+        </form>
+        {selected && (
+          <p>
+            Delivery: {dateLabel(selected.deliveryStartAt, selected.timezone)}.
+            Delivery fee: {money(selected.deliveryFeeCents)}.
+          </p>
+        )}
+        {inventory.length ? (
+          <form method="post" class="shop-form">
+            <input type="hidden" name="runId" value={selectedId} />
+            <input type="hidden" name="requestId" value={requestId} />
+            <div class="catalog">
+              {inventory.map((item) => (
+                <article class="catalog-item">
+                  <div>
+                    <p class="small-label">{item.source}</p>
+                    <h2>{item.name}</h2>
+                    <p>{item.description}</p>
+                    <p>
+                      {money(item.priceCents)} / {item.unit}
+                    </p>
+                  </div>
+                  <label>
+                    Quantity for {item.name}
+                    <input
+                      type="number"
+                      name={'quantity:' + item.id}
+                      min="0"
+                      max={Math.min(1000, item.availableQuantity)}
+                      value={quantities.get(item.id) || 0}
+                      disabled={item.availableQuantity <= 0}
+                    />
+                    {item.availableQuantity <= 0 && <span>Sold out</span>}
+                  </label>
+                </article>
+              ))}
+            </div>
+            <p>
+              Pay cash on delivery. Your final total reflects the items
+              available at the market.{' '}
+              <a href="/account">Save your delivery address</a> before placing
+              your order.
+            </p>
+            <button class="button button-dark" name="intent" value="review">
+              Review order <span aria-hidden="true">↗</span>
+            </button>
+          </form>
+        ) : (
+          <p class="shop-empty">
+            The growers are getting this market ready. There are no items
+            available yet.
+          </p>
+        )}
+      </>
+    )}
+  </section>
+</Site>

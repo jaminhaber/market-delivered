@@ -1,0 +1,50 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "api": {
+      "root": ".",
+      "framework": "fastify",
+      "entrypoint": "src/index.mts",
+      "buildCommand": "npm run build",
+      "outputDirectory": ".",
+      "functions": {
+        "src/index.mts": {
+          "includeFiles": "../../packages/db/drizzle/**"
+        }
+      }
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "api"
+      }
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/internal/jobs/market-runs",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/internal/jobs/close-markets",
+      "schedule": "* * * * *"
+    }
+  ]
+}

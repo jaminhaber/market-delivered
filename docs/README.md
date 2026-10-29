@@ -2,25 +2,19 @@
 
 [Project README](../README.md)
 
-For a new checkout, start with [local setup](getting-started.md), then [development and checks](development.md). To operate a delivery business, start with [app workflows](workflows.md) and [app configuration](configuration.md). For a hosted installation, read [deployment](deployment.md), including the linked database and cron requirements.
+| Guide                              | Contents                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------ |
+| [Architecture](architecture.md)    | Applications, API boundaries, authentication, and data ownership         |
+| [Local setup](getting-started.md)  | One-command development, accounts, networks, and invitations             |
+| [Workflows](workflows.md)          | Silverstreak customers and API/MCP operations                            |
+| [Configuration](configuration.md)  | Secrets, business domains, email identity, and support/location settings |
+| [Networks and access](networks.md) | Onboarding businesses, roles, credentials, and isolation                 |
+| [MCP](mcp.md)                      | Separate platform and business tool catalogs                             |
+| [Jobs](jobs.md)                    | Scheduling, closing markets, and cron                                    |
+| [Development](development.md)      | Workspace layout, migrations, and checks                                 |
+| [Deployment](deployment.md)        | Three Vercel projects and environment settings                           |
 
-| Guide                                 | Contents                                                          |
-| ------------------------------------- | ----------------------------------------------------------------- |
-| [Local setup](getting-started.md)     | Installation, seed data, account bootstrap, and local reset       |
-| [App workflows](workflows.md)         | Customers, drivers, orders, inventory, and operations             |
-| [App configuration](configuration.md) | Branding, email identity, support contacts, and location defaults |
-| [Networks and access](networks.md)    | Ownership, administrator roles, and data isolation                |
-| [MCP administration](mcp.md)          | Connecting clients, tokens, tools, and configuration examples     |
-| [Schedules and jobs](jobs.md)         | Recurring markets, workers, cron, and market closing              |
-| [Development](development.md)         | Workspace layout, database migrations, and checks                 |
-| [Deployment](deployment.md)           | Hosting, environment variables, and launch checks                 |
-
-## Common tasks
-
-- [Grant network or global administrator access](networks.md#administrator-roles).
-- [Change branding and preview edits](configuration.md#branding).
-- [Set email credentials, sender identity, and reply-to](configuration.md#email-overrides).
-- [Configure support contacts and autocomplete search ZIP](configuration.md#support-location-defaults-and-email-identity).
-- [Connect an MCP client](mcp.md) and [edit configuration through MCP](mcp.md#configure-through-mcp).
-- [Run scheduling and closing jobs](jobs.md#local-development).
-- [Apply database migrations](development.md#schema-and-workspace) or [reset disposable local data](getting-started.md#resetting-local-data).
+There is no generic themed storefront, network switcher, or network configuration
+screen. Silverstreak owns its presentation and customer pages. The Market
+Delivered dashboard is a minimal global-admin application; network provisioning
+and configuration use the admin route namespace of the shared backend, platform MCP, or trusted CLI.

@@ -1,0 +1,18 @@
+---
+import Site from '../layouts/Site.astro';
+Astro.response.status = 404;
+---
+
+<Site title="Page not found — Silverstreak">
+  <section class="order-intro">
+    <p class="small-label">A wrong turn</p>
+    <h1>
+      Let’s head
+      <br />
+      <em>back home.</em>
+    </h1>
+    <a class="button button-dark" href="/">
+      Back to Silverstreak <span aria-hidden="true">↗</span>
+    </a>
+  </section>
+</Site>
