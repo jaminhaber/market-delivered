@@ -1067,6 +1067,10 @@ export function registerMcp(
           sessionIdGenerator: undefined,
           enableJsonResponse: true,
         });
+        // The transport writes directly to the raw response after hijacking.
+        for (const [name, value] of Object.entries(reply.getHeaders())) {
+          if (value !== undefined) reply.raw.setHeader(name, value);
+        }
         reply.hijack();
         reply.raw.on('close', () => {
           void transport.close();

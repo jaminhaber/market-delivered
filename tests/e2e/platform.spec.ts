@@ -1122,7 +1122,10 @@ test('one account-wide OAuth connection follows current permissions across netwo
     role: 'network_admin',
   });
   const grant = await connectAssistant(operator.email, password);
-  const client = await requests.newContext({ baseURL: adminOrigin });
+  const client = await requests.newContext({
+    baseURL: adminOrigin,
+    extraHTTPHeaders: { Origin: 'https://assistant.example.test' },
+  });
   const tool = async (name: string, args: Record<string, unknown> = {}) => {
     const response = await mcp(client, grant.token, 'tools/call', {
       name,
@@ -1132,6 +1135,15 @@ test('one account-wide OAuth connection follows current permissions across netwo
     return (await response.json()).result;
   };
   try {
+    const catalog = await mcp(client, grant.token, 'tools/list');
+    expect(catalog.status()).toBe(200);
+    expect(catalog.headers()['access-control-allow-origin']).toBe(
+      'https://assistant.example.test',
+    );
+    expect(catalog.headers()['access-control-expose-headers']).toBe(
+      'WWW-Authenticate',
+    );
+    expect(catalog.headers()['cache-control']).toBe('no-store');
     const list = await tool('list_networks');
     expect(
       JSON.parse(list.content[0].text).map((row: { id: string }) => row.id),
