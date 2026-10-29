@@ -18,15 +18,15 @@ global administration.
 
 `apps/admin` calls only the admin API. It provides global MCP credentials and cross-network statistics. It has no storefront,
 business operations, branding, or network configuration controls. `apps/silverstreak` is an Astro SSR
-application with real routes and its own presentation. The homepage uses the
-supplied photo. Server-rendered shopping/account pages call the business API;
+application with its own routes and presentation. Server-rendered shopping/account pages call the business API;
 browser API calls use a restricted same-origin proxy.
 
 ## Network context
 
-Every business HTTP request supplies `X-Network-Id` (UUID or slug). Missing IDs
-fail; there is no oldest-network fallback. Business MCP credentials carry an
-immutable network binding. Changing a header cannot change that binding.
+Business API and browser-auth requests supply `X-Network-Id` (UUID or slug).
+Missing selectors fail; there is no default network. Public MCP and OAuth URLs
+identify the network by its unique slug. Business MCP credentials carry an
+immutable UUID binding. Changing a URL or header cannot change that binding.
 
 Silverstreak reads its fixed ID from server configuration, never from a URL,
 cookie, form, or browser header. Another business can implement its own frontend
@@ -54,6 +54,16 @@ Silverstreak forwards host-only cookies through its own origin, so its users do
 not rely on cross-site cookies. Network selection does not grant membership.
 Global tokens work only on the platform MCP endpoint; business tokens work only
 on the public MCP endpoint.
+
+Business OAuth grants bind one user and client to one network and the canonical
+MCP URL on that network's registered website. The website proxies its network's
+OAuth discovery and exchanges to the shared backend, reusing its host-only
+sign-in cookie. Opaque OAuth tokens are hashed in the database and checked for
+expiry, revocation, consent, session validity, and current administrator access.
+The platform MCP shares this OAuth implementation with a separate `mcp:platform`
+scope, `platform` grant reference, admin-origin audience, and admin sign-in. It
+requires current global administrator access. Both MCP surfaces also accept
+their respective manual API tokens.
 
 ## Deployment
 

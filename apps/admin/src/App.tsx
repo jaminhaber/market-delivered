@@ -4,6 +4,7 @@ import { Sprout } from 'lucide-react';
 import { api } from './api';
 import { signOut } from './auth';
 import { AuthForm } from './Account';
+import { OAuthConsent } from './OAuthConsent';
 import { GlobalAdmin } from './GlobalAdmin';
 import { ErrorState, Loading, Panel } from './ui';
 
@@ -54,7 +55,7 @@ export function App() {
           <Loading />
         ) : me.isError ? (
           <ErrorState error={me.error} />
-        ) : accountLink || !me.data ? (
+        ) : accountLink || !me.data || location.pathname === '/oauth/login' ? (
           <div className="account-page">
             <AuthForm />
           </div>
@@ -67,6 +68,8 @@ export function App() {
               </p>
             </Panel>
           </div>
+        ) : location.pathname === '/oauth/authorize' ? (
+          <OAuthConsent />
         ) : (
           <GlobalAdmin />
         )}

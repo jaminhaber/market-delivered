@@ -9,7 +9,10 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@better-auth/cimd": "^1.7.14",
     "@better-auth/drizzle-adapter": "^1.7.12",
+    "@better-auth/mcp": "^1.7.14",
+    "@better-auth/oauth-provider": "^1.7.14",
     "@fastify/cors": "^11.0.0",
     "@market/db": "*",
     "@modelcontextprotocol/sdk": "^1.28.0",

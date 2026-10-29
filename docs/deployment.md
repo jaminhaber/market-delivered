@@ -27,8 +27,12 @@ certificate verification. API instance pools are lifecycle-managed on Vercel.
 The shared backend serves:
 
 - `/trpc`, `/api/auth/*`, `/mcp`: business routes, with explicit network context.
+- `/networks/<slug>/mcp`, `/networks/<slug>/auth/*`, and their OAuth discovery
+  routes: business OAuth connections, with network context bound to the URL.
 - `/admin/trpc`, `/admin/auth/*`, `/admin/mcp`: global administration, with its own
-  authentication, origin allowlist, cookies, and token requirements.
+  authentication, origin allowlist, cookies, OAuth grants, and optional API tokens.
+  The admin frontend also proxies `/.well-known/oauth-protected-resource/admin/mcp`
+  and `/.well-known/oauth-authorization-server/admin/auth`.
 - `/health`, `/ready`, and protected `/internal/jobs/*` endpoints.
 
 The admin routes are reachable on the API domain but require global authorization.
@@ -45,6 +49,8 @@ these frontend projects.
 The admin frontend's Vercel routing proxy forwards `/admin/trpc`, `/admin/auth/*`,
 and `/admin/mcp` to the configured backend. Vite provides the same forwarding in
 local development. Silverstreak uses its existing restricted proxy and SSR calls.
+Its dedicated MCP proxy exposes only its configured network's MCP, OAuth, and
+discovery routes on the registered website origin; see [MCP](mcp.md).
 Cookies remain host-only on each frontend; neither frontend relies on cross-site
 browser cookies. The proxies only forward requests; all API, authentication, MCP,
 and database logic runs in `apps/api`.
@@ -71,8 +77,9 @@ registering their domains and network context; they share the same backend.
    Use the returned production UUID for Silverstreak; local demo data is not
    automatically transferred.
 5. Configure and deploy both frontend projects. Sign into global administration,
-   issue a global MCP token, and use `/admin/mcp` to issue network-scoped business
-   tokens. Populate business catalogs and schedules through the business MCP.
+   connect an assistant with OAuth from **Global MCP access**, and use `/admin/mcp`
+   to manage networks. API tokens remain available for automation. Populate
+   business catalogs and schedules through the business MCP.
 6. Verify invitations, login/reset email links, order review/placement/cancellation,
    and statistics. Check foreign origins, missing selectors, and token swaps are
    rejected. Use a test network and staging email credentials first.

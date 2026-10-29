@@ -15,13 +15,21 @@ import {
   farms,
   produce,
   orders,
-  apiTokens,
+  oauthAccessToken,
+  oauthRefreshToken,
   driverProfiles,
 } from '@market/db';
 import { bootstrapGlobalAdmin } from '@market/core/bootstrap';
 import { operations } from '@market/core/operations';
+import { networkOperations } from '@market/core/networks';
 import { networkDatabase } from '@market/db';
 import { parseEnvironment } from '@market/core/config';
+import {
+  listProviders,
+  listInterfaces,
+  getSetupInstructions,
+  getTokenSaveCommand,
+} from '@market/mcp-instructions';
 
 const adminOrigin = 'http://localhost:5190';
 const businessOrigin = 'http://localhost:5180';
@@ -330,6 +338,38 @@ test('platform management and MCP are isolated from business tokens and tool cat
   }
 });
 
+test('only global administrators can update a network slug', async () => {
+  const [network] = await db
+    .insert(networks)
+    .values({ name: 'Slug permissions', slug: 'slug-' + randomUUID() })
+    .returning();
+  const local = networkOperations(
+    db,
+    { id: owner.id, globalAdmin: false, networkAdmin: true },
+    network!.id,
+    '',
+  );
+  const newSlug = 'renamed-' + randomUUID();
+  await expect(
+    local.update({ slug: newSlug, name: 'Unauthorized rename' }),
+  ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  expect(await local.get()).toMatchObject({
+    slug: network!.slug,
+    name: 'Slug permissions',
+  });
+  expect(await local.update({ name: 'Allowed rename' })).toMatchObject({
+    slug: network!.slug,
+    name: 'Allowed rename',
+  });
+  const updated = await mutation(admin, 'networks.update', {
+    networkId: network!.id,
+    settings: { slug: newSlug },
+  });
+  expect(updated.status(), await updated.text()).toBe(200);
+  expect((await updated.json()).result.data.slug).toBe(newSlug);
+  expect((await local.get()).slug).toBe(newSlug);
+});
+
 test('Silverstreak forwards a fixed context and keeps business cookies separate from partner and administrator sessions', async () => {
   const customer = await requests.newContext({ baseURL: silverOrigin });
   const customerEmail = `silver-${randomUUID()}@example.test`;
@@ -413,6 +453,11 @@ test('administrator dashboard has no retired network or business controls', asyn
   await expect(
     page.getByRole('heading', { name: 'Global administration' }),
   ).toBeVisible();
+  await expect(page.getByLabel('How do you use it?')).toHaveValue('desktop');
+  await expect(
+    page.getByRole('button', { name: 'Create global token', exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel('How would you like to connect?').selectOption('token');
   await expect(
     page.getByRole('button', { name: 'Create global token', exact: true }),
   ).toBeVisible();
@@ -430,6 +475,15 @@ test('administrator dashboard has no retired network or business controls', asyn
   await page
     .getByRole('button', { name: 'Create global token', exact: true })
     .click();
+  const setupProvider = page.getByLabel('Which assistant do you use?');
+  await expect(setupProvider).toHaveValue('chatgpt');
+  await expect(
+    page.getByRole('button', { name: 'Copy Codex setup', exact: true }),
+  ).toBeVisible();
+  await setupProvider.selectOption('claude');
+  await expect(
+    page.getByRole('button', { name: 'Copy Claude Code setup', exact: true }),
+  ).toBeVisible();
   const secret = page.getByLabel('Global token (shown once)', { exact: true });
   await expect(secret).toHaveValue(/^md_[a-f0-9]{64}$/);
   const credential = page
@@ -853,7 +907,7 @@ test('administrator frontend forwards only admin routes to its configured backen
   }
 });
 
-test('Silverstreak administrators manage business pages and scoped MCP credentials', async ({
+test('Silverstreak administrators manage business pages and OAuth setup', async ({
   page,
 }) => {
   await page.goto(silverOrigin + '/mcp');
@@ -1094,62 +1148,83 @@ test('Silverstreak administrators manage business pages and scoped MCP credentia
     await page.getByLabel('Include empty runs').uncheck();
     await expect(historyRows).toHaveCount(usefulCount);
     await tabs.getByRole('link', { name: 'MCP setup', exact: true }).click();
+    const providerChoice = page.getByLabel('How would you like to connect?');
+    const surfaceChoice = page.locator('#setup-surface');
+    const chatgptDesktop = page.getByRole('region', {
+      name: 'ChatGPT desktop setup',
+      exact: true,
+    });
+    const claudeDesktop = page.getByRole('region', {
+      name: 'Claude desktop setup',
+      exact: true,
+    });
+    await expect(providerChoice).toHaveValue('chatgpt');
+    await expect(surfaceChoice).toHaveValue('desktop');
+    await expect(chatgptDesktop).toBeVisible();
+    await expect(chatgptDesktop.getByLabel('Connection address')).toHaveValue(
+      silverOrigin + '/networks/silverstreak/mcp',
+    );
     await expect(
-      page.getByLabel('MCP server URL', { exact: true }),
-    ).toHaveValue('http://127.0.0.1:5180/mcp');
+      page.getByRole('button', { name: 'Copy Codex setup', exact: true }),
+    ).toBeHidden();
+    await providerChoice.selectOption('claude');
+    await expect(claudeDesktop).toBeVisible();
+    await expect(chatgptDesktop).toBeHidden();
+    await expect(
+      claudeDesktop.getByRole('button', { name: 'Copy address', exact: true }),
+    ).toBeVisible();
+    await surfaceChoice.selectOption('terminal');
+    await expect(claudeDesktop).toBeHidden();
+    await expect(
+      page.getByRole('button', { name: 'Copy Claude Code setup', exact: true }),
+    ).toBeVisible();
+    await providerChoice.selectOption('chatgpt');
+    await expect(
+      page.getByRole('button', { name: 'Copy Codex setup', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Copy Claude Code setup', exact: true }),
+    ).toBeHidden();
+    await surfaceChoice.selectOption('desktop');
+    await expect(chatgptDesktop).toBeVisible();
+    await expect(page.locator('[data-setup-panel]:visible')).toHaveCount(1);
+    await expect(
+      page.getByRole('button', { name: 'Create token', exact: true }),
+    ).toBeHidden();
     const forged = await customer.post('/mcp', {
       headers: { Origin: 'https://untrusted.example' },
       form: { intent: 'create', name: 'Forged token' },
     });
     expect(forged.status()).toBe(403);
+    await providerChoice.selectOption('token');
+    await expect(surfaceChoice).toHaveValue('chatgpt');
+    await expect(
+      page.getByRole('button', { name: 'Create token', exact: true }),
+    ).toBeVisible();
+    await expect(page.locator('[data-setup-panel]:visible')).toHaveCount(1);
     await page
       .getByLabel('Token name', { exact: true })
-      .fill('Desktop assistant');
-    const creating = page.waitForResponse(
-      (response) =>
-        response.url() === silverOrigin + '/mcp' &&
-        response.request().method() === 'POST',
-    );
+      .fill('Business automation');
     await page
       .getByRole('button', { name: 'Create token', exact: true })
       .click();
-    const created = await creating;
-    expect(created.status(), await created.text()).toBe(200);
-    const token = await page
-      .getByLabel('New token (shown once)', { exact: true })
-      .inputValue();
-    expect(token).toMatch(/^md_[a-f0-9]{64}$/);
-    const [stored] = await db
-      .select({ networkId: apiTokens.networkId })
-      .from(apiTokens)
-      .where(
-        eq(
-          apiTokens.tokenHash,
-          createHash('sha256').update(token).digest('hex'),
-        ),
-      );
-    expect(stored!.networkId).toBe(silverId);
-    const tools = await mcp(business, token, 'tools/list');
-    expect(tools.status()).toBe(200);
-    const names = (await tools.json()).result.tools.map(
-      (tool: { name: string }) => tool.name,
+    await expect(page.getByLabel('New token', { exact: true })).toHaveValue(
+      /^md_[a-f0-9]{64}$/,
     );
-    expect(names).toContain('list_markets');
-    expect(names).not.toContain('list_networks');
-    expect((await mcp(admin, token, 'tools/list')).status()).toBe(401);
-    await page.goto(silverOrigin + '/mcp');
+    await expect(providerChoice).toHaveValue('token');
+    await surfaceChoice.selectOption('claude');
     await expect(
-      page.getByLabel('New token (shown once)', { exact: true }),
-    ).toHaveCount(0);
-    expect(await page.content()).not.toContain(token);
-    page.once('dialog', (dialog) => void dialog.accept());
+      page.getByRole('button', { name: 'Copy Claude Code setup', exact: true }),
+    ).toBeVisible();
     await page
-      .getByRole('button', { name: 'Revoke Desktop assistant', exact: true })
+      .getByRole('button', { name: 'Revoke Business automation', exact: true })
       .click();
-    await expect(page.getByRole('status')).toHaveText(
-      'Token revoked. The assistant can no longer use it.',
-    );
-    expect((await mcp(business, token, 'tools/list')).status()).toBe(401);
+    await expect(
+      page.getByText('Business automation', { exact: false }),
+    ).toContainText('Revoked');
+    await providerChoice.selectOption('claude');
+    await expect(surfaceChoice).toHaveValue('desktop');
+    await expect(claudeDesktop).toBeVisible();
     await db
       .update(networkMemberships)
       .set({ role: 'member' })
@@ -1168,5 +1243,695 @@ test('Silverstreak administrators manage business pages and scoped MCP credentia
   } finally {
     await customer.dispose();
     await business.dispose();
+  }
+});
+
+test('business OAuth connects through sign-in and keeps grants, refresh, and revocation network scoped', async ({
+  page,
+}) => {
+  const path = '/networks/silverstreak';
+  const resource = silverOrigin + path + '/mcp';
+  const oauth = silverOrigin + path + '/auth';
+  const callback = silverOrigin + '/account';
+  const client = await requests.newContext();
+  const operator = await bootstrapGlobalAdmin(
+    db,
+    `oauth-${randomUUID()}@example.test`,
+    password,
+  );
+  await db.delete(userRoles).where(eq(userRoles.userId, operator.id));
+  await db.insert(networkMemberships).values({
+    networkId: silverId,
+    userId: operator.id,
+    role: 'network_admin',
+  });
+  try {
+    const challenge = await client.post(resource, { data: {} });
+    expect(challenge.status()).toBe(401);
+    const metadataUrl = challenge
+      .headers()
+      ['www-authenticate']!.match(/resource_metadata="([^"]+)"/)![1]!;
+    const metadata = await client.get(metadataUrl);
+    expect(metadata.status(), await metadata.text()).toBe(200);
+    expect(await metadata.json()).toMatchObject({
+      resource,
+      authorization_servers: [oauth],
+    });
+    const discovery = await client.get(
+      silverOrigin + '/.well-known/oauth-authorization-server' + path + '/auth',
+    );
+    expect(discovery.status(), await discovery.text()).toBe(200);
+    const endpoints = await discovery.json();
+    expect(endpoints.issuer).toBe(oauth);
+    expect(endpoints.scopes_supported).toEqual([
+      'mcp:business',
+      'offline_access',
+    ]);
+    expect(endpoints.dpop_signing_alg_values_supported).toEqual([]);
+    const dpopRegistration = await client.post(
+      endpoints.registration_endpoint,
+      {
+        data: {
+          client_name: 'Unsupported DPoP client',
+          redirect_uris: [callback],
+          token_endpoint_auth_method: 'none',
+          dpop_bound_access_tokens: true,
+        },
+      },
+    );
+    expect(dpopRegistration.status()).toBe(400);
+    const registration = await client.post(endpoints.registration_endpoint, {
+      data: {
+        client_name: 'Test assistant',
+        redirect_uris: [callback],
+        token_endpoint_auth_method: 'none',
+        application_type: 'native',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        scope: 'mcp:business offline_access',
+      },
+    });
+    expect(registration.status(), await registration.text()).toBe(201);
+    const { client_id: clientId, scope: clientScopes } =
+      await registration.json();
+    expect(clientScopes.split(' ')).toEqual(
+      expect.arrayContaining([
+        'mcp:business',
+        'mcp:platform',
+        'offline_access',
+      ]),
+    );
+    const verifier = randomBytes(32).toString('base64url');
+    const query = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: callback,
+      response_type: 'code',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+      code_challenge_method: 'S256',
+      scope: 'mcp:business offline_access',
+      resource,
+      state: randomUUID(),
+    });
+    const foreignScope = new URLSearchParams(query);
+    foreignScope.set('scope', 'mcp:platform offline_access');
+    expect(
+      (
+        await client.get(endpoints.authorization_endpoint + '?' + foreignScope)
+      ).status(),
+    ).toBe(400);
+    const dpopQuery = new URLSearchParams(query);
+    dpopQuery.set('dpop_jkt', 'A'.repeat(43));
+    const dpopAuthorization = await client.get(
+      endpoints.authorization_endpoint + '?' + dpopQuery,
+    );
+    expect(dpopAuthorization.status()).toBe(400);
+    expect(await dpopAuthorization.json()).toMatchObject({
+      error: 'invalid_request',
+    });
+    await page.goto(endpoints.authorization_endpoint + '?' + query);
+    await expect(page).toHaveURL(/\/account\?.*returnTo=/);
+    await page.getByLabel('Email', { exact: true }).fill(operator.email);
+    await page.getByLabel('Password', { exact: true }).fill(password);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Connect your assistant.' }),
+    ).toBeVisible();
+    await expect(
+      page.getByText('Test assistant', { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole('button', { name: 'Allow access to Silverstreak' })
+      .click();
+    await expect(page).toHaveURL(
+      (url) => url.pathname === '/account' && url.searchParams.has('code'),
+    );
+    const result = new URL(page.url());
+    expect(result.searchParams.get('state')).toBe(query.get('state'));
+    expect(result.searchParams.get('iss')).toBe(oauth);
+    const code = result.searchParams.get('code')!;
+    const exchange = {
+      grant_type: 'authorization_code',
+      code,
+      client_id: clientId,
+      redirect_uri: callback,
+      code_verifier: verifier,
+      resource,
+    };
+    const tokensResponse = await client.post(endpoints.token_endpoint, {
+      form: exchange,
+    });
+    expect(tokensResponse.status(), await tokensResponse.text()).toBe(200);
+    const tokens = await tokensResponse.json();
+    expect(tokens.access_token).toMatch(/^md_oauth_/);
+    expect(tokens.refresh_token).toMatch(/^md_refresh_/);
+    const [stored] = await db
+      .select({
+        networkId: oauthAccessToken.referenceId,
+        resources: oauthAccessToken.resources,
+      })
+      .from(oauthAccessToken)
+      .where(
+        eq(
+          oauthAccessToken.token,
+          createHash('sha256')
+            .update(tokens.access_token.slice('md_oauth_'.length))
+            .digest('hex'),
+        ),
+      );
+    expect(stored).toEqual({ networkId: silverId, resources: [resource] });
+    expect(
+      (
+        await client.post(silverOrigin + '/networks/partner/mcp', { data: {} })
+      ).status(),
+    ).toBe(403);
+    expect(
+      (
+        await client.get(
+          silverOrigin +
+            '/.well-known/oauth-protected-resource/networks/partner/mcp',
+        )
+      ).status(),
+    ).toBe(403);
+
+    const call = (url: string, token = tokens.access_token) =>
+      client.post(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json, text/event-stream',
+        },
+        data: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      });
+    expect((await call(resource)).status()).toBe(200);
+    expect(
+      (await call(businessOrigin + '/networks/partner/mcp')).status(),
+    ).toBe(401);
+    expect((await call(businessOrigin + '/mcp')).status()).toBe(401);
+    expect((await call(businessOrigin + '/admin/mcp')).status()).toBe(401);
+    const foreignRefresh = await client.post(
+      businessOrigin + '/networks/partner/auth/oauth2/token',
+      {
+        form: {
+          grant_type: 'refresh_token',
+          client_id: clientId,
+          refresh_token: tokens.refresh_token,
+        },
+      },
+    );
+    expect(foreignRefresh.status()).toBe(400);
+    const dpopRefresh = await client.post(endpoints.token_endpoint, {
+      headers: { DPoP: 'unsupported-proof' },
+      form: {
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        refresh_token: tokens.refresh_token,
+        resource,
+      },
+    });
+    expect(dpopRefresh.status()).toBe(400);
+    expect(await dpopRefresh.json()).toMatchObject({
+      error: 'invalid_request',
+    });
+    const refresh = await client.post(endpoints.token_endpoint, {
+      form: {
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        refresh_token: tokens.refresh_token,
+        resource,
+      },
+    });
+    expect(refresh.status(), await refresh.text()).toBe(200);
+    let renewed = await refresh.json();
+    expect((await call(resource, renewed.access_token)).status()).toBe(200);
+    const widened = await client.post(endpoints.token_endpoint, {
+      form: {
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        refresh_token: renewed.refresh_token,
+        resource: 'http://localhost:4333/networks/partner/mcp',
+      },
+    });
+    expect(widened.status()).toBe(400);
+    // A replay must revoke this client's replacement tokens, while preserving
+    // tokens belonging to the same user/client on another authorization surface.
+    const [refreshRow] = await db
+      .select()
+      .from(oauthRefreshToken)
+      .where(
+        eq(
+          oauthRefreshToken.token,
+          createHash('sha256')
+            .update(renewed.refresh_token.slice('md_refresh_'.length))
+            .digest('hex'),
+        ),
+      );
+    const foreignId = randomUUID();
+    await db.insert(oauthRefreshToken).values({
+      ...refreshRow!,
+      id: foreignId,
+      token: randomUUID(),
+      referenceId: partnerId,
+      resources: ['http://localhost:4333/networks/partner/mcp'],
+    });
+    const [accessRow] = await db
+      .select()
+      .from(oauthAccessToken)
+      .where(eq(oauthAccessToken.refreshId, refreshRow!.id));
+    const foreignAccessId = randomUUID();
+    await db.insert(oauthAccessToken).values({
+      ...accessRow!,
+      id: foreignAccessId,
+      token: randomUUID(),
+      referenceId: partnerId,
+      refreshId: foreignId,
+      resources: ['http://localhost:4333/networks/partner/mcp'],
+    });
+    const replayForm = {
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      refresh_token: tokens.refresh_token,
+      resource,
+    };
+    // An unauthenticated client cannot trigger family revocation.
+    expect(
+      (
+        await client.post(endpoints.token_endpoint, {
+          form: { ...replayForm, client_id: randomUUID() },
+        })
+      ).status(),
+    ).toBe(400);
+    expect((await call(resource, renewed.access_token)).status()).toBe(200);
+    expect(
+      (
+        await client.post(endpoints.token_endpoint, { form: replayForm })
+      ).status(),
+    ).toBe(400);
+    expect((await call(resource, renewed.access_token)).status()).toBe(401);
+    expect(
+      (
+        await client.post(endpoints.token_endpoint, {
+          form: { ...replayForm, refresh_token: renewed.refresh_token },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      await db
+        .select({ revoked: oauthRefreshToken.revoked })
+        .from(oauthRefreshToken)
+        .where(eq(oauthRefreshToken.id, foreignId)),
+    ).toEqual([{ revoked: null }]);
+    expect(
+      await db
+        .select({ revoked: oauthAccessToken.revoked })
+        .from(oauthAccessToken)
+        .where(eq(oauthAccessToken.id, foreignAccessId)),
+    ).toEqual([{ revoked: null }]);
+    await db
+      .delete(oauthAccessToken)
+      .where(eq(oauthAccessToken.id, foreignAccessId));
+    await db
+      .delete(oauthRefreshToken)
+      .where(eq(oauthRefreshToken.id, foreignId));
+
+    // Reconnect so permission changes and explicit disconnection still exercise
+    // a live token family below.
+    query.set('prompt', 'consent');
+    await page.goto(endpoints.authorization_endpoint + '?' + query);
+    await page
+      .getByRole('button', { name: 'Allow access to Silverstreak' })
+      .click();
+    await expect(page).toHaveURL(
+      (url) => url.pathname === '/account' && url.searchParams.has('code'),
+    );
+    const reconnected = await client.post(endpoints.token_endpoint, {
+      form: {
+        ...exchange,
+        code: new URL(page.url()).searchParams.get('code')!,
+      },
+    });
+    expect(reconnected.status(), await reconnected.text()).toBe(200);
+    renewed = await reconnected.json();
+    expect((await call(resource, renewed.access_token)).status()).toBe(200);
+    await db
+      .update(networkMemberships)
+      .set({ role: 'member' })
+      .where(
+        and(
+          eq(networkMemberships.networkId, silverId),
+          eq(networkMemberships.userId, operator.id),
+        ),
+      );
+    expect((await call(resource, renewed.access_token)).status()).toBe(401);
+    await db
+      .update(networkMemberships)
+      .set({ role: 'network_admin' })
+      .where(
+        and(
+          eq(networkMemberships.networkId, silverId),
+          eq(networkMemberships.userId, operator.id),
+        ),
+      );
+    // An additional consent prompt can be declined without issuing a code.
+    query.set('prompt', 'consent');
+    await page.goto(endpoints.authorization_endpoint + '?' + query);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page).toHaveURL(/error=access_denied/);
+    await page.goto(silverOrigin + '/mcp');
+    await page.getByText('Connected assistants (1)', { exact: true }).click();
+    await page
+      .getByRole('button', { name: 'Disconnect Test assistant', exact: true })
+      .click();
+    await expect(page.getByRole('status')).toHaveText(
+      'Assistant disconnected. Its access has been revoked.',
+    );
+    expect((await call(resource, renewed.access_token)).status()).toBe(401);
+    expect(
+      (
+        await client.post(endpoints.token_endpoint, {
+          form: {
+            grant_type: 'refresh_token',
+            client_id: clientId,
+            refresh_token: renewed.refresh_token,
+            resource,
+          },
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await client.post(endpoints.token_endpoint, { form: exchange })
+      ).status(),
+    ).toBe(400);
+    // A new code requires the matching PKCE secret, including after reconnecting.
+    await page.goto(endpoints.authorization_endpoint + '?' + query);
+    await page
+      .getByRole('button', { name: 'Allow access to Silverstreak' })
+      .click();
+    await expect(page).toHaveURL(
+      (url) => url.pathname === '/account' && url.searchParams.has('code'),
+    );
+    const anotherCode = new URL(page.url()).searchParams.get('code')!;
+    const wrongVerifier = await client.post(endpoints.token_endpoint, {
+      form: {
+        ...exchange,
+        code: anotherCode,
+        code_verifier: randomBytes(32).toString('base64url'),
+      },
+    });
+    expect(wrongVerifier.status()).toBe(400);
+  } finally {
+    await client.dispose();
+  }
+});
+
+test('shared MCP setup catalog offers OAuth providers and token assistant choices', () => {
+  const server = {
+    serverName: 'test-server',
+    displayName: 'Test Server',
+    serverUrl: 'https://example.test/mcp',
+  };
+  expect(listProviders().map((provider) => provider.id)).toEqual([
+    'chatgpt',
+    'claude',
+    'token',
+  ]);
+  expect(listInterfaces('token').map((item) => item.id)).toEqual([
+    'chatgpt',
+    'claude',
+  ]);
+  for (const provider of ['chatgpt', 'claude'] as const) {
+    expect(listInterfaces(provider).map((item) => item.id)).toEqual([
+      'desktop',
+      'terminal',
+    ]);
+    const desktop = getSetupInstructions({
+      ...server,
+      provider,
+      interface: 'desktop',
+    });
+    expect(desktop.auth).toBe('oauth');
+    if (provider === 'claude') {
+      const terminal = getSetupInstructions({
+        ...server,
+        provider,
+        interface: 'terminal',
+      });
+      expect(JSON.stringify(terminal.blocks)).not.toContain('claude mcp login');
+      expect(terminal.blocks).toContainEqual({
+        type: 'paragraph',
+        text: 'Start Claude Code, run /mcp, select test-server, and choose Authenticate. Sign in to Test Server and choose “Allow access to Test Server”.',
+      });
+    }
+    expect(desktop.blocks.filter((block) => block.type === 'copy')).toEqual([
+      {
+        type: 'copy',
+        label: 'Connection address',
+        copyLabel: 'Copy address',
+        value: server.serverUrl,
+        kind: 'address',
+      },
+    ]);
+    const token = getSetupInstructions({
+      ...server,
+      provider: 'token',
+      interface: provider,
+      tokenFile: '.config/test.headers',
+    });
+    expect(token.auth).toBe('token');
+    const commands = token.blocks
+      .filter((block) => block.type === 'copy')
+      .map((block) => block.value)
+      .join('\n');
+    expect(commands).toContain('--header-file "$HOME/.config/test.headers"');
+    expect(commands).toContain(
+      provider === 'chatgpt' ? 'codex mcp add' : 'claude mcp add',
+    );
+    expect(commands).not.toContain('mcp login');
+  }
+  expect(() =>
+    getSetupInstructions({
+      ...server,
+      provider: 'token',
+      interface: 'desktop',
+      tokenFile: '.config/test.headers',
+    } as unknown as Parameters<typeof getSetupInstructions>[0]),
+  ).toThrow('Unsupported MCP setup');
+  for (const tokenFile of ['../outside', '/absolute', '.config/$(whoami)']) {
+    expect(() =>
+      getTokenSaveCommand({ token: 'example-token', tokenFile }),
+    ).toThrow('relative path');
+  }
+  expect(() =>
+    getTokenSaveCommand({
+      token: 'first\nsecond',
+      tokenFile: '.config/test.headers',
+    }),
+  ).toThrow('single-line token');
+});
+
+test('global administrator OAuth signs in, scopes platform access, refreshes, and disconnects', async ({
+  page,
+}) => {
+  const resource = adminOrigin + '/admin/mcp';
+  const issuer = adminOrigin + '/admin/auth';
+  const client = await requests.newContext();
+  const operator = await bootstrapGlobalAdmin(
+    db,
+    `global-oauth-${randomUUID()}@example.test`,
+    password,
+  );
+  try {
+    const unauthenticated = await client.post(resource, { data: {} });
+    expect(unauthenticated.status()).toBe(401);
+    const metadataUrl = unauthenticated
+      .headers()
+      ['www-authenticate']!.match(/resource_metadata="([^"]+)"/)![1]!;
+    expect(await (await client.get(metadataUrl)).json()).toMatchObject({
+      resource,
+      authorization_servers: [issuer],
+      scopes_supported: ['mcp:platform'],
+    });
+    const discovery = await client.get(
+      adminOrigin + '/.well-known/oauth-authorization-server/admin/auth',
+    );
+    expect(discovery.status(), await discovery.text()).toBe(200);
+    const endpoints = await discovery.json();
+    expect(endpoints.issuer).toBe(issuer);
+    expect(endpoints.scopes_supported).toEqual([
+      'mcp:platform',
+      'offline_access',
+    ]);
+    expect(endpoints.dpop_signing_alg_values_supported).toEqual([]);
+    const callback = adminOrigin + '/';
+    const registration = await client.post(endpoints.registration_endpoint, {
+      data: {
+        client_name: 'Platform assistant',
+        redirect_uris: [callback],
+        token_endpoint_auth_method: 'none',
+        application_type: 'native',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        scope: 'mcp:platform offline_access',
+      },
+    });
+    expect(registration.status(), await registration.text()).toBe(201);
+    const { client_id: clientId, scope: clientScopes } =
+      await registration.json();
+    expect(clientScopes.split(' ')).toEqual(
+      expect.arrayContaining([
+        'mcp:business',
+        'mcp:platform',
+        'offline_access',
+      ]),
+    );
+    const verifier = randomBytes(32).toString('base64url');
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: callback,
+      response_type: 'code',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+      code_challenge_method: 'S256',
+      scope: 'mcp:platform offline_access',
+      resource,
+      state: randomUUID(),
+    });
+    const foreignScope = new URLSearchParams(params);
+    foreignScope.set('scope', 'mcp:business offline_access');
+    expect(
+      (
+        await client.get(endpoints.authorization_endpoint + '?' + foreignScope)
+      ).status(),
+    ).toBe(400);
+    await page.goto(endpoints.authorization_endpoint + '?' + params);
+    await expect(
+      page.getByRole('heading', { name: 'Administrator sign in' }),
+    ).toBeVisible();
+    await page.getByLabel('Email', { exact: true }).fill(operator.email);
+    await page.getByLabel('Password', { exact: true }).fill(password);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(
+      page.getByText('Platform assistant', { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole('button', { name: 'Allow global administrator access' })
+      .click();
+    await expect(page).toHaveURL(
+      (url) => url.pathname === '/' && url.searchParams.has('code'),
+    );
+    const result = new URL(page.url());
+    expect(result.searchParams.get('iss')).toBe(issuer);
+    expect(result.searchParams.get('state')).toBe(params.get('state'));
+    const exchange = {
+      grant_type: 'authorization_code',
+      code: result.searchParams.get('code')!,
+      client_id: clientId,
+      redirect_uri: callback,
+      code_verifier: verifier,
+      resource,
+    };
+    const response = await client.post(endpoints.token_endpoint, {
+      form: exchange,
+    });
+    expect(response.status(), await response.text()).toBe(200);
+    const tokens = await response.json();
+    const call = (url: string, token = tokens.access_token) =>
+      client.post(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json, text/event-stream',
+        },
+        data: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      });
+    const tools = await call(resource);
+    expect(tools.status(), await tools.text()).toBe(200);
+    expect(await tools.text()).toContain('list_networks');
+    expect(
+      (await call(silverOrigin + '/networks/silverstreak/mcp')).status(),
+    ).toBe(401);
+    const [stored] = await db
+      .select()
+      .from(oauthAccessToken)
+      .where(
+        eq(
+          oauthAccessToken.token,
+          createHash('sha256')
+            .update(tokens.access_token.slice('md_oauth_'.length))
+            .digest('hex'),
+        ),
+      );
+    expect(stored?.referenceId).toBe('platform');
+    expect(stored?.resources).toEqual([resource]);
+    const refreshForm = {
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      refresh_token: tokens.refresh_token,
+      resource,
+    };
+    expect(
+      (
+        await client.post(
+          silverOrigin + '/networks/silverstreak/auth/oauth2/token',
+          { form: refreshForm },
+        )
+      ).status(),
+    ).toBe(400);
+    const refresh = await client.post(endpoints.token_endpoint, {
+      form: refreshForm,
+    });
+    expect(refresh.status(), await refresh.text()).toBe(200);
+    const renewed = await refresh.json();
+    expect((await call(resource, renewed.access_token)).status()).toBe(200);
+    await db.delete(userRoles).where(eq(userRoles.userId, operator.id));
+    expect((await call(resource, renewed.access_token)).status()).toBe(401);
+    expect(
+      (
+        await client.post(endpoints.token_endpoint, {
+          form: { ...refreshForm, refresh_token: renewed.refresh_token },
+        })
+      ).ok(),
+    ).toBe(false);
+    await db
+      .insert(userRoles)
+      .values({ userId: operator.id, role: 'global_admin' });
+    expect((await call(resource, renewed.access_token)).status()).toBe(200);
+    await page.goto('/');
+    await page.getByText('Connected assistants (1)', { exact: true }).click();
+    await page
+      .getByRole('button', {
+        name: 'Disconnect Platform assistant',
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole('status').filter({ hasText: 'Assistant disconnected.' }),
+    ).toHaveText('Assistant disconnected. Its access has been revoked.');
+    expect((await call(resource, renewed.access_token)).status()).toBe(401);
+    expect(
+      (
+        await client.post(endpoints.token_endpoint, {
+          form: { ...refreshForm, refresh_token: renewed.refresh_token },
+        })
+      ).status(),
+    ).toBe(400);
+    params.set('prompt', 'consent');
+    await page.goto(endpoints.authorization_endpoint + '?' + params);
+    await page
+      .getByRole('button', { name: 'Allow global administrator access' })
+      .click();
+    await expect(page).toHaveURL(
+      (url) => url.pathname === '/' && url.searchParams.has('code'),
+    );
+    expect(
+      (
+        await client.post(endpoints.token_endpoint, {
+          form: {
+            ...exchange,
+            code: new URL(page.url()).searchParams.get('code')!,
+            code_verifier: randomBytes(32).toString('base64url'),
+          },
+        })
+      ).status(),
+    ).toBe(400);
+  } finally {
+    await client.dispose();
   }
 });

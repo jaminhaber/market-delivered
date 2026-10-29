@@ -1,7 +1,17 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { Copy } from 'lucide-react';
 
-const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+import {
+  getSetupInstructions,
+  getTokenSaveCommand,
+  listProviders,
+  listInterfaces,
+  type InstructionBlock,
+  type ProviderId,
+  type InterfaceId,
+  type AssistantId,
+  type OAuthInterfaceId,
+} from '@market/mcp-instructions';
 
 function mcpConnection() {
   const endpoint = new URL('/admin/mcp', window.location.origin).href;
@@ -10,72 +20,113 @@ function mcpConnection() {
   return { endpoint, connection, keyFile };
 }
 
-export function McpSetupInstructions() {
-  const [client, setClient] = useState<'codex' | 'claude'>('codex');
-  const commandId = useId();
-  const { endpoint, connection, keyFile } = mcpConnection();
-  const serverName = `dmarket-${connection}`;
-  const register =
-    client === 'codex'
-      ? `codex mcp add ${serverName}`
-      : `claude mcp add --scope user --transport stdio ${serverName}`;
-  const command = `chmod 600 "$HOME/${keyFile}" &&
-${register} -- npx -y mcp-remote ${shellQuote(endpoint)} --transport http-only --header-file "$HOME/${keyFile}"`;
-
+export function McpSetupInstructions({
+  provider,
+  onProviderChange,
+}: {
+  provider: ProviderId;
+  onProviderChange: (provider: ProviderId) => void;
+}) {
+  const [selectedInterface, setInterface] = useState<InterfaceId>('desktop');
+  const { endpoint, keyFile } = mcpConnection();
+  const interfaces = listInterfaces(provider);
+  const interfaceId = interfaces.some((item) => item.id === selectedInterface)
+    ? selectedInterface
+    : interfaces[0]!.id;
+  const providerOption = listProviders().find((item) => item.id === provider)!;
+  const setup = getSetupInstructions({
+    ...(provider !== 'token'
+      ? {
+          provider,
+          interface: interfaceId as OAuthInterfaceId,
+          approvalLabel: 'Allow global administrator access',
+        }
+      : {
+          provider: 'token' as const,
+          interface: interfaceId as AssistantId,
+          tokenFile: keyFile,
+        }),
+    serverName: 'dmarket-global',
+    displayName: 'Market Delivered',
+    serverUrl: endpoint,
+    examplePrompt: 'Use Market Delivered to list delivery networks.',
+  });
   return (
     <div className="mcp-setup">
-      <p>
-        Connect Market Delivered to your AI assistant on Mac or Linux. You’ll
-        need Node.js and your assistant’s command-line app installed.
-      </p>
-      <h3>1. Save your token</h3>
-      <p>
-        Create a global token below. Click <strong>Copy save command</strong>{' '}
-        beside your new token, then paste and run it in Terminal. It creates{' '}
-        <code className="mcp-endpoint">~/{keyFile}</code> with the complete
-        authorization line.
-      </p>
-      <h3>2. Run the setup command</h3>
-      <p>Choose your assistant, then copy and run the command in Terminal.</p>
-      <div className="mcp-client-tabs" role="group" aria-label="AI assistant">
-        {(
-          [
-            ['codex', 'Codex (OpenAI)'],
-            ['claude', 'Claude Code (Anthropic)'],
-          ] as const
-        ).map(([id, name]) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={client === id}
-            aria-controls={commandId}
-            onClick={() => setClient(id)}
+      <div className="mcp-choices">
+        <label>
+          How would you like to connect?
+          <select
+            value={provider}
+            onChange={(event) =>
+              onProviderChange(event.target.value as ProviderId)
+            }
           >
-            {name}
-          </button>
-        ))}
+            {listProviders().map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {interfaces.length > 1 && (
+          <label>
+            {providerOption.interfaceLabel}
+            <select
+              value={interfaceId}
+              onChange={(event) =>
+                setInterface(event.target.value as InterfaceId)
+              }
+            >
+              {interfaces.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
-      <div id={commandId}>
-        <CopyableText key={client} label="Command" text={command} />
-      </div>
-      <p>
-        Restart your assistant, then ask: “Use Market Delivered to list delivery
-        networks.”
-      </p>
-      <details>
-        <summary>Access and connection notes</summary>
-        <p>
-          This token grants global administrator access. Keep the file private.
-          Tokens expire after 90 days; replace the token in the file when
-          needed.
-        </p>
-        <p>
-          These commands use mcp-remote to read credentials from your file.
-          ChatGPT in a browser cannot use this local setup.
-        </p>
-      </details>
+      <InstructionBlocks blocks={setup.blocks} />
+      {provider === 'token' && (
+        <details>
+          <summary>Access and connection notes</summary>
+          <p>
+            This token grants global administrator access. Keep the file
+            private. Tokens expire after 90 days; replace the token in the file
+            when needed.
+          </p>
+        </details>
+      )}
     </div>
   );
+}
+
+function InstructionBlocks({
+  blocks,
+}: {
+  blocks: readonly InstructionBlock[];
+}) {
+  return blocks.map((block, index) => {
+    if (block.type === 'heading') return <h3 key={index}>{block.text}</h3>;
+    if (block.type === 'paragraph') return <p key={index}>{block.text}</p>;
+    if (block.type === 'steps')
+      return (
+        <ol key={index}>
+          {block.items.map((item, itemIndex) => (
+            <li key={itemIndex}>{item}</li>
+          ))}
+        </ol>
+      );
+    return (
+      <CopyableText
+        key={index + block.value}
+        label={block.label}
+        text={block.value}
+        copyLabel={block.copyLabel}
+      />
+    );
+  });
 }
 
 export function NewMcpToken({
@@ -88,7 +139,7 @@ export function NewMcpToken({
   const [status, setStatus] = useState('');
   const [copyFailed, setCopyFailed] = useState(false);
   const { keyFile } = mcpConnection();
-  const saveCommand = `(umask 077 && mkdir -p "$HOME/.config/market-delivered" && chmod 700 "$HOME/.config/market-delivered" && touch "$HOME/${keyFile}" && chmod 600 "$HOME/${keyFile}" && printf '%s\\n' ${shellQuote(`Authorization: Bearer ${token}`)} > "$HOME/${keyFile}")`;
+  const saveCommand = getTokenSaveCommand({ token, tokenFile: keyFile });
   return (
     <div className="form-stack mcp-new-token">
       <label>
@@ -151,7 +202,15 @@ export function NewMcpToken({
   );
 }
 
-function CopyableText({ text, label }: { text: string; label: string }) {
+function CopyableText({
+  text,
+  label,
+  copyLabel,
+}: {
+  text: string;
+  label: string;
+  copyLabel: string;
+}) {
   const [status, setStatus] = useState('');
   return (
     <div className="mcp-copy-block">
@@ -169,7 +228,7 @@ function CopyableText({ text, label }: { text: string; label: string }) {
             }
           }}
         >
-          <Copy size={14} aria-hidden="true" /> Copy {label.toLowerCase()}
+          <Copy size={14} aria-hidden="true" /> {copyLabel}
         </button>
       </div>
       <pre className="mcp-config">

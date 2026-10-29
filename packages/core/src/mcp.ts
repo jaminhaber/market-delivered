@@ -1,4 +1,10 @@
-import { permissions, findNetwork, networkEmailConfig } from './networks.js';
+import { verifyMcpOAuthToken } from './oauth-token.js';
+import {
+  permissions,
+  findNetwork,
+  resolveNetwork,
+  networkEmailConfig,
+} from './networks.js';
 import type { ServerConfig } from './server.js';
 import { TRPCError } from '@trpc/server';
 import { createEmailSender } from './email.js';
@@ -16,7 +22,7 @@ import {
   or,
   getTableColumns,
 } from 'drizzle-orm';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, RouteOptions } from 'fastify';
 import * as s from '@market/db';
 import { z } from 'zod';
 import {
@@ -31,6 +37,7 @@ import {
   scheduleInventoryInput,
 } from './operations.js';
 import { webOrigins } from './origins.js';
+import { MCP_SCOPE, networkMcpPath, OAUTH_ACCESS_PREFIX } from './oauth.js';
 import { orderDetails, recentJobRuns } from './queries.js';
 export function registerMcp(
   app: FastifyInstance,
@@ -40,29 +47,68 @@ export function registerMcp(
     'secret' | 'production' | 'resendKey' | 'emailFrom'
   >,
 ) {
-  app.route({
+  const route: RouteOptions = {
     method: ['GET', 'POST', 'DELETE'],
     url: '/mcp',
     async handler(request, reply) {
       reply.header('Cache-Control', 'no-store');
       const origin = request.headers.origin;
+      const selected = (request.params as { network?: string }).network;
+      const boundNetwork = selected
+        ? await resolveNetwork(rootDb, selected)
+        : null;
+      const networkHeader = request.headers['x-network-id'];
+      if (
+        boundNetwork &&
+        networkHeader &&
+        networkHeader !== boundNetwork.id &&
+        networkHeader !== boundNetwork.slug
+      )
+        return reply
+          .code(403)
+          .send({ error: 'Network does not match the URL.' });
+      const resource = boundNetwork?.frontendOrigin
+        ? new URL(
+            networkMcpPath(boundNetwork.slug),
+            boundNetwork.frontendOrigin,
+          ).href
+        : null;
+      const challenge = resource
+        ? `Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource' + networkMcpPath(boundNetwork!.slug), resource).href}", scope="${MCP_SCOPE} offline_access"`
+        : 'Bearer realm="market-operations"';
       const header = request.headers.authorization;
       if (!header?.startsWith('Bearer '))
-        return reply
-          .header('WWW-Authenticate', 'Bearer realm="market-operations"')
-          .code(401)
-          .send({ error: 'A market operations token is required' });
-      const hash = createHash('sha256').update(header.slice(7)).digest('hex');
-      const [token] = await rootDb
-        .select()
-        .from(s.apiTokens)
-        .where(
-          and(
-            eq(s.apiTokens.tokenHash, hash),
-            isNull(s.apiTokens.revokedAt),
-            gt(s.apiTokens.expiresAt, new Date()),
-          ),
-        );
+        return reply.header('WWW-Authenticate', challenge).code(401).send({
+          error: 'Connect your assistant to this business to continue.',
+        });
+      const rawToken = header.slice(7);
+      let token: { userId: string; networkId: string | null } | undefined;
+      if (rawToken.startsWith(OAUTH_ACCESS_PREFIX)) {
+        if (boundNetwork && resource) {
+          const userId = await verifyMcpOAuthToken(rootDb, rawToken, {
+            referenceId: boundNetwork.id,
+            resource,
+            scope: MCP_SCOPE,
+          });
+          if (userId) token = { userId, networkId: boundNetwork.id };
+        }
+      } else {
+        const [manual] = await rootDb
+          .select()
+          .from(s.apiTokens)
+          .where(
+            and(
+              eq(
+                s.apiTokens.tokenHash,
+                createHash('sha256').update(rawToken).digest('hex'),
+              ),
+              isNull(s.apiTokens.revokedAt),
+              gt(s.apiTokens.expiresAt, new Date()),
+            ),
+          );
+        if (manual && (!boundNetwork || manual.networkId === boundNetwork.id))
+          token = manual;
+      }
       const access = token
         ? await permissions(rootDb, token.userId, token.networkId ?? undefined)
         : null;
@@ -75,6 +121,7 @@ export function registerMcp(
           : access.globalAdmin)
       )
         return reply
+          .header('WWW-Authenticate', challenge)
           .code(401)
           .send({ error: 'Invalid, expired, or revoked token' });
       if (request.method !== 'POST')
@@ -878,5 +925,7 @@ export function registerMcp(
         await transport.handleRequest(request.raw, reply.raw, request.body);
       }
     },
-  });
+  };
+  app.route(route);
+  app.route({ ...route, url: '/networks/:network/mcp' });
 }

@@ -94,3 +94,28 @@ export const dateLabel = (date: string, timezone: string) =>
     timeStyle: 'short',
     timeZone: timezone,
   }).format(new Date(date));
+
+export async function oauthRequest(
+  context: Context,
+  path: string,
+  body?: Record<string, unknown>,
+) {
+  const config = marketConfig();
+  const url = new URL(
+    `/networks/${encodeURIComponent(config.networkId)}/auth${path}`,
+    config.origin,
+  );
+  return fetch(url, {
+    method: body ? 'POST' : 'GET',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      origin: context.url.origin,
+      cookie: context.request.headers.get('cookie') || '',
+      'x-network-id': config.networkId,
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    redirect: 'manual',
+    signal: AbortSignal.timeout(15_000),
+  });
+}

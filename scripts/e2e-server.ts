@@ -17,7 +17,7 @@ if (!new URL(databaseURL).pathname.endsWith('_e2e'))
 const { db, pool } = createDatabase(databaseURL);
 try {
   // Only the explicitly isolated *_e2e database is reset. Exercise the complete
-  // migration history on every run, including the network upgrade.
+  // migration history on every run.
   await db.transaction(async (tx) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('market-delivered:migrations'))`,

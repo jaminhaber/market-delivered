@@ -28,6 +28,11 @@ export function createHttpServer(db: Database) {
     },
     bodyLimit: 1024 * 1024,
   });
+  server.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_request, body, done) => done(null, body),
+  );
   server.setErrorHandler((error, _request, reply) => {
     const problem =
       error instanceof Error ? error : new Error('Request failed');
@@ -79,12 +84,20 @@ export async function forwardAuth(
   baseURL: string,
   request: FastifyRequest,
   reply: FastifyReply,
+  path = request.url,
 ) {
   const response = await auth.handler(
-    new Request(new URL(request.url, baseURL), {
+    new Request(new URL(path, baseURL), {
       method: request.method,
       headers: fromNodeHeaders(request.headers),
-      ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+      ...(request.body
+        ? {
+            body:
+              typeof request.body === 'string'
+                ? request.body
+                : JSON.stringify(request.body),
+          }
+        : {}),
     }),
   );
   reply.code(response.status);
@@ -93,5 +106,16 @@ export async function forwardAuth(
   });
   const cookies = response.headers.getSetCookie();
   if (cookies.length) reply.header('set-cookie', cookies);
-  return reply.send(await response.text());
+  const body = await response.text();
+  if (
+    request.method === 'GET' &&
+    path.split('?')[0]?.endsWith('/oauth2/authorize') &&
+    response.ok &&
+    response.headers.get('content-type')?.includes('application/json')
+  ) {
+    const result = JSON.parse(body);
+    if (result.redirect === true && typeof result.url === 'string')
+      return reply.code(303).redirect(result.url);
+  }
+  return reply.send(body);
 }

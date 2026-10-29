@@ -13,6 +13,8 @@ import {
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { webOrigins } from './origins.js';
+import * as oauthSchema from '@market/db';
+import { oauthPlugins, scopeOAuthAdapter, type McpOAuth } from './oauth.js';
 import {
   account,
   rateLimit,
@@ -33,6 +35,7 @@ export type AuthConfig = {
   production?: boolean;
   surface?: 'business' | 'admin';
   cookiePrefix?: string;
+  oauth?: McpOAuth;
 };
 export function createAuth(db: Database, config: AuthConfig) {
   const sendEmail = createEmailSender(config);
@@ -50,12 +53,35 @@ export function createAuth(db: Database, config: AuthConfig) {
     baseURL: config.baseURL,
     basePath: config.basePath,
     trustedOrigins: webOrigins(config),
-    database: drizzleAdapter(db, {
-      provider: 'pg',
-      schema: { user, session, account, verification, rateLimit },
-    }),
+    plugins: config.oauth ? oauthPlugins(db, config.oauth) : [],
+    database: scopeOAuthAdapter(
+      drizzleAdapter(db, {
+        provider: 'pg',
+        schema: {
+          ...oauthSchema,
+          user,
+          session,
+          account,
+          verification,
+          rateLimit,
+        },
+      }),
+      config.oauth,
+    ),
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (
+          config.oauth &&
+          ctx.path.startsWith('/oauth2/') &&
+          (ctx.headers?.has('dpop') ||
+            ctx.query?.dpop_jkt !== undefined ||
+            ctx.body?.dpop_jkt !== undefined ||
+            ctx.body?.dpop_bound_access_tokens === true)
+        )
+          throw new APIError('BAD_REQUEST', {
+            error: 'invalid_request',
+            error_description: 'DPoP is not supported. Use Bearer tokens.',
+          });
         if (ctx.path !== '/reset-password') return;
         const token = ctx.body?.token || ctx.query?.token;
         if (typeof token !== 'string') return;

@@ -14,8 +14,8 @@ if (
   );
 const { db, pool } = createDatabase(databaseURL);
 try {
-  // Reset schema objects as well as data: replacement baselines cannot run over
-  // existing enums/tables, and the old migration ledger must not survive.
+  // Reset schema objects and the migration ledger together so migrations can
+  // recreate the database from scratch.
   await db.transaction(async (tx) => {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('market-delivered:migrations'))`,

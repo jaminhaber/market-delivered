@@ -1,0 +1,93 @@
+---
+import Site from '../../layouts/Site.astro';
+import { marketApi, oauthRequest, messageFor } from '../../server/market';
+Astro.response.headers.set('Cache-Control', 'no-store');
+Astro.response.headers.set('Referrer-Policy', 'same-origin');
+let error = '';
+let name = '';
+let ready = false;
+const oauthQuery = Astro.url.search.slice(1);
+try {
+  const me = await marketApi(Astro).me.query();
+  if (!me)
+    return Astro.redirect(
+      '/account?returnTo=' +
+        encodeURIComponent(Astro.url.pathname + Astro.url.search),
+      303,
+    );
+  if (!me.admin) {
+    Astro.response.status = 403;
+    throw new Error(
+      'Business administrator access is required to connect an assistant.',
+    );
+  }
+  if (Astro.request.method === 'POST') {
+    if (Astro.request.headers.get('origin') !== Astro.url.origin)
+      return new Response('Origin not allowed', { status: 403 });
+    const form = await Astro.request.formData();
+    const intent = form.get('intent');
+    if (intent !== 'allow' && intent !== 'deny')
+      throw new Error('Choose Allow or Cancel.');
+    const response = await oauthRequest(Astro, '/oauth2/consent', {
+      accept: intent === 'allow',
+      oauth_query: oauthQuery,
+    });
+    const result = await response.json();
+    if (!response.ok || typeof result.url !== 'string')
+      throw new Error(
+        'This connection request has expired or is invalid. Start again from your assistant.',
+      );
+    return Astro.redirect(result.url, 303);
+  }
+  const query = new URLSearchParams({
+    client_id: Astro.url.searchParams.get('client_id') || '',
+    oauth_query: oauthQuery,
+  });
+  const response = await oauthRequest(Astro, '/oauth2/public-client?' + query);
+  if (!response.ok)
+    throw new Error(
+      'This connection request has expired or is invalid. Start again from your assistant.',
+    );
+  const client = await response.json();
+  name = client.client_name || client.name || 'Your AI assistant';
+  ready = true;
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<Site title="Connect your assistant — Silverstreak">
+  <section class="shop-page account-content">
+    <p class="small-label">Silverstreak administration</p>
+    <h1>Connect your assistant.</h1>
+    {error && (
+      <p class="shop-notice" role="alert">
+        {error}
+      </p>
+    )}
+    {ready && (
+      <>
+        <p>
+          <strong>{name}</strong> is asking for business administrator access to
+          Silverstreak.
+        </p>
+        <p>
+          This allows it to view and change the catalog, markets, inventory,
+          orders, and fulfillment, and run business jobs.
+        </p>
+        <p>
+          This connection can access Silverstreak only. You can disconnect it at
+          any time from Admin.
+        </p>
+        <form method="post" class="shop-form">
+          <button class="button button-dark" name="intent" value="allow">
+            Allow access to Silverstreak
+          </button>
+          <button class="quiet-button" name="intent" value="deny">
+            Cancel
+          </button>
+        </form>
+      </>
+    )}
+  </section>
+</Site>

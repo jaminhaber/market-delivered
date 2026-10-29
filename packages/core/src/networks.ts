@@ -72,6 +72,9 @@ export const locationInput = z.object({
 });
 export const networkSettingsInput = z
   .object({
+    slug: networkInput.shape.slug
+      .optional()
+      .describe('Network slug. Only global administrators can change it.'),
     frontendOrigin: networkInput.shape.frontendOrigin,
     supportEmail: optionalEmail.describe(
       'Public customer support email; null clears it.',
@@ -386,6 +389,7 @@ export function networkOperations(
     },
     async update(input: z.infer<typeof networkSettingsInput>) {
       const networkId = admin();
+      if (input.slug !== undefined) global();
       const { autocompleteBias: bias, ...locationDefaults } =
         input.location || {};
       let location: Partial<s.NetworkLocation> | null | undefined =
@@ -415,6 +419,7 @@ export function networkOperations(
         const [n] = await tx
           .update(s.networks)
           .set({
+            ...(input.slug !== undefined ? { slug: input.slug } : {}),
             ...(input.frontendOrigin !== undefined
               ? { frontendOrigin: input.frontendOrigin }
               : {}),

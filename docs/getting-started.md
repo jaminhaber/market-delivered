@@ -14,10 +14,9 @@ Silverstreak on 4321, and a local job worker. Schema migrations run before
 startup. Ctrl+C stops the processes. Use `npm run dev:apps` to omit the worker
 and migration step, or `npm run dev:silverstreak` for just the website.
 
-`setup:local` preserves existing secrets. If migrating an older `.env`, the new
-admin configuration is `ADMIN_ORIGIN` plus an independent `ADMIN_AUTH_SECRET`.
-`WEB_ORIGIN` and `BETTER_AUTH_URL` are no longer server configuration. Business
-origins are registered per network.
+`setup:local` preserves existing secrets. Configure the administrator frontend
+with `ADMIN_ORIGIN` and an independent `ADMIN_AUTH_SECRET`. Business origins are
+registered per network. See `.env.example` for the backend's environment variables.
 
 ## First administrator and business
 

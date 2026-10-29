@@ -5,6 +5,9 @@ import { next, rewrite } from '@vercel/functions';
 export default function proxy(request: Request) {
   const url = new URL(request.url);
   if (
+    !/^\/\.well-known\/oauth-(?:protected-resource\/admin\/mcp|authorization-server\/admin\/auth)$/.test(
+      url.pathname,
+    ) &&
     !/^\/admin\/(trpc(?:\/[^/]+)?|auth\/[^/]+(?:\/[^/]+)*|mcp)$/.test(
       url.pathname,
     )

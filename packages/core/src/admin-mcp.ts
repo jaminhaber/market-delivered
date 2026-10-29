@@ -1,3 +1,9 @@
+import { verifyMcpOAuthToken } from './oauth-token.js';
+import {
+  ADMIN_MCP_SCOPE,
+  ADMIN_OAUTH_REFERENCE,
+  OAUTH_ACCESS_PREFIX,
+} from './oauth.js';
 import { createHash } from 'node:crypto';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import * as s from '@market/db';
@@ -18,36 +24,50 @@ import { operations } from './operations.js';
 export function registerAdminMcp(
   server: FastifyInstance,
   db: s.Database,
-  config: { networkSecret: string; production?: boolean },
+  config: { networkSecret: string; production?: boolean; baseURL: string },
 ) {
   server.route({
     method: ['GET', 'POST', 'DELETE'],
     url: '/mcp',
     async handler(request, reply) {
       reply.header('Cache-Control', 'no-store');
+      const resource = new URL('/admin/mcp', config.baseURL).href;
+      const challenge = `Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/admin/mcp', config.baseURL).href}", scope="${ADMIN_MCP_SCOPE} offline_access"`;
       const header = request.headers.authorization;
       if (!header?.startsWith('Bearer '))
         return reply
-          .header('WWW-Authenticate', 'Bearer realm="market-platform"')
+          .header('WWW-Authenticate', challenge)
           .code(401)
           .send({ error: 'A global administrator token is required' });
-      const [token] = await db
-        .select()
-        .from(s.apiTokens)
-        .where(
-          and(
-            eq(
-              s.apiTokens.tokenHash,
-              createHash('sha256').update(header.slice(7)).digest('hex'),
-            ),
-            isNull(s.apiTokens.networkId),
-            isNull(s.apiTokens.revokedAt),
-            gt(s.apiTokens.expiresAt, new Date()),
-          ),
-        );
+      const rawToken = header.slice(7);
+      const userId = rawToken.startsWith(OAUTH_ACCESS_PREFIX)
+        ? await verifyMcpOAuthToken(db, rawToken, {
+            referenceId: ADMIN_OAUTH_REFERENCE,
+            resource,
+            scope: ADMIN_MCP_SCOPE,
+          })
+        : null;
+      const [manual] = rawToken.startsWith(OAUTH_ACCESS_PREFIX)
+        ? []
+        : await db
+            .select()
+            .from(s.apiTokens)
+            .where(
+              and(
+                eq(
+                  s.apiTokens.tokenHash,
+                  createHash('sha256').update(header.slice(7)).digest('hex'),
+                ),
+                isNull(s.apiTokens.networkId),
+                isNull(s.apiTokens.revokedAt),
+                gt(s.apiTokens.expiresAt, new Date()),
+              ),
+            );
+      const token = userId ? { userId } : manual;
       if (!token || !(await permissions(db, token.userId)).globalAdmin)
         return reply
           .code(401)
+          .header('WWW-Authenticate', challenge)
           .send({ error: 'Invalid, expired, or revoked global token' });
       if (request.method !== 'POST')
         return reply
@@ -145,7 +165,7 @@ export function registerAdminMcp(
         'update_network',
         {
           description:
-            'Update an explicit network’s frontend origin, email identity, support, and location settings. Email keys are encrypted and write-only.',
+            'Update an explicit network’s slug, frontend origin, email identity, support, and location settings. Only global administrators can change the slug. Email keys are encrypted and write-only.',
           inputSchema: z.object({
             ...id.shape,
             settings: networkSettingsInput,

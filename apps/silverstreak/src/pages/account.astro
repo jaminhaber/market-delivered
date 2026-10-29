@@ -8,6 +8,18 @@ import {
 } from '../server/market';
 Astro.response.headers.set('Cache-Control', 'no-store');
 const params = Astro.url.searchParams;
+// Only OAuth onboarding can supply a post-login destination.
+const requestedReturn = params.get('returnTo') || '';
+const returnTo =
+  requestedReturn.startsWith('/mcp/authorize?') &&
+  !requestedReturn.includes('\\') &&
+  !/[\r\n]/.test(requestedReturn)
+    ? requestedReturn
+    : '';
+const reauthenticate = !!returnTo && params.has('reauth');
+const continuation = returnTo
+  ? '&returnTo=' + encodeURIComponent(returnTo)
+  : '';
 const invite = params.get('invite') || '';
 const token = params.get('token') || '';
 const mode = token
@@ -63,7 +75,13 @@ try {
       intent === 'signout'
         ? {}
         : intent === 'forgot'
-          ? { email: field('email'), redirectTo: Astro.url.origin + '/account' }
+          ? {
+              email: field('email'),
+              redirectTo:
+                Astro.url.origin +
+                '/account' +
+                (returnTo ? '?returnTo=' + encodeURIComponent(returnTo) : ''),
+            }
           : intent === 'reset'
             ? { newPassword: field('password'), token }
             : {
@@ -93,7 +111,7 @@ try {
           ? '/'
           : invite && intent === 'signin'
             ? '/account?invite=' + encodeURIComponent(invite)
-            : '/order',
+            : returnTo || '/order',
       );
   }
 } catch (problem) {
@@ -129,7 +147,7 @@ const profile = me?.customer;
         Your delivery details have been saved.
       </p>
     )}
-    {me && !token ? (
+    {me && !token && !reauthenticate ? (
       <>
         <p>Signed in as {me.email}.</p>
         {invite && (
@@ -277,12 +295,12 @@ const profile = me?.customer;
             href={
               invite
                 ? '/account?mode=signin&invite=' + encodeURIComponent(invite)
-                : '/account'
+                : '/account' + (returnTo ? '?reauth=1' + continuation : '')
             }
           >
             Sign in
           </a>
-          <a href="/account?mode=forgot">Forgot password?</a>
+          <a href={'/account?mode=forgot' + continuation}>Forgot password?</a>
         </div>
       </>
     )}

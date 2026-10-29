@@ -488,8 +488,7 @@ h1 em {
   max-width: 650px;
   width: 100%;
 }
-.mcp-page > section,
-.mcp-token-result {
+.mcp-page > section {
   margin: 32px 0;
 }
 .mcp-page label {
@@ -515,19 +514,41 @@ h1 em {
   display: block;
   font-size: 14px;
 }
-.mcp-token-result {
-  border: 1px solid var(--ink);
-  padding: 20px;
+.mcp-setup {
+  max-width: 720px;
 }
-.mcp-token-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
+.mcp-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   gap: 20px;
-  padding: 20px 0;
+  margin: 28px 0;
+}
+.mcp-choices select {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+.mcp-setup ol {
+  padding-left: 24px;
+}
+.mcp-setup li {
+  margin: 14px 0;
+  line-height: 1.6;
+}
+.mcp-command > button {
+  margin: 16px 0 8px;
+}
+.mcp-connections {
+  margin-top: 32px;
+  padding-top: 20px;
   border-top: 1px solid var(--ink);
-  overflow-wrap: anywhere;
+}
+.mcp-connections summary {
+  cursor: pointer;
 }
 .business-admin-tabs {
   display: flex;

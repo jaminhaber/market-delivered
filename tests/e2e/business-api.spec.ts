@@ -1957,7 +1957,7 @@ test('fresh migrations create no network or implicit business ownership and rema
           'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
         )
       ).rows[0]!.count,
-    ).toBe(6);
+    ).toBe(7);
     const { createServer } = await import('../../packages/core/src/server.js');
     const { bootstrapGlobalAdmin } =
       await import('../../packages/core/src/bootstrap.js');

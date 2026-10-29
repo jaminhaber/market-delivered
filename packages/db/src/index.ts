@@ -4,7 +4,8 @@ import * as catalog from './schema.js';
 import * as auth from './auth-schema.js';
 import * as market from './market-schema.js';
 import * as network from './network-schema.js';
-const schema = { ...catalog, ...auth, ...market, ...network };
+import * as oauth from './oauth-schema.js';
+const schema = { ...catalog, ...auth, ...market, ...network, ...oauth };
 
 export function createDatabase(connectionString: string) {
   const pool = new pg.Pool({
@@ -21,6 +22,7 @@ export { runMigrations } from './migrations.js';
 export * from './schema.js';
 
 export * from './auth-schema.js';
+export * from './oauth-schema.js';
 export * from './market-schema.js';
 export { ensureUpcomingRuns } from './recurrence.js';
 export {

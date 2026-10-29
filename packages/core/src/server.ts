@@ -13,6 +13,7 @@ import { registerMcp } from './mcp.js';
 import { webOrigins } from './origins.js';
 import { createHttpServer, forwardAuth } from './http.js';
 import { registerAdminRoutes } from './admin-routes.js';
+import { registerNetworkOAuth } from './oauth-routes.js';
 
 export type ServerConfig = {
   secret: string;
@@ -29,6 +30,7 @@ export async function createServer(db: Database, config: ServerConfig) {
   await server.register(async (server) => {
     await server.register(cors, {
       credentials: true,
+      exposedHeaders: ['WWW-Authenticate'],
       origin(origin, callback) {
         if (!origin) return callback(null, false);
         void db
@@ -132,19 +134,25 @@ export async function createServer(db: Database, config: ServerConfig) {
       },
     });
     registerMcp(server, db, config);
+    registerNetworkOAuth(server, db, config);
     registerJobs(server, db, config.cronSecret);
   });
   await server.register(
     async (admin) => {
-      await registerAdminRoutes(admin, db, {
-        secret: config.adminSecret,
-        networkSecret: config.secret,
-        baseURL: config.adminOrigin,
-        webOrigin: config.adminOrigin,
-        production: config.production,
-        resendKey: config.resendKey,
-        emailFrom: config.emailFrom,
-      });
+      await registerAdminRoutes(
+        admin,
+        db,
+        {
+          secret: config.adminSecret,
+          networkSecret: config.secret,
+          baseURL: config.adminOrigin,
+          webOrigin: config.adminOrigin,
+          production: config.production,
+          resendKey: config.resendKey,
+          emailFrom: config.emailFrom,
+        },
+        server,
+      );
     },
     { prefix: '/admin' },
   );

@@ -5,23 +5,59 @@
   "outputDirectory": "dist",
   "proxy": {
     "entrypoint": "proxy.ts",
-    "matcher": ["/admin/trpc/:path*", "/admin/auth/:path*", "/admin/mcp"]
+    "matcher": [
+      "/admin/trpc/:path*",
+      "/admin/auth/:path*",
+      "/admin/mcp",
+      "/.well-known/oauth-protected-resource/admin/mcp",
+      "/.well-known/oauth-authorization-server/admin/auth"
+    ]
   },
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
         {
           "key": "Referrer-Policy",
           "value": "strict-origin-when-cross-origin"
         },
-        { "key": "X-Frame-Options", "value": "DENY" }
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        }
       ]
     },
     {
       "source": "/admin/:path*",
-      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    },
+    {
+      "source": "/oauth/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "same-origin"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/oauth/:path*",
+      "destination": "/index.html"
     }
   ]
 }

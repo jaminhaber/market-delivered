@@ -4,6 +4,9 @@ import { Panel, useAction } from './ui';
 
 export function AuthForm() {
   const params = new URLSearchParams(location.search);
+  const returnTo = location.pathname.startsWith('/oauth/')
+    ? '/oauth/authorize' + location.search
+    : '/';
   const token = params.get('token') || '';
   const [mode, setMode] = useState<'signin' | 'forgot' | 'reset'>(
     token ? 'reset' : 'signin',
@@ -35,7 +38,7 @@ export function AuthForm() {
             response.error.message || 'Unable to complete the request.',
           );
         }
-        if (mode !== 'forgot') location.replace('/');
+        if (mode !== 'forgot') location.replace(returnTo);
       },
       mode === 'forgot'
         ? 'If that account exists, a reset link has been sent.'
@@ -44,7 +47,7 @@ export function AuthForm() {
   }
 
   function backToSignIn() {
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', returnTo);
     setPassword('');
     setNeedsVerification(false);
     setMode('signin');
@@ -129,7 +132,7 @@ export function AuthForm() {
               void act(async () => {
                 const response = await authClient.sendVerificationEmail({
                   email,
-                  callbackURL: location.origin + '/',
+                  callbackURL: location.origin + returnTo,
                 });
                 if (response.error) throw new Error(response.error.message);
               }, 'If your account needs verification, a new link has been sent.')
