@@ -36,6 +36,13 @@
       "when": 1793222403744,
       "tag": "0004_frontend_origins",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793249439888,
+      "tag": "0005_job_impacts",
+      "breakpoints": true
     }
   ]
 }

@@ -22,6 +22,7 @@ import {
   networks,
   farms,
   withNetwork,
+  networkDatabase,
   networkWhere,
   user,
   marketRuns,
@@ -31,6 +32,7 @@ import {
   apiTokens,
   marketSchedules,
   runMarketRunsJob,
+  runCloseMarketsJob,
   backgroundJobRuns,
   MARKET_RUNS_JOB,
   markets,
@@ -393,11 +395,28 @@ test('immutable order snapshots, invalid inventory, cross-run items, and run can
   expect(address!.city).toBe('Ojai');
   expect(address!.postalCode).toBe('93023');
   await admin.rpc.admin.cancelRun.mutate({ id: run.id });
-  expect(await customer.rpc.orders.mine.query()).toEqual([]);
   expect(
-    (await customer.rpc.orders.mine.query({ includeCancelled: true }))[0]!
-      .status,
+    await customer.rpc.orders.mine.query({ statuses: ['placed'] }),
+  ).toEqual([]);
+  expect(
+    (await customer.rpc.orders.mine.query({ statuses: [] }))[0]!.status,
   ).toBe('cancelled');
+  expect(
+    await admin.rpc.admin.orders.query({
+      runId: run.id,
+      limit: 1,
+      statuses: ['placed'],
+    }),
+  ).toEqual([]);
+  expect(
+    (
+      await admin.rpc.admin.orders.query({
+        runId: run.id,
+        statuses: [],
+        limit: 1,
+      })
+    )[0]!.id,
+  ).toBe(order.id);
   expect(
     (await db.select().from(inventory).where(eq(inventory.id, stock.id)))[0]!
       .reservedQuantity,
@@ -1373,9 +1392,15 @@ test('failed scheduling jobs roll back changes, retain failure history, and can 
       },
     );
     expect(response.status()).toBe(500);
-    const history = await admin.rpc.admin.jobs.query();
+    const history = await admin.rpc.admin.jobs.query({ includeEmpty: true });
     expect(history[0]!.status).toBe('failed');
     expect(history[0]!.runsCreated).toBe(0);
+    expect(history[0]!.impactedEntities).toBe(0);
+    expect(
+      (await admin.rpc.admin.jobs.query()).some(
+        (job) => job.id === history[0]!.id,
+      ),
+    ).toBe(false);
     expect(history[0]!.error).toContain('generation failed');
   } finally {
     await db
@@ -1932,7 +1957,7 @@ test('fresh migrations create no network or implicit business ownership and rema
           'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
         )
       ).rows[0]!.count,
-    ).toBe(5);
+    ).toBe(6);
     const { createServer } = await import('../../packages/core/src/server.js');
     const { bootstrapGlobalAdmin } =
       await import('../../packages/core/src/bootstrap.js');
@@ -2833,4 +2858,194 @@ test('combined purchases validate ownership, current allocations and saved versi
   );
   for (const person of [customer, driver, rival, admin])
     await person.request.dispose();
+});
+
+test('jobs count changed entities and filter empty history before the limit', async () => {
+  const admin = await actor('admin');
+  const networkId = randomUUID();
+  await db.insert(networks).values({
+    id: networkId,
+    name: 'Job impact test',
+    slug: 'job-impact-' + networkId,
+    frontendOrigin: baseURL,
+  });
+  await db
+    .insert(networkMemberships)
+    .values({ networkId, userId: admin.id, role: 'network_admin' });
+  const scoped = networkDatabase(db, networkId, admin.id);
+  const rpc = api(admin.request, networkId);
+  try {
+    const login = await admin.request.post('/api/auth/sign-in/email', {
+      headers: { Origin: baseURL, 'x-network-id': networkId },
+      data: { email: admin.email, password },
+    });
+    expect(login.status(), await login.text()).toBe(200);
+    const market = await rpc.admin.createMarket.mutate({
+      name: 'Impact market',
+      address: '100 Main Street, Ojai, CA',
+      timezone: 'America/Los_Angeles',
+    });
+    await rpc.admin.saveSchedule.mutate({
+      marketId: market.id,
+      weekday: 0,
+      opensMinute: 540,
+      closesMinute: 780,
+    });
+    const created = await runMarketRunsJob(
+      scoped,
+      'cli',
+      new Date('2031-01-01T12:00:00Z'),
+    );
+    expect(created).toMatchObject({ runsCreated: 4, impactedEntities: 4 });
+    const repeated = await runMarketRunsJob(
+      scoped,
+      'cli',
+      new Date('2031-01-01T12:00:00Z'),
+    );
+    expect(repeated).toMatchObject({
+      schedulesProcessed: 1,
+      runsCreated: 0,
+      impactedEntities: 0,
+    });
+    const [record] = await db
+      .select()
+      .from(backgroundJobRuns)
+      .where(eq(backgroundJobRuns.id, created.id!));
+    expect(record!.impactedEntities).toBe(4);
+    await db.insert(backgroundJobRuns).values(
+      Array.from({ length: 21 }, (_, i) => ({
+        networkId,
+        name: 'Empty history test',
+        source: 'cli',
+        status: 'succeeded',
+        startedAt: new Date(Date.now() + i),
+        runsCreated: 100,
+      })),
+    );
+    // Older/backfilled rows default to zero even if their legacy counters are nonzero.
+    const useful = await rpc.admin.jobs.query();
+    expect(useful.map((job) => job.id)).toEqual([created.id]);
+    const all = await rpc.admin.jobs.query({ includeEmpty: true });
+    expect(all).toHaveLength(20);
+    expect(all.every((job) => job.impactedEntities === 0)).toBe(true);
+    const run = (await rpc.admin.runs.query())[0]!.run;
+    const farm = await rpc.admin.createFarm.mutate({
+      name: 'Impact grower',
+      location: 'Ojai',
+    });
+    const produce = await rpc.admin.createProduce.mutate({
+      name: 'Impact carrots',
+      farmId: farm.id,
+      category: 'Vegetables',
+      unit: 'bunch',
+      description: '',
+    });
+    const stock = await rpc.admin.saveInventory.mutate({
+      runId: run.id,
+      produceId: produce.id,
+      priceCents: 350,
+      quantity: 10,
+      repeat: false,
+    });
+    await rpc.profile.save.mutate({
+      name: 'Impact shopper',
+      phone: '8055550123',
+      street: '10 Main Street',
+      unit: '',
+      city: 'Ojai',
+      region: 'CA',
+      postalCode: '93023',
+      deliveryNotes: '',
+    });
+    const activeOrder = await rpc.orders.place.mutate({
+      runId: run.id,
+      requestId: randomUUID(),
+      items: [{ inventoryId: stock.id, quantity: 1 }],
+    });
+    const cancelledOrder = await rpc.orders.place.mutate({
+      runId: run.id,
+      requestId: randomUUID(),
+      items: [{ inventoryId: stock.id, quantity: 1 }],
+    });
+    await rpc.orders.cancel.mutate({ id: cancelledOrder.id });
+    expect(await rpc.orders.list.query()).toHaveLength(2);
+    expect(await rpc.orders.list.query({ statuses: [] })).toHaveLength(2);
+    expect(await rpc.orders.list.query({ statuses: ['delivered'] })).toEqual(
+      [],
+    );
+    expect(
+      (
+        await rpc.orders.list.query({
+          scope: 'network',
+          statuses: ['placed'],
+          limit: 1,
+        })
+      )[0]!.id,
+    ).toBe(activeOrder.id);
+    expect(await rpc.orders.mine.query()).toHaveLength(2);
+    expect(await rpc.orders.mine.query({ statuses: [] })).toHaveLength(2);
+    expect(
+      await rpc.orders.mine.query({ statuses: ['placed', 'cancelled'] }),
+    ).toHaveLength(2);
+    expect(await rpc.orders.mine.query({ statuses: ['delivered'] })).toEqual(
+      [],
+    );
+    expect(
+      (await rpc.admin.orders.query({ runId: run.id, limit: 1 }))[0]!.id,
+    ).toBe(cancelledOrder.id);
+    expect(
+      await rpc.admin.orders.query({
+        runId: run.id,
+        statuses: ['placed', 'cancelled'],
+      }),
+    ).toHaveLength(2);
+    expect(
+      (
+        await rpc.admin.orders.query({
+          runId: run.id,
+          limit: 1,
+          statuses: ['placed'],
+        })
+      )[0]!.id,
+    ).toBe(activeOrder.id);
+    expect(
+      (
+        await rpc.admin.orders.query({
+          runId: run.id,
+          limit: 1,
+          statuses: [],
+        })
+      )[0]!.id,
+    ).toBe(cancelledOrder.id);
+    const closed = await runCloseMarketsJob(
+      scoped,
+      'cli',
+      new Date('2031-02-01T12:00:00Z'),
+    );
+    expect(closed).toMatchObject({
+      runsClosed: 4,
+      ordersCancelled: 1,
+      impactedEntities: 5,
+    });
+    const [closing] = await db
+      .select()
+      .from(backgroundJobRuns)
+      .where(eq(backgroundJobRuns.id, closed.id!));
+    expect(closing!.impactedEntities).toBe(5);
+    const closedAgain = await runCloseMarketsJob(
+      scoped,
+      'cli',
+      new Date('2031-02-01T12:00:00Z'),
+    );
+    expect(closedAgain).toMatchObject({
+      runsClosed: 0,
+      ordersCancelled: 0,
+      impactedEntities: 0,
+    });
+  } finally {
+    await db
+      .update(networks)
+      .set({ deletedAt: new Date() })
+      .where(eq(networks.id, networkId));
+  }
 });

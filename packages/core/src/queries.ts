@@ -1,6 +1,20 @@
-import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import * as s from '@market/db';
 import { ensure, type Actor } from './operations.js';
+export function recentJobRuns(db: s.Database, includeEmpty = false) {
+  return db
+    .select()
+    .from(s.backgroundJobRuns)
+    .where(
+      s.networkWhere(
+        db,
+        s.backgroundJobRuns,
+        includeEmpty ? undefined : gt(s.backgroundJobRuns.impactedEntities, 0),
+      ),
+    )
+    .orderBy(desc(s.backgroundJobRuns.startedAt), desc(s.backgroundJobRuns.id))
+    .limit(20);
+}
 export async function orderDetails(
   db: s.Database,
   rows: (typeof s.orders.$inferSelect)[],
@@ -142,10 +156,15 @@ export async function runDetail(db: s.Database, id: string, actor: Actor) {
     .orderBy(asc(s.orders.createdAt), asc(s.orders.id));
   return { run, orders: await orderDetails(db, rows) };
 }
-export async function myOrders(
+export async function listOrders(
   db: s.Database,
-  userId: string,
-  includeCancelled = false,
+  input: {
+    customerId?: string;
+    runId?: string;
+    statuses?: (typeof s.orderStatus.enumValues)[number][];
+    limit?: number;
+    offset?: number;
+  },
 ) {
   return orderDetails(
     db,
@@ -157,14 +176,27 @@ export async function myOrders(
           db,
           s.orders,
           and(
-            eq(s.orders.customerId, userId),
-            includeCancelled ? undefined : ne(s.orders.status, 'cancelled'),
+            input.customerId
+              ? eq(s.orders.customerId, input.customerId)
+              : undefined,
+            input.runId ? eq(s.orders.runId, input.runId) : undefined,
+            input.statuses?.length
+              ? inArray(s.orders.status, input.statuses)
+              : undefined,
           ),
         ),
       )
-      .orderBy(desc(s.orders.createdAt))
-      .limit(100),
+      .orderBy(desc(s.orders.createdAt), desc(s.orders.id))
+      .limit(input.limit ?? 100)
+      .offset(input.offset ?? 0),
   );
+}
+export function myOrders(
+  db: s.Database,
+  userId: string,
+  statuses: (typeof s.orderStatus.enumValues)[number][] = [],
+) {
+  return listOrders(db, { customerId: userId, statuses });
 }
 export type DriverView = 'available' | 'mine';
 type ReadDb = Pick<s.Database, 'select'>;

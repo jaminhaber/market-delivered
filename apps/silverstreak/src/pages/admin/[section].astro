@@ -1,0 +1,982 @@
+---
+import OrderCard from '../../components/OrderCard.astro';
+import Site from '../../layouts/Site.astro';
+import AdminNav from '../../components/AdminNav.astro';
+import AdminFarmForm from '../../components/AdminFarmForm.astro';
+import AdminProduceForm from '../../components/AdminProduceForm.astro';
+import { nonCancelledOrderStatuses } from '../../server/order-statuses';
+import { marketApi, messageFor, money, dateLabel } from '../../server/market';
+
+const pages: Record<string, string> = {
+  orders: 'Orders',
+  drivers: 'Drivers',
+  users: 'Users',
+  farms: 'Farms',
+  produce: 'Produce',
+  markets: 'Markets',
+  inventory: 'Inventory',
+  jobs: 'Jobs',
+};
+const section = Astro.params.section || '';
+const title = pages[section];
+if (!title) return new Response('Not found', { status: 404 });
+Astro.response.headers.set('Cache-Control', 'no-store');
+Astro.response.headers.set('Referrer-Policy', 'same-origin');
+type Api = ReturnType<typeof marketApi>;
+let authorized = false;
+let error = '';
+let invitationUrl = '';
+let farms: Awaited<ReturnType<Api['farms']['list']['query']>> = [];
+let produce: Awaited<ReturnType<Api['produce']['list']['query']>> = [];
+let drivers: Awaited<ReturnType<Api['admin']['drivers']['query']>> = [];
+let users: Awaited<ReturnType<Api['admin']['users']['query']>> = [];
+let invites: Awaited<ReturnType<Api['admin']['invitations']['query']>> = [];
+let markets: Awaited<ReturnType<Api['markets']['list']['query']>> = [];
+let schedules: Awaited<ReturnType<Api['admin']['schedules']['query']>> = [];
+let runs: Awaited<ReturnType<Api['admin']['runs']['query']>> = [];
+let stock: Awaited<ReturnType<Api['admin']['inventory']['query']>> = [];
+let orders: Awaited<ReturnType<Api['orders']['list']['query']>> = [];
+let jobs: Awaited<ReturnType<Api['admin']['jobs']['query']>> = [];
+let runId = Astro.url.searchParams.get('run') || '';
+const includeEmpty = Astro.url.searchParams.get('includeEmpty') === '1';
+const includeCancelled = Astro.url.searchParams.get('includeCancelled') === '1';
+const rawOffset = Number(Astro.url.searchParams.get('offset') || 0);
+const offset =
+  Number.isInteger(rawOffset) && rawOffset >= 0 && rawOffset <= 1_000_000
+    ? rawOffset
+    : 0;
+const days = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+const time = (minutes: number) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+const day = (value: string) =>
+  new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeZone: 'America/Los_Angeles',
+  }).format(new Date(value));
+try {
+  const api = marketApi(Astro);
+  const me = await api.me.query();
+  if (!me) return Astro.redirect('/account', 303);
+  if (!me.admin) {
+    Astro.response.status = 403;
+    error = 'Administrator access is required.';
+  } else {
+    authorized = true;
+    if (Astro.request.method === 'POST') {
+      if (Astro.request.headers.get('origin') !== Astro.url.origin)
+        return new Response('Origin not allowed', {
+          status: 403,
+          headers: { 'Cache-Control': 'no-store' },
+        });
+      const form = await Astro.request.formData();
+      const field = (name: string) => String(form.get(name) || '');
+      const numeric = (name: string) => Number(field(name));
+      const cents = (name: string) => Math.round(numeric(name) * 100);
+      const minute = (name: string) => {
+        const [hours, minutes] = field(name).split(':').map(Number);
+        return hours! * 60 + minutes!;
+      };
+      const intent = field('intent');
+      const allowed: Record<string, string[]> = {
+        drivers: ['review'],
+        users: ['invite', 'revoke-invite'],
+        farms: ['farm'],
+        produce: ['produce'],
+        markets: ['market', 'schedule'],
+        inventory: ['inventory'],
+        orders: ['assign'],
+        jobs: ['run-jobs'],
+      };
+      if (!allowed[section]?.includes(intent))
+        throw new Error('Choose a valid action.');
+      if (intent === 'review') {
+        const status = field('status');
+        if (status !== 'approved' && status !== 'suspended')
+          throw new Error('Choose a valid driver status.');
+        await api.admin.reviewDriver.mutate({
+          userId: field('userId'),
+          status,
+        });
+      } else if (intent === 'farm') {
+        const input = {
+          name: field('name'),
+          location: field('location'),
+          contactPhone: field('contactPhone'),
+          notes: field('notes'),
+          active: form.has('active'),
+        };
+        if (field('id'))
+          await api.admin.updateFarm.mutate({ id: field('id'), ...input });
+        else await api.admin.createFarm.mutate(input);
+      } else if (intent === 'produce') {
+        const input = {
+          name: field('name'),
+          description: field('description'),
+          farmId: field('farmId'),
+          category: field('category') as 'Vegetables' | 'Fruit' | 'Herbs',
+          unit: field('unit') as 'lb' | 'bunch' | 'basket' | 'each',
+        };
+        if (field('id'))
+          await api.admin.updateProduce.mutate({ id: field('id'), ...input });
+        else await api.admin.createProduce.mutate(input);
+      } else if (intent === 'invite') {
+        const result = await api.admin.invite.mutate({
+          email: field('email'),
+          role: field('role') as 'customer' | 'driver' | 'network_admin',
+        });
+        const url = new URL('/account', Astro.url.origin);
+        url.searchParams.set('invite', result.token);
+        invitationUrl = url.href;
+      } else if (intent === 'revoke-invite') {
+        await api.admin.revokeInvite.mutate({ id: field('id') });
+      } else if (intent === 'market') {
+        await api.admin.createMarket.mutate({
+          name: field('name'),
+          address: field('address'),
+          timezone: field('timezone'),
+        });
+      } else if (intent === 'schedule') {
+        await api.admin.saveSchedule.mutate({
+          marketId: field('marketId'),
+          weekday: numeric('weekday'),
+          opensMinute: minute('opens'),
+          closesMinute: minute('closes'),
+          cutoffMinutes: numeric('cutoffHours') * 60,
+          deliveryDurationMinutes: numeric('deliveryHours') * 60,
+          deliveryFeeCents: cents('fee'),
+          skipThanksgiving: form.has('skipThanksgiving'),
+          active: form.has('active'),
+        });
+        await api.admin.runSchedulingJob.mutate();
+      } else if (intent === 'inventory') {
+        runId = field('runId');
+        await api.admin.saveInventory.mutate({
+          runId,
+          produceId: field('produceId'),
+          quantity: numeric('quantity'),
+          priceCents: cents('price'),
+          active: form.has('active'),
+          repeat: form.has('repeat'),
+        });
+      } else if (intent === 'assign') {
+        await api.admin.assignDriver.mutate({
+          orderId: field('orderId'),
+          driverId: field('driverId') || null,
+        });
+      } else if (intent === 'run-jobs') {
+        const result = await api.admin.runSchedulingJob.mutate();
+        if (result.status === 'skipped')
+          throw new Error(
+            'A scheduling job is already running. Check the job history below.',
+          );
+      }
+      if (!invitationUrl) {
+        const next = new URL(Astro.url);
+        next.searchParams.set('saved', '1');
+        if (section === 'inventory') next.searchParams.set('run', runId);
+        return Astro.redirect(next.pathname + next.search, 303);
+      }
+    }
+    if (section === 'farms') farms = await api.farms.list.query();
+    if (section === 'produce')
+      [farms, produce] = await Promise.all([
+        api.farms.list.query(),
+        api.produce.list.query(),
+      ]);
+    if (section === 'drivers') drivers = await api.admin.drivers.query();
+    if (section === 'users')
+      [users, invites] = await Promise.all([
+        api.admin.users.query(),
+        api.admin.invitations.query(),
+      ]);
+    if (section === 'markets')
+      [markets, schedules] = await Promise.all([
+        api.markets.list.query(),
+        api.admin.schedules.query(),
+      ]);
+    if (section === 'orders')
+      [orders, drivers, markets] = await Promise.all([
+        api.orders.list.query({
+          scope: 'network',
+          limit: 50,
+          offset,
+          statuses: includeCancelled ? [] : nonCancelledOrderStatuses,
+        }),
+        api.admin.drivers.query(),
+        api.markets.list.query(),
+      ]);
+    if (section === 'jobs') jobs = await api.admin.jobs.query({ includeEmpty });
+    if (section === 'inventory') {
+      [runs, produce] = await Promise.all([
+        api.admin.runs.query(),
+        api.produce.list.query(),
+      ]);
+      runId ||= runs[0]?.run.id || '';
+      if (runId && !runs.some((item) => item.run.id === runId))
+        throw new Error('Choose an available market date.');
+      if (runId) stock = await api.admin.inventory.query({ id: runId });
+    }
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+const selectedRun = runs.find((item) => item.run.id === runId);
+const inventoryEditable =
+  selectedRun?.run.status === 'scheduled' &&
+  new Date(selectedRun.run.cutoffAt) > new Date();
+---
+
+<Site title={`${title} — Admin — Silverstreak`}>
+  <section class="shop-page business-admin-page">
+    <p class="small-label">Silverstreak administration</p>
+    <h1>Admin.</h1>
+    {authorized && <AdminNav />}
+    <h2>{title}</h2>
+    {error && (
+      <p class="shop-notice" role="alert">
+        {error}
+      </p>
+    )}
+    {authorized && Astro.url.searchParams.has('saved') && (
+      <p class="shop-notice" role="status">
+        Changes saved.
+      </p>
+    )}
+    {authorized && (
+      <>
+        {section === 'farms' && (
+          <>
+            <p>Manage the growers and vendors supplying Silverstreak.</p>
+            <details class="admin-record">
+              <summary>Add a farm</summary>
+              <AdminFarmForm />
+            </details>
+            {!farms.length && <p>No farms yet.</p>}
+            {farms.map((farm) => (
+              <details class="admin-record">
+                <summary>
+                  {farm.name} · {farm.location}
+                  {!farm.active && ' · Inactive'}
+                </summary>
+                <AdminFarmForm farm={farm} />
+              </details>
+            ))}
+          </>
+        )}
+        {section === 'produce' && (
+          <>
+            <p>
+              Manage produce listings. Set prices and stock for each market date
+              in Inventory. Showing up to 100 listings.
+            </p>
+            {!farms.some((farm) => farm.active) && (
+              <p>Add an active farm before creating produce.</p>
+            )}
+            <details class="admin-record">
+              <summary>Add produce</summary>
+              <AdminProduceForm farms={farms} />
+            </details>
+            {!produce.length && <p>No produce yet.</p>}
+            {produce.map((item) => (
+              <details class="admin-record">
+                <summary>
+                  {item.name} · {item.farm.name} · {item.category}
+                </summary>
+                <AdminProduceForm item={item} farms={farms} />
+              </details>
+            ))}
+          </>
+        )}
+        {section === 'drivers' && (
+          <>
+            {!drivers.length && (
+              <p>No drivers yet. Create a driver invitation in Users.</p>
+            )}
+            {drivers.map((driver) => (
+              <article class="admin-record">
+                <h3>{driver.name}</h3>
+                <p>
+                  {driver.email} · {driver.profile.phone}
+                  <br />
+                  {driver.profile.vehicle} · {driver.profile.status}
+                </p>
+                <div class="shop-links">
+                  {driver.profile.status !== 'approved' && (
+                    <form method="post">
+                      <input type="hidden" name="intent" value="review" />
+                      <input
+                        type="hidden"
+                        name="userId"
+                        value={driver.profile.userId}
+                      />
+                      <input type="hidden" name="status" value="approved" />
+                      <button
+                        class="button button-dark"
+                        aria-label={`Approve ${driver.name}`}
+                      >
+                        Approve driver
+                      </button>
+                    </form>
+                  )}
+                  {driver.profile.status !== 'suspended' && (
+                    <form
+                      method="post"
+                      data-admin-confirm="Suspend this driver? They will no longer be able to claim orders."
+                    >
+                      <input type="hidden" name="intent" value="review" />
+                      <input
+                        type="hidden"
+                        name="userId"
+                        value={driver.profile.userId}
+                      />
+                      <input type="hidden" name="status" value="suspended" />
+                      <button
+                        class="quiet-button"
+                        aria-label={`Suspend ${driver.name}`}
+                      >
+                        Suspend driver
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </article>
+            ))}
+          </>
+        )}
+        {section === 'users' && (
+          <>
+            <p>
+              Current Silverstreak members and invitations. Showing up to 100 of
+              each.
+            </p>
+            <details class="admin-record">
+              <summary>Create an invitation</summary>
+              <form
+                method="post"
+                class="shop-form admin-edit-form"
+                aria-label="Create invitation"
+              >
+                <input type="hidden" name="intent" value="invite" />
+                <label>
+                  Email
+                  <input name="email" type="email" required />
+                </label>
+                <label>
+                  Access
+                  <select aria-label="Access" name="role">
+                    <option value="customer">Customer</option>
+                    <option value="driver">Driver</option>
+                    <option value="network_admin">Administrator</option>
+                  </select>
+                </label>
+                <button class="button button-dark">Create invitation</button>
+              </form>
+            </details>
+            {invitationUrl && (
+              <div class="shop-notice">
+                <p role="status">
+                  Invitation created. Copy and share this link; it is shown only
+                  now. No email has been sent.
+                </p>
+                <label>
+                  Invitation link
+                  <input readonly value={invitationUrl} />
+                </label>
+              </div>
+            )}
+            <div
+              class="admin-table-wrap"
+              role="region"
+              aria-label="Users"
+              tabindex="0"
+            >
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Email</th>
+                    <th scope="col">Access</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((user) => (
+                    <tr>
+                      <th scope="row">{user.name}</th>
+                      <td>{user.email}</td>
+                      <td>
+                        {user.role === 'network_admin'
+                          ? 'Administrator'
+                          : 'Member'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!users.length && <p>No members yet.</p>}
+            <h3>Invitations</h3>
+            {!invites.length && <p>No invitations yet.</p>}
+            {invites.map((invite) => (
+              <div class="admin-record admin-row">
+                <div>
+                  <strong>{invite.email}</strong>
+                  <p>
+                    {invite.role === 'network_admin'
+                      ? 'Administrator'
+                      : invite.role}{' '}
+                    ·{' '}
+                    {invite.revokedAt
+                      ? 'Revoked'
+                      : invite.usedAt
+                        ? 'Accepted'
+                        : new Date(invite.expiresAt) <= new Date()
+                          ? 'Expired'
+                          : `Expires ${day(invite.expiresAt)}`}
+                  </p>
+                </div>
+                {!invite.usedAt &&
+                  !invite.revokedAt &&
+                  new Date(invite.expiresAt) > new Date() && (
+                    <form
+                      method="post"
+                      data-admin-confirm="Revoke this invitation?"
+                    >
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="revoke-invite"
+                      />
+                      <input type="hidden" name="id" value={invite.id} />
+                      <button
+                        class="quiet-button"
+                        aria-label={`Revoke invitation for ${invite.email}`}
+                      >
+                        Revoke invitation
+                      </button>
+                    </form>
+                  )}
+              </div>
+            ))}
+          </>
+        )}
+        {section === 'markets' && (
+          <>
+            <details class="admin-record">
+              <summary>Add a market</summary>
+              <form
+                method="post"
+                class="shop-form admin-edit-form"
+                aria-label="Add market"
+              >
+                <input type="hidden" name="intent" value="market" />
+                <label>
+                  Market name
+                  <input name="name" required minlength="2" maxlength="150" />
+                </label>
+                <label>
+                  Market address
+                  <input
+                    name="address"
+                    required
+                    minlength="5"
+                    maxlength="500"
+                  />
+                </label>
+                <label>
+                  Time zone
+                  <input name="timezone" required value="America/Los_Angeles" />
+                </label>
+                <button class="button button-dark">Add market</button>
+              </form>
+            </details>
+            {!markets.length && <p>No markets yet.</p>}
+            {markets.map((market) => (
+              <article class="admin-record">
+                <h3>{market.name}</h3>
+                <p>
+                  {market.address}
+                  <br />
+                  {market.timezone}
+                </p>
+              </article>
+            ))}
+            {markets.length > 0 && (
+              <details class="admin-record">
+                <summary>Add or update weekly hours</summary>
+                <p>
+                  Times use the selected market’s time zone. Saving an existing
+                  market and weekday updates its schedule. Existing dates and
+                  orders are preserved.
+                </p>
+                <form
+                  method="post"
+                  class="shop-form admin-edit-form"
+                  aria-label="Weekly market hours"
+                >
+                  <input type="hidden" name="intent" value="schedule" />
+                  <label>
+                    Market
+                    <select aria-label="Market" name="marketId">
+                      {markets.map((market) => (
+                        <option value={market.id}>{market.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Weekday
+                    <select aria-label="Weekday" name="weekday">
+                      {days.map((name, i) => (
+                        <option value={i}>{name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div class="form-pair">
+                    <label>
+                      Opens
+                      <input type="time" name="opens" value="09:00" required />
+                    </label>
+                    <label>
+                      Closes
+                      <input type="time" name="closes" value="13:00" required />
+                    </label>
+                  </div>
+                  <label>
+                    Ordering cutoff (hours before opening)
+                    <input
+                      type="number"
+                      name="cutoffHours"
+                      min="0"
+                      max="168"
+                      step="1"
+                      value="12"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Delivery window (hours from opening)
+                    <input
+                      type="number"
+                      name="deliveryHours"
+                      min="1"
+                      max="24"
+                      step="1"
+                      value="4"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Delivery fee ($)
+                    <input
+                      type="number"
+                      name="fee"
+                      min="0"
+                      max="1000"
+                      step="0.01"
+                      value="5.00"
+                      required
+                    />
+                  </label>
+                  <label class="admin-checkbox">
+                    <input type="checkbox" name="active" checked />
+                    Active schedule
+                  </label>
+                  <label class="admin-checkbox">
+                    <input type="checkbox" name="skipThanksgiving" />
+                    Skip Thanksgiving
+                  </label>
+                  <button class="button button-dark">Save weekly hours</button>
+                </form>
+              </details>
+            )}
+            <h3>Weekly schedules</h3>
+            {!schedules.length && <p>No recurring schedules yet.</p>}
+            {schedules.map(({ market, schedule }) => (
+              <article class="admin-record">
+                <h3>
+                  {market.name} · {days[schedule.weekday]}
+                </h3>
+                <p>
+                  {time(schedule.opensMinute)}–{time(schedule.closesMinute)} (
+                  {market.timezone}) · {money(schedule.deliveryFeeCents)}{' '}
+                  delivery
+                  <br />
+                  {schedule.cutoffMinutes / 60} hour ordering cutoff ·{' '}
+                  {schedule.active ? 'Active' : 'Paused'}
+                  {schedule.skipThanksgiving && ' · Skips Thanksgiving'}
+                </p>
+              </article>
+            ))}
+          </>
+        )}
+        {section === 'inventory' && (
+          <>
+            <p>
+              Set stock and prices for a market date. Existing reservations are
+              preserved.
+            </p>
+            <form method="get" class="market-picker">
+              <label>
+                Market date
+                <select aria-label="Market date" name="run">
+                  {runs.map(({ run, market }) => (
+                    <option value={run.id} selected={run.id === runId}>
+                      {market.name} — {dateLabel(run.startsAt, market.timezone)}{' '}
+                      · {run.status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button class="button button-dark" disabled={!runs.length}>
+                View inventory
+              </button>
+            </form>
+            {!runs.length && (
+              <p>
+                No market dates yet. Add weekly hours in Markets or run the
+                scheduling job.
+              </p>
+            )}
+            {selectedRun && (
+              <p>
+                Ordering cutoff:{' '}
+                {dateLabel(
+                  selectedRun.run.cutoffAt,
+                  selectedRun.market.timezone,
+                )}
+                .
+              </p>
+            )}
+            {selectedRun && !inventoryEditable && (
+              <p>
+                Ordering has closed or this market date is underway. Inventory
+                is read-only.
+              </p>
+            )}
+            {inventoryEditable &&
+              produce.some(
+                (item) => !stock.some((row) => row.produceId === item.id),
+              ) && (
+                <details class="admin-record">
+                  <summary>Add an item to this date</summary>
+                  <form
+                    method="post"
+                    class="shop-form admin-edit-form"
+                    aria-label="Add inventory"
+                  >
+                    <input type="hidden" name="intent" value="inventory" />
+                    <input type="hidden" name="runId" value={runId} />
+                    <label>
+                      Produce
+                      <select aria-label="Produce" name="produceId">
+                        {produce
+                          .filter(
+                            (item) =>
+                              !stock.some((row) => row.produceId === item.id),
+                          )
+                          .map((item) => (
+                            <option value={item.id}>
+                              {item.name} · {item.farm.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label>
+                      Price per sale unit ($)
+                      <input
+                        type="number"
+                        name="price"
+                        min="0"
+                        max="10000"
+                        step="0.01"
+                        required
+                      />
+                    </label>
+                    <label>
+                      Total quantity
+                      <input
+                        type="number"
+                        name="quantity"
+                        min="0"
+                        max="100000"
+                        step="1"
+                        required
+                      />
+                    </label>
+                    <label class="admin-checkbox">
+                      <input type="checkbox" name="active" checked />
+                      Available for ordering
+                    </label>
+                    <label class="admin-checkbox">
+                      <input type="checkbox" name="repeat" />
+                      Use these defaults for future dates
+                    </label>
+                    <button class="button button-dark">Add inventory</button>
+                  </form>
+                </details>
+              )}
+            {stock.map((item) => (
+              <details class="admin-record">
+                <summary>
+                  {item.name} · {money(item.priceCents)} / {item.unit} ·{' '}
+                  {item.availableQuantity} available
+                  {!item.active && ' · Inactive'}
+                </summary>
+                <form
+                  method="post"
+                  class="shop-form admin-edit-form"
+                  aria-label={`Inventory for ${item.name}`}
+                >
+                  <input type="hidden" name="intent" value="inventory" />
+                  <input type="hidden" name="runId" value={runId} />
+                  <input
+                    type="hidden"
+                    name="produceId"
+                    value={item.produceId}
+                  />
+                  <p>
+                    {item.reservedQuantity} reserved. Total quantity includes
+                    reservations.
+                  </p>
+                  <label>
+                    Price per sale unit ($)
+                    <input
+                      type="number"
+                      name="price"
+                      min="0"
+                      max="10000"
+                      step="0.01"
+                      value={(item.priceCents / 100).toFixed(2)}
+                      readonly={!inventoryEditable}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Total quantity
+                    <input
+                      type="number"
+                      name="quantity"
+                      min={item.reservedQuantity}
+                      max="100000"
+                      step="1"
+                      value={item.quantity}
+                      readonly={!inventoryEditable}
+                      required
+                    />
+                  </label>
+                  <label class="admin-checkbox">
+                    <input
+                      type="checkbox"
+                      name="active"
+                      checked={item.active}
+                      disabled={!inventoryEditable}
+                    />
+                    Available for ordering
+                  </label>
+                  <label class="admin-checkbox">
+                    <input type="checkbox" name="repeat" />
+                    Use these defaults for future dates
+                  </label>
+                  <button
+                    class="button button-dark"
+                    disabled={!inventoryEditable}
+                  >
+                    Save inventory
+                  </button>
+                </form>
+              </details>
+            ))}
+            {selectedRun && !stock.length && (
+              <p>No inventory for this date yet.</p>
+            )}
+          </>
+        )}
+        {section === 'orders' && (
+          <>
+            <p>
+              Orders across Silverstreak. Showing{' '}
+              {offset + (orders.length ? 1 : 0)}–{offset + orders.length}.
+            </p>
+            {!orders.length && <p>No orders to show.</p>}
+            {orders.map((order) => (
+              <OrderCard
+                order={order}
+                showCustomer
+                timezone={
+                  markets.find((market) => market.id === order.run.marketId)
+                    ?.timezone || 'America/Los_Angeles'
+                }
+              >
+                {!['cancelled', 'delivered', 'unavailable'].includes(
+                  order.status,
+                ) && (
+                  <form
+                    method="post"
+                    class="shop-form admin-edit-form"
+                    aria-label={`Assign driver for ${order.id.slice(0, 8)}`}
+                  >
+                    <input type="hidden" name="intent" value="assign" />
+                    <input type="hidden" name="orderId" value={order.id} />
+                    <label>
+                      Driver
+                      <select aria-label="Driver" name="driverId">
+                        <option value="">Unassigned</option>
+                        {drivers
+                          .filter(
+                            (driver) =>
+                              driver.profile.status === 'approved' ||
+                              driver.profile.userId === order.driverId,
+                          )
+                          .map((driver) => (
+                            <option
+                              value={driver.profile.userId}
+                              selected={
+                                driver.profile.userId === order.driverId
+                              }
+                            >
+                              {driver.name} · {driver.profile.status}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <button class="button button-dark">Save assignment</button>
+                  </form>
+                )}
+              </OrderCard>
+            ))}
+            <div class="shop-links">
+              {offset > 0 && (
+                <a
+                  href={`/admin/orders?offset=${Math.max(0, offset - 50)}${includeCancelled ? '&includeCancelled=1' : ''}`}
+                >
+                  Previous orders
+                </a>
+              )}
+              {orders.length === 50 && (
+                <a
+                  href={`/admin/orders?offset=${offset + 50}${includeCancelled ? '&includeCancelled=1' : ''}`}
+                >
+                  More orders
+                </a>
+              )}
+            </div>
+          </>
+        )}
+        {section === 'jobs' && (
+          <>
+            <p>
+              Recent scheduling and market-closing jobs for Silverstreak.
+              Showing the latest 20{' '}
+              {includeEmpty ? 'runs' : 'runs with changes'}.
+            </p>
+            <form method="post">
+              <input type="hidden" name="intent" value="run-jobs" />
+              <button class="button button-dark">Run scheduling job</button>
+            </form>
+            {!jobs.length ? (
+              <p>
+                {includeEmpty
+                  ? 'No job runs yet.'
+                  : 'No job runs have changed any entities yet.'}
+              </p>
+            ) : (
+              <div
+                class="admin-table-wrap"
+                role="region"
+                aria-label="Job history"
+                tabindex="0"
+              >
+                <table aria-label="Job runs">
+                  <thead>
+                    <tr>
+                      <th scope="col">Started</th>
+                      <th scope="col">Job</th>
+                      <th scope="col">Status</th>
+                      <th
+                        scope="col"
+                        title="Market dates created or closed, plus orders cancelled"
+                      >
+                        Impacted entities
+                      </th>
+                      <th scope="col">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobs.map((job) => (
+                      <tr>
+                        <td>
+                          {dateLabel(job.startedAt, 'America/Los_Angeles')}
+                        </td>
+                        <th scope="row">{job.name}</th>
+                        <td>{job.status}</td>
+                        <td>{job.impactedEntities}</td>
+                        <td>
+                          <details>
+                            <summary>View details</summary>
+                            <p>
+                              {job.source}
+                              <br />
+                              {job.schedulesProcessed} schedules processed ·{' '}
+                              {job.runsCreated} dates created · {job.runsClosed}{' '}
+                              dates closed · {job.ordersCancelled} orders
+                              cancelled
+                            </p>
+                            {job.error && (
+                              <p class="shop-notice" role="alert">
+                                {job.error}
+                              </p>
+                            )}
+                          </details>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+        {(section === 'jobs' || section === 'orders') && (
+          <form method="get" class="orders-filter" data-admin-filter>
+            <label>
+              <input
+                type="checkbox"
+                name={section === 'jobs' ? 'includeEmpty' : 'includeCancelled'}
+                value="1"
+                checked={section === 'jobs' ? includeEmpty : includeCancelled}
+              />
+              {section === 'jobs'
+                ? 'Include empty runs'
+                : 'Show cancelled orders'}
+            </label>
+            <noscript>
+              <button class="quiet-button">Update view</button>
+            </noscript>
+          </form>
+        )}
+      </>
+    )}
+  </section>
+</Site>
+
+<script>
+  const filter = document.querySelector<HTMLFormElement>('[data-admin-filter]');
+  filter
+    ?.querySelector('input')
+    ?.addEventListener('change', () => filter?.requestSubmit());
+
+  document
+    .querySelectorAll<HTMLFormElement>('[data-admin-confirm]')
+    .forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        if (!window.confirm(form.dataset.adminConfirm)) event.preventDefault();
+      });
+    });
+</script>

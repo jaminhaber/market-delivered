@@ -1,0 +1,24 @@
+---
+const tabs = [
+  ['Orders', '/admin/orders'],
+  ['Drivers', '/admin/drivers'],
+  ['Users', '/admin/users'],
+  ['Farms', '/admin/farms'],
+  ['Produce', '/admin/produce'],
+  ['Markets', '/admin/markets'],
+  ['Inventory', '/admin/inventory'],
+  ['Jobs', '/admin/jobs'],
+  ['MCP setup', '/mcp'],
+];
+---
+
+<nav class="business-admin-tabs" aria-label="Business administration">
+  {tabs.map(([label, href]) => (
+    <a
+      href={href}
+      aria-current={Astro.url.pathname === href ? 'page' : undefined}
+    >
+      {label}
+    </a>
+  ))}
+</nav>

@@ -21,6 +21,7 @@ export async function runMarketRunsJob(
   status: 'skipped' | 'succeeded';
   schedulesProcessed: number;
   runsCreated: number;
+  impactedEntities: number;
 }> {
   if (!databaseNetworkId(db)) {
     const all = await db
@@ -44,6 +45,7 @@ export async function runMarketRunsJob(
         : 'skipped',
       schedulesProcessed: results.reduce((n, r) => n + r.schedulesProcessed, 0),
       runsCreated: results.reduce((n, r) => n + r.runsCreated, 0),
+      impactedEntities: results.reduce((n, r) => n + r.impactedEntities, 0),
     };
   }
   const [attempt] = await db
@@ -74,12 +76,20 @@ export async function runMarketRunsJob(
           status: 'skipped' as const,
           schedulesProcessed: 0,
           runsCreated: 0,
+          impactedEntities: 0,
         };
       }
       const summary = await ensureUpcomingRuns(tx, asOf);
+      // Count changed market dates and orders, not checks, locks, or log rows.
+      const impactedEntities = summary.runsCreated;
       await tx
         .update(backgroundJobRuns)
-        .set({ status: 'succeeded', finishedAt: new Date(), ...summary })
+        .set({
+          status: 'succeeded',
+          finishedAt: new Date(),
+          ...summary,
+          impactedEntities,
+        })
         .where(
           networkWhere(
             tx,
@@ -87,7 +97,12 @@ export async function runMarketRunsJob(
             eq(backgroundJobRuns.id, attempt!.id),
           ),
         );
-      return { id: attempt!.id, status: 'succeeded' as const, ...summary };
+      return {
+        id: attempt!.id,
+        status: 'succeeded' as const,
+        ...summary,
+        impactedEntities,
+      };
     });
   } catch (error) {
     await db
@@ -118,6 +133,7 @@ export async function runCloseMarketsJob(
   status: 'skipped' | 'succeeded';
   ordersCancelled: number;
   runsClosed: number;
+  impactedEntities: number;
 }> {
   if (!databaseNetworkId(db)) {
     const all = await db
@@ -141,6 +157,7 @@ export async function runCloseMarketsJob(
         : 'skipped',
       ordersCancelled: results.reduce((n, r) => n + r.ordersCancelled, 0),
       runsClosed: results.reduce((n, r) => n + r.runsClosed, 0),
+      impactedEntities: results.reduce((n, r) => n + r.impactedEntities, 0),
     };
   }
   const [attempt] = await db
@@ -170,12 +187,19 @@ export async function runCloseMarketsJob(
           status: 'skipped' as const,
           ordersCancelled: 0,
           runsClosed: 0,
+          impactedEntities: 0,
         };
       }
       const summary = await closeExpiredMarkets(tx, asOf);
+      const impactedEntities = summary.runsClosed + summary.ordersCancelled;
       await tx
         .update(backgroundJobRuns)
-        .set({ status: 'succeeded', finishedAt: new Date(), ...summary })
+        .set({
+          status: 'succeeded',
+          finishedAt: new Date(),
+          ...summary,
+          impactedEntities,
+        })
         .where(
           networkWhere(
             tx,
@@ -183,7 +207,12 @@ export async function runCloseMarketsJob(
             eq(backgroundJobRuns.id, attempt!.id),
           ),
         );
-      return { id: attempt!.id, status: 'succeeded' as const, ...summary };
+      return {
+        id: attempt!.id,
+        status: 'succeeded' as const,
+        ...summary,
+        impactedEntities,
+      };
     });
   } catch (error) {
     await db

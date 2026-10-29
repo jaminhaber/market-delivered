@@ -16,10 +16,30 @@ Address/cash/fulfillment invariants live in the shared backend, not the frontend
 
 ## Business operators and drivers
 
-The old shared operational frontend is removed. Its business capabilities remain
-available through the public business API and network-scoped MCP: farms/catalog,
-markets/schedules, inventory, invitations, driver approval and assignment, combined
-shopping and allocation, packing, shortages, delivery state, and cash recording.
+Silverstreak administrators open **Admin** from their profile menu. Real routes
+under `/admin` provide tabs for orders, driver approval, users and invitations,
+farms, produce, markets and weekly hours, date-specific inventory, and job history.
+MCP setup remains at `/mcp` and is linked from the same navigation. All pages use
+Silverstreak's fixed API context and require business administrator access.
+
+Silverstreak requests an explicit list of non-cancelled order statuses by default.
+Both views use `orders.list`: `scope: "mine"` (the default) restricts results to the
+signed-in customer; `scope: "network"` requires administrator access. The endpoint
+accepts an optional `statuses` array;
+omitting it or passing `[]` returns all statuses. The older `orders.mine` and
+`admin.orders` endpoints remain compatible. Filtering happens in SQL before
+pagination. The subdued
+**Show cancelled orders** toggle below the list updates automatically and is
+preserved when paging. Jobs similarly hide zero-impact runs, with an **Include
+empty runs** toggle for the full history.
+
+Invitations created in the Users page produce a shareable link; they do not send
+an email. The MCP invitation tool can send invitation emails. The Users list
+contains only members of this business. Network settings and global roles remain
+platform-admin operations.
+
+Driver shopping, packing, shortages, delivery, and cash recording remain available
+through the business API and network-scoped MCP.
 
 Approved drivers can claim orders, shop and pack them, then record delivery and
 cash. Suspended drivers cannot claim work. Orders preserve the customer and item

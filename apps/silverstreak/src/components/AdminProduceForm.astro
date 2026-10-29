@@ -1,0 +1,72 @@
+---
+import type { marketApi } from '../server/market';
+type Api = ReturnType<typeof marketApi>;
+type Produce = Awaited<ReturnType<Api['produce']['list']['query']>>[number];
+type Farm = Awaited<ReturnType<Api['farms']['list']['query']>>[number];
+interface Props {
+  item?: Produce;
+  farms: Farm[];
+}
+const { item, farms } = Astro.props;
+---
+
+<form
+  method="post"
+  class="shop-form admin-edit-form"
+  aria-label={item ? `Edit ${item.name}` : 'Add produce'}
+>
+  <input type="hidden" name="intent" value="produce" />
+  {item && <input type="hidden" name="id" value={item.id} />}
+  <label>
+    Produce name
+    <input
+      name="name"
+      required
+      minlength="2"
+      maxlength="150"
+      value={item?.name || ''}
+    />
+  </label>
+  <label>
+    Description
+    <textarea
+      name="description"
+      maxlength="500"
+    >{item?.description || ''}</textarea>
+  </label>
+  <label>
+    Farm
+    <select aria-label="Farm" name="farmId" required>
+      {farms
+        .filter((farm) => farm.active || farm.id === item?.farm.id)
+        .map((farm) => (
+          <option value={farm.id} selected={farm.id === item?.farm.id}>
+            {farm.name}
+            {!farm.active && ' (inactive)'}
+          </option>
+        ))}
+    </select>
+  </label>
+  <label>
+    Category
+    <select aria-label="Category" name="category">
+      {['Vegetables', 'Fruit', 'Herbs'].map((category) => (
+        <option selected={category === item?.category}>{category}</option>
+      ))}
+    </select>
+  </label>
+  <label>
+    Sale unit
+    <select aria-label="Sale unit" name="unit">
+      {['lb', 'bunch', 'basket', 'each'].map((unit) => (
+        <option selected={unit === item?.unit}>{unit}</option>
+      ))}
+    </select>
+  </label>
+  <button
+    class="button button-dark"
+    disabled={!farms.some((farm) => farm.active)}
+  >
+    {item ? 'Save produce' : 'Add produce'}
+  </button>
+</form>

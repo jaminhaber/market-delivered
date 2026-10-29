@@ -5,7 +5,7 @@ import {
   type APIRequestContext,
 } from '@playwright/test';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import {
   createDatabase,
   invitations,
@@ -15,6 +15,8 @@ import {
   farms,
   produce,
   orders,
+  apiTokens,
+  driverProfiles,
 } from '@market/db';
 import { bootstrapGlobalAdmin } from '@market/core/bootstrap';
 import { operations } from '@market/core/operations';
@@ -603,6 +605,7 @@ test('Silverstreak invitation, delivery details, order placement, cancellation, 
   await expect(page.getByRole('status')).toHaveText(
     'Your order is placed. We’ll take it from here.',
   );
+  await page.locator('.order-card > summary').click();
   await expect(
     page.getByText('Estimated total: $12.00', { exact: true }),
   ).toBeVisible();
@@ -617,6 +620,28 @@ test('Silverstreak invitation, delivery details, order placement, cancellation, 
   await expect(page.locator('.order-card')).toContainText('cancelled');
   await page.getByLabel('Show cancelled orders').uncheck();
   await expect(page.locator('.order-card')).toHaveCount(0);
+  const [cancelledOrder] = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.runId, run.id));
+  const membership = and(
+    eq(networkMemberships.networkId, silverId),
+    eq(networkMemberships.userId, cancelledOrder!.customerId),
+  );
+  await db
+    .update(networkMemberships)
+    .set({ role: 'network_admin' })
+    .where(membership);
+  await page.goto(silverOrigin + '/admin/orders');
+  const adminOrder = page
+    .locator('.admin-record')
+    .filter({ hasText: cancelledOrder!.id.slice(0, 8) });
+  await expect(adminOrder).toHaveCount(0);
+  await page.getByLabel('Show cancelled orders').check();
+  await expect(adminOrder).toHaveCount(1);
+  await page.getByLabel('Show cancelled orders').uncheck();
+  await expect(adminOrder).toHaveCount(0);
+  await db.update(networkMemberships).set({ role: 'member' }).where(membership);
   await page.goto(silverOrigin + '/account');
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page).toHaveURL(silverOrigin + '/');
@@ -825,5 +850,323 @@ test('administrator frontend forwards only admin routes to its configured backen
   } finally {
     if (previous === undefined) delete process.env.MARKET_API_ORIGIN;
     else process.env.MARKET_API_ORIGIN = previous;
+  }
+});
+
+test('Silverstreak administrators manage business pages and scoped MCP credentials', async ({
+  page,
+}) => {
+  await page.goto(silverOrigin + '/mcp');
+  await expect(page).toHaveURL(silverOrigin + '/account');
+  const customer = await requests.newContext({ baseURL: silverOrigin });
+  const business = await requests.newContext({ baseURL: businessOrigin });
+  try {
+    const customerEmail = `mcp-admin-${randomUUID()}@example.test`;
+    const invite = await invitation(customerEmail);
+    const signup = await customer.post('/api/auth/sign-up/email', {
+      headers: { Origin: silverOrigin, 'x-invite-token': invite },
+      data: { name: 'MCP Operator', email: customerEmail, password },
+    });
+    expect(signup.status(), await signup.text()).toBe(200);
+    const person = (await signup.json()).user;
+    await page.context().addCookies((await customer.storageState()).cookies);
+    for (const section of [
+      'orders',
+      'drivers',
+      'users',
+      'farms',
+      'produce',
+      'markets',
+      'inventory',
+      'jobs',
+    ]) {
+      expect((await customer.get('/admin/' + section)).status()).toBe(403);
+    }
+    const forbiddenUsers = await page.request.get(
+      businessOrigin + '/trpc/admin.users',
+      { headers: { 'X-Network-Id': silverId, Origin: silverOrigin } },
+    );
+    expect(forbiddenUsers.status()).toBe(403);
+    const networkOrders = await page.request.get(
+      businessOrigin + '/trpc/orders.list',
+      {
+        headers: { 'X-Network-Id': silverId, Origin: silverOrigin },
+        params: { input: JSON.stringify({ scope: 'network' }) },
+      },
+    );
+    expect(networkOrders.status()).toBe(403);
+    const personalOrders = await page.request.get(
+      businessOrigin + '/trpc/orders.list',
+      { headers: { 'X-Network-Id': silverId, Origin: silverOrigin } },
+    );
+    expect(personalOrders.status()).toBe(200);
+    expect((await personalOrders.json()).result.data).toEqual([]);
+
+    expect((await customer.get('/mcp')).status()).toBe(403);
+    expect(
+      (
+        await customer.post('/mcp', {
+          headers: { Origin: silverOrigin },
+          form: { intent: 'create', name: 'Denied token' },
+        })
+      ).status(),
+    ).toBe(403);
+    await db
+      .update(networkMemberships)
+      .set({ role: 'network_admin' })
+      .where(
+        and(
+          eq(networkMemberships.networkId, silverId),
+          eq(networkMemberships.userId, person.id),
+        ),
+      );
+    await page.goto(silverOrigin + '/account');
+    await page.locator('.profile-menu summary').click();
+    await page.getByRole('link', { name: 'Admin', exact: true }).click();
+    await expect(page).toHaveURL(silverOrigin + '/admin/orders');
+    const tabs = page.getByRole('navigation', {
+      name: 'Business administration',
+    });
+    await expect(tabs.getByRole('link')).toHaveCount(9);
+    await tabs.getByRole('link', { name: 'Farms', exact: true }).click();
+    const forgedFarm = await customer.post('/admin/farms', {
+      headers: { Origin: 'https://untrusted.example' },
+      form: {
+        intent: 'farm',
+        name: 'Forged farm',
+        location: 'Ojai',
+        active: 'on',
+      },
+    });
+    expect(forgedFarm.status()).toBe(403);
+    await page.getByText('Add a farm', { exact: true }).click();
+    const addFarm = page.getByRole('form', { name: 'Add farm', exact: true });
+    await addFarm.getByLabel('Farm name', { exact: true }).fill('UI grower');
+    await addFarm.getByLabel('Location', { exact: true }).fill('Ojai');
+    await addFarm
+      .getByRole('button', { name: 'Add farm', exact: true })
+      .click();
+    await expect(page.getByRole('status')).toHaveText('Changes saved.');
+    await page.getByText('UI grower · Ojai', { exact: true }).click();
+    const editFarm = page.getByRole('form', {
+      name: 'Edit UI grower',
+      exact: true,
+    });
+    await editFarm.getByLabel('Location', { exact: true }).fill('Ojai Valley');
+    await editFarm
+      .getByRole('button', { name: 'Save farm', exact: true })
+      .click();
+    await expect(
+      page.getByText('UI grower · Ojai Valley', { exact: true }),
+    ).toBeVisible();
+    await tabs.getByRole('link', { name: 'Produce', exact: true }).click();
+    await page.getByText('Add produce', { exact: true }).first().click();
+    const addProduce = page.getByRole('form', {
+      name: 'Add produce',
+      exact: true,
+    });
+    await addProduce
+      .getByLabel('Produce name', { exact: true })
+      .fill('UI carrots');
+    await addProduce
+      .getByLabel('Farm', { exact: true })
+      .selectOption({ label: 'UI grower' });
+    await addProduce
+      .getByRole('button', { name: 'Add produce', exact: true })
+      .click();
+    await expect(
+      page.getByText('UI carrots · UI grower · Vegetables', { exact: true }),
+    ).toBeVisible();
+    await tabs.getByRole('link', { name: 'Markets', exact: true }).click();
+    await page.getByText('Add a market', { exact: true }).click();
+    const addMarket = page.getByRole('form', {
+      name: 'Add market',
+      exact: true,
+    });
+    await addMarket
+      .getByLabel('Market name', { exact: true })
+      .fill('Admin UI market');
+    await addMarket
+      .getByLabel('Market address', { exact: true })
+      .fill('100 Main Street, Ojai, CA');
+    await addMarket
+      .getByRole('button', { name: 'Add market', exact: true })
+      .click();
+    await page.getByText('Add or update weekly hours', { exact: true }).click();
+    const hours = page.getByRole('form', {
+      name: 'Weekly market hours',
+      exact: true,
+    });
+    await hours
+      .getByLabel('Market', { exact: true })
+      .selectOption({ label: 'Admin UI market' });
+    await hours
+      .getByRole('button', { name: 'Save weekly hours', exact: true })
+      .click();
+    await expect(page.getByRole('status')).toHaveText('Changes saved.');
+    await tabs.getByRole('link', { name: 'Inventory', exact: true }).click();
+    const runOption = await page
+      .locator('select[name="run"] option')
+      .filter({ hasText: 'Admin UI market' })
+      .first()
+      .getAttribute('value');
+    await page
+      .getByLabel('Market date', { exact: true })
+      .selectOption(runOption!);
+    await page
+      .getByRole('button', { name: 'View inventory', exact: true })
+      .click();
+    await page.getByText('Add an item to this date', { exact: true }).click();
+    const inventory = page.getByRole('form', {
+      name: 'Add inventory',
+      exact: true,
+    });
+    await inventory
+      .getByLabel('Produce', { exact: true })
+      .selectOption({ label: 'UI carrots · UI grower' });
+    await inventory
+      .getByLabel('Price per sale unit ($)', { exact: true })
+      .fill('3.50');
+    await inventory.getByLabel('Total quantity', { exact: true }).fill('10');
+    await inventory
+      .getByRole('button', { name: 'Add inventory', exact: true })
+      .click();
+    await expect(
+      page.getByText('UI carrots · $3.50 / lb · 10 available', { exact: true }),
+    ).toBeVisible();
+    await db
+      .insert(networkMemberships)
+      .values({ networkId: partnerId, userId: owner.id })
+      .onConflictDoNothing();
+    await tabs.getByRole('link', { name: 'Users', exact: true }).click();
+    await expect(
+      page.getByRole('region', { name: 'Users', exact: true }),
+    ).toContainText(customerEmail);
+    await expect(
+      page.getByRole('region', { name: 'Users', exact: true }),
+    ).not.toContainText(owner.email);
+    await page.getByText('Create an invitation', { exact: true }).click();
+    const inviteForm = page.getByRole('form', {
+      name: 'Create invitation',
+      exact: true,
+    });
+    await inviteForm
+      .getByLabel('Email', { exact: true })
+      .fill(`invited-${randomUUID()}@example.test`);
+    await inviteForm
+      .getByRole('button', { name: 'Create invitation', exact: true })
+      .click();
+    await expect(
+      page.getByLabel('Invitation link', { exact: true }),
+    ).toHaveValue(new RegExp(silverOrigin + '/account\\?invite='));
+    await db.insert(driverProfiles).values({
+      networkId: silverId,
+      userId: person.id,
+      phone: '8055550123',
+      vehicle: 'Van',
+    });
+    await tabs.getByRole('link', { name: 'Drivers', exact: true }).click();
+    await page
+      .getByRole('button', { name: 'Approve MCP Operator', exact: true })
+      .click();
+    await expect(
+      page.getByRole('button', { name: 'Suspend MCP Operator', exact: true }),
+    ).toBeVisible();
+    await tabs.getByRole('link', { name: 'Jobs', exact: true }).click();
+    await page
+      .getByRole('button', { name: 'Run scheduling job', exact: true })
+      .click();
+    await expect(page.getByRole('status')).toHaveText('Changes saved.');
+    const historyRows = page
+      .getByRole('table', { name: 'Job runs', exact: true })
+      .locator('tbody tr');
+    const usefulCount = await historyRows.count();
+    expect(usefulCount).toBeGreaterThan(0);
+    await expect(
+      page.getByRole('columnheader', {
+        name: 'Impacted entities',
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.getByLabel('Include empty runs').check();
+    await expect.poll(() => historyRows.count()).toBeGreaterThan(usefulCount);
+    await expect(historyRows.first().locator('td').nth(2)).toHaveText('0');
+    await page.getByLabel('Include empty runs').uncheck();
+    await expect(historyRows).toHaveCount(usefulCount);
+    await tabs.getByRole('link', { name: 'MCP setup', exact: true }).click();
+    await expect(
+      page.getByLabel('MCP server URL', { exact: true }),
+    ).toHaveValue('http://127.0.0.1:5180/mcp');
+    const forged = await customer.post('/mcp', {
+      headers: { Origin: 'https://untrusted.example' },
+      form: { intent: 'create', name: 'Forged token' },
+    });
+    expect(forged.status()).toBe(403);
+    await page
+      .getByLabel('Token name', { exact: true })
+      .fill('Desktop assistant');
+    const creating = page.waitForResponse(
+      (response) =>
+        response.url() === silverOrigin + '/mcp' &&
+        response.request().method() === 'POST',
+    );
+    await page
+      .getByRole('button', { name: 'Create token', exact: true })
+      .click();
+    const created = await creating;
+    expect(created.status(), await created.text()).toBe(200);
+    const token = await page
+      .getByLabel('New token (shown once)', { exact: true })
+      .inputValue();
+    expect(token).toMatch(/^md_[a-f0-9]{64}$/);
+    const [stored] = await db
+      .select({ networkId: apiTokens.networkId })
+      .from(apiTokens)
+      .where(
+        eq(
+          apiTokens.tokenHash,
+          createHash('sha256').update(token).digest('hex'),
+        ),
+      );
+    expect(stored!.networkId).toBe(silverId);
+    const tools = await mcp(business, token, 'tools/list');
+    expect(tools.status()).toBe(200);
+    const names = (await tools.json()).result.tools.map(
+      (tool: { name: string }) => tool.name,
+    );
+    expect(names).toContain('list_markets');
+    expect(names).not.toContain('list_networks');
+    expect((await mcp(admin, token, 'tools/list')).status()).toBe(401);
+    await page.goto(silverOrigin + '/mcp');
+    await expect(
+      page.getByLabel('New token (shown once)', { exact: true }),
+    ).toHaveCount(0);
+    expect(await page.content()).not.toContain(token);
+    page.once('dialog', (dialog) => void dialog.accept());
+    await page
+      .getByRole('button', { name: 'Revoke Desktop assistant', exact: true })
+      .click();
+    await expect(page.getByRole('status')).toHaveText(
+      'Token revoked. The assistant can no longer use it.',
+    );
+    expect((await mcp(business, token, 'tools/list')).status()).toBe(401);
+    await db
+      .update(networkMemberships)
+      .set({ role: 'member' })
+      .where(
+        and(
+          eq(networkMemberships.networkId, silverId),
+          eq(networkMemberships.userId, person.id),
+        ),
+      );
+    expect((await customer.get('/mcp')).status()).toBe(403);
+    await page.goto(silverOrigin + '/account');
+    await page.locator('.profile-menu summary').click();
+    await expect(
+      page.getByRole('link', { name: 'Admin', exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await customer.dispose();
+    await business.dispose();
   }
 });

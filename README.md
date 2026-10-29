@@ -65,9 +65,10 @@ npm run db:seed -- silverstreak
 
 The invitation points at Silverstreak’s `/account` page. Customers can join, save
 a delivery address, order from an open market, and view/cancel their orders.
-Orders use cash on delivery and the existing fulfillment model. Drivers and
-business operators use the business API or network-scoped MCP; their old shared
-frontend has been removed.
+Orders use cash on delivery and the existing fulfillment model. Silverstreak
+administrators use the **Admin** profile-menu entry for business management tabs
+and MCP setup. Driver fulfillment remains available through the business API or
+network-scoped MCP.
 
 ## Checks
 

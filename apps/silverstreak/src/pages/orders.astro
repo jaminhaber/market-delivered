@@ -1,9 +1,11 @@
 ---
+import OrderCard from '../components/OrderCard.astro';
 import Site from '../layouts/Site.astro';
-import { marketApi, messageFor, money } from '../server/market';
+import { nonCancelledOrderStatuses } from '../server/order-statuses';
+import { marketApi, messageFor } from '../server/market';
 Astro.response.headers.set('Cache-Control', 'no-store');
 let orders: Awaited<
-  ReturnType<ReturnType<typeof marketApi>['orders']['mine']['query']>
+  ReturnType<ReturnType<typeof marketApi>['orders']['list']['query']>
 > = [];
 let error = '';
 const includeCancelled = Astro.url.searchParams.get('includeCancelled') === '1';
@@ -22,7 +24,11 @@ try {
     );
   }
   [orders, markets] = await Promise.all([
-    api.orders.mine.query({ includeCancelled }),
+    api.orders.list.query({
+      scope: 'mine',
+      limit: 100,
+      statuses: includeCancelled ? [] : nonCancelledOrderStatuses,
+    }),
     api.markets.list.query(),
   ]);
 } catch (problem) {
@@ -59,41 +65,20 @@ try {
     )}
     <div class="order-list">
       {orders.map((order) => (
-        <article class="order-card">
-          <p class="small-label">
-            Order {order.id.slice(0, 8)} · {order.status.replaceAll('_', ' ')}
-          </p>
-          <h2>
-            {new Intl.DateTimeFormat('en-US', {
-              dateStyle: 'long',
-              timeZone:
-                markets.find((market) => market.id === order.run.marketId)
-                  ?.timezone || 'UTC',
-            }).format(new Date(order.run.startsAt))}
-          </h2>
-          <ul>
-            {order.items.map((item) => (
-              <li>
-                {item.quantity} × {item.name} — {item.farmName}
-              </li>
-            ))}
-          </ul>
-          <p>
-            {order.actualTotalCents === null
-              ? 'Estimated total'
-              : 'Final total'}
-            : {money(order.actualTotalCents ?? order.estimatedTotalCents)}
-          </p>
-          <p>
-            Delivery to {order.street}, {order.city}.
-          </p>
+        <OrderCard
+          order={order}
+          timezone={
+            markets.find((market) => market.id === order.run.marketId)
+              ?.timezone || 'UTC'
+          }
+        >
           {order.status === 'placed' && (
             <form method="post" data-confirm-cancel>
               <input type="hidden" name="orderId" value={order.id} />
               <button class="quiet-button">Cancel order</button>
             </form>
           )}
-        </article>
+        </OrderCard>
       ))}
     </div>
     <form method="get" class="orders-filter">

@@ -32,6 +32,8 @@ import {
   driverShoppingList,
   driverOrders,
   myOrders,
+  listOrders,
+  recentJobRuns,
   runDetail,
 } from './queries.js';
 import { checkRateLimit } from './rate-limit.js';
@@ -89,6 +91,12 @@ const addressProcedure = authenticated.use(async ({ ctx, next, path }) => {
   return next();
 });
 const id = z.object({ id: z.uuid() });
+const orderListInput = z.object({
+  runId: z.uuid().optional(),
+  statuses: z.array(z.enum(s.orderStatus.enumValues)).max(9).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+  offset: z.number().int().min(0).max(1000000).default(0),
+});
 export const appRouter = t.router({
   me: t.procedure.query(async ({ ctx }) => {
     if (!ctx.actor) return null;
@@ -416,6 +424,21 @@ export const appRouter = t.router({
     ),
   }),
   orders: t.router({
+    list: authenticated
+      .input(
+        orderListInput
+          .extend({ scope: z.enum(['mine', 'network']).default('mine') })
+          .prefault({}),
+      )
+      .query(({ ctx, input }) => {
+        if (input.scope === 'network') {
+          ensure(ctx.actor.admin, 'Administrator access required', 'FORBIDDEN');
+        }
+        return listOrders(ctx.db, {
+          ...input,
+          customerId: input.scope === 'mine' ? ctx.actor.id : undefined,
+        });
+      }),
     recordCash: authenticated
       .input(
         z.object({
@@ -427,10 +450,17 @@ export const appRouter = t.router({
       .mutation(({ ctx, input }) => ctx.ops.recordCash(input)),
     mine: authenticated
       .input(
-        z.object({ includeCancelled: z.boolean().default(false) }).optional(),
+        z
+          .object({
+            statuses: z
+              .array(z.enum(s.orderStatus.enumValues))
+              .max(9)
+              .optional(),
+          })
+          .optional(),
       )
       .query(({ ctx, input }) =>
-        myOrders(ctx.db, ctx.actor.id, input?.includeCancelled),
+        myOrders(ctx.db, ctx.actor.id, input?.statuses),
       ),
     place: authenticated
       .input(
@@ -550,6 +580,20 @@ export const appRouter = t.router({
     ),
   }),
   admin: t.router({
+    users: admin.query(({ ctx }) =>
+      ctx.db
+        .select({
+          id: s.user.id,
+          name: s.user.name,
+          email: s.user.email,
+          role: s.networkMemberships.role,
+        })
+        .from(s.networkMemberships)
+        .innerJoin(s.user, eq(s.user.id, s.networkMemberships.userId))
+        .where(s.networkWhere(ctx.db, s.networkMemberships))
+        .orderBy(asc(s.user.name), asc(s.user.id))
+        .limit(100),
+    ),
     createFarm: admin
       .input(farmInput)
       .mutation(({ ctx, input }) => ctx.ops.createFarm(input)),
@@ -564,31 +608,8 @@ export const appRouter = t.router({
         ctx.ops.updateProduce(id, input),
       ),
     orders: admin
-      .input(
-        z
-          .object({
-            runId: z.uuid().optional(),
-            limit: z.number().int().min(1).max(100).default(50),
-            offset: z.number().int().min(0).max(1000000).default(0),
-          })
-          .default({ limit: 50, offset: 0 }),
-      )
-      .query(async ({ ctx, input }) => {
-        const rows = await ctx.db
-          .select()
-          .from(s.orders)
-          .where(
-            s.networkWhere(
-              ctx.db,
-              s.orders,
-              input.runId ? eq(s.orders.runId, input.runId) : undefined,
-            ),
-          )
-          .orderBy(desc(s.orders.createdAt), desc(s.orders.id))
-          .limit(input.limit)
-          .offset(input.offset);
-        return (await import('./queries.js')).orderDetails(ctx.db, rows);
-      }),
+      .input(orderListInput.prefault({}))
+      .query(({ ctx, input }) => listOrders(ctx.db, input)),
     inventory: admin.input(id).query(({ ctx, input }) =>
       ctx.db
         .select({
@@ -616,14 +637,9 @@ export const appRouter = t.router({
         )
         .orderBy(asc(s.produce.name)),
     ),
-    jobs: admin.query(({ ctx }) =>
-      ctx.db
-        .select()
-        .from(s.backgroundJobRuns)
-        .where(s.networkWhere(ctx.db, s.backgroundJobRuns))
-        .orderBy(desc(s.backgroundJobRuns.startedAt))
-        .limit(20),
-    ),
+    jobs: admin
+      .input(z.object({ includeEmpty: z.boolean().default(false) }).optional())
+      .query(({ ctx, input }) => recentJobRuns(ctx.db, input?.includeEmpty)),
     runSchedulingJob: admin.mutation(({ ctx }) =>
       s.runMarketRunsJob(ctx.db, 'admin'),
     ),
@@ -766,5 +782,6 @@ export const appRouter = t.router({
   }),
 });
 export type AppRouter = typeof appRouter;
+export type OrderStatus = (typeof s.orderStatus.enumValues)[number];
 export type ProduceCategory =
   inferRouterOutputs<AppRouter>['produce']['list'][number]['category'];

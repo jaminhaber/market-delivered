@@ -31,7 +31,7 @@ import {
   scheduleInventoryInput,
 } from './operations.js';
 import { webOrigins } from './origins.js';
-import { orderDetails } from './queries.js';
+import { orderDetails, recentJobRuns } from './queries.js';
 export function registerMcp(
   app: FastifyInstance,
   rootDb: s.Database,
@@ -857,18 +857,11 @@ export function registerMcp(
       mcp.registerTool(
         'list_job_runs',
         {
-          description: 'Read recent scheduling job results and failure status.',
-          inputSchema: {},
+          description:
+            'Read recent job results with entity changes. Set includeEmpty to include no-op, skipped, running, and failed attempts.',
+          inputSchema: { includeEmpty: z.boolean().default(false) },
         },
-        () =>
-          call(() =>
-            db
-              .select()
-              .from(s.backgroundJobRuns)
-              .where(s.networkWhere(db, s.backgroundJobRuns))
-              .orderBy(sql`${s.backgroundJobRuns.startedAt} DESC`)
-              .limit(20),
-          ),
+        (input) => call(() => recentJobRuns(db, input.includeEmpty)),
       );
       await respond();
       async function respond() {

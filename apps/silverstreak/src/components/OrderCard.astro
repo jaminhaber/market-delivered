@@ -1,0 +1,44 @@
+---
+import { dateLabel, money, marketApi } from '../server/market';
+
+interface Props {
+  order: Awaited<
+    ReturnType<ReturnType<typeof marketApi>['orders']['list']['query']>
+  >[number];
+  timezone: string;
+  showCustomer?: boolean;
+}
+const { order, timezone, showCustomer = false } = Astro.props;
+---
+
+<details class="order-card admin-record">
+  <summary>
+    Order {order.id.slice(0, 8)} · {showCustomer && `${order.customerName} · `}
+    {order.status.replaceAll('_', ' ')} ·{' '}
+    {money(order.actualTotalCents ?? order.estimatedTotalCents)}
+  </summary>
+  <p>
+    {dateLabel(order.run.startsAt, timezone)}
+    <br />
+    Delivery to {order.address}
+    {showCustomer && (
+      <>
+        <br />
+        {order.phone}
+      </>
+    )}
+  </p>
+  {order.deliveryNotes && <p>Delivery notes: {order.deliveryNotes}</p>}
+  <ul>
+    {order.items.map((item) => (
+      <li>
+        {item.quantity} × {item.name} · {item.farmName}
+      </li>
+    ))}
+  </ul>
+  <p>
+    {order.actualTotalCents === null ? 'Estimated total' : 'Final total'}:{' '}
+    {money(order.actualTotalCents ?? order.estimatedTotalCents)}
+  </p>
+  <slot />
+</details>

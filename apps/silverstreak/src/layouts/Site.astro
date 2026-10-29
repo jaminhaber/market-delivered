@@ -16,7 +16,7 @@ const {
 } = Astro.props;
 
 Astro.response.headers.set('Cache-Control', 'no-store');
-let profile: { name: string } | null = null;
+let profile: { name: string; admin: boolean } | null = null;
 if (Astro.request.headers.has('cookie')) {
   try {
     profile = await marketApi(Astro).me.query();
@@ -70,7 +70,9 @@ if (Astro.request.headers.has('cookie')) {
             >
               About us
             </a>
-            {profile && <ProfileMenu name={profile.name} />}
+            {profile && (
+              <ProfileMenu name={profile.name} admin={profile.admin} />
+            )}
           </nav>
         </div>
         <a class="wordmark" href="/" aria-label="Silverstreak home">

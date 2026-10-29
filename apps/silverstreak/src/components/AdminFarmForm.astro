@@ -1,0 +1,56 @@
+---
+import type { marketApi } from '../server/market';
+type Farm = Awaited<
+  ReturnType<ReturnType<typeof marketApi>['farms']['list']['query']>
+>[number];
+interface Props {
+  farm?: Farm;
+}
+const { farm } = Astro.props;
+---
+
+<form
+  method="post"
+  class="shop-form admin-edit-form"
+  aria-label={farm ? `Edit ${farm.name}` : 'Add farm'}
+>
+  <input type="hidden" name="intent" value="farm" />
+  {farm && <input type="hidden" name="id" value={farm.id} />}
+  <label>
+    Farm name
+    <input
+      name="name"
+      required
+      minlength="2"
+      maxlength="150"
+      value={farm?.name || ''}
+    />
+  </label>
+  <label>
+    Location
+    <input
+      name="location"
+      required
+      minlength="2"
+      maxlength="500"
+      value={farm?.location || ''}
+    />
+  </label>
+  <label>
+    Contact phone
+    <input
+      name="contactPhone"
+      type="tel"
+      maxlength="30"
+      value={farm?.contactPhone || ''}
+    />
+  </label>
+  <label>
+    Notes<textarea name="notes" maxlength="1000">{farm?.notes || ''}</textarea>
+  </label>
+  <label class="admin-checkbox">
+    <input type="checkbox" name="active" checked={farm?.active ?? true} />
+    Active farm
+  </label>
+  <button class="button button-dark">{farm ? 'Save farm' : 'Add farm'}</button>
+</form>

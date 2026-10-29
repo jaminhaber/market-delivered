@@ -27,6 +27,14 @@ The dashboard provides file-based setup commands for Codex and Claude. Keep toke
 files private; tokens expire after 90 days and the plaintext is shown only once.
 Revoking a token invalidates its next request.
 
+Silverstreak administrators can open **Admin** from the profile dropdown
+(`/admin` on the Silverstreak website), then choose **MCP setup** (`/mcp`). This page creates, lists, and revokes the
+current administrator's business tokens and provides private token-file setup
+commands for Codex and Claude Code. It uses Silverstreak's fixed server context;
+no network selector is accepted. Its displayed MCP server URL points to the
+shared backend's `/mcp`, not the setup page itself. Ordinary customers cannot
+view or use token management. OAuth authorization is not implemented yet.
+
 Business `invite_user` sends an invitation to the network's registered frontend
 `/account` route. Success means the provider accepted the email; it does not prove
 inbox delivery. Failed sends revoke the newly created invitation. Catalog/stock

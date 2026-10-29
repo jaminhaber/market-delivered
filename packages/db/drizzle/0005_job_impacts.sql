@@ -1,0 +1,3 @@
+ALTER TABLE "background_job_runs" ADD COLUMN "impacted_entities" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+CREATE INDEX "background_jobs_network_impacted_started_idx" ON "background_job_runs" USING btree ("network_id","started_at","id") WHERE "background_job_runs"."impacted_entities" > 0;--> statement-breakpoint
+ALTER TABLE "background_job_runs" ADD CONSTRAINT "background_jobs_impacted_nonnegative" CHECK ("background_job_runs"."impacted_entities" >= 0);

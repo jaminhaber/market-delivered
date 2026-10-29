@@ -546,10 +546,18 @@ export const backgroundJobRuns = pgTable(
     ordersCancelled: integer('orders_cancelled').notNull().default(0),
     runsClosed: integer('runs_closed').notNull().default(0),
     runsCreated: integer('runs_created').notNull().default(0),
+    impactedEntities: integer('impacted_entities').notNull().default(0),
     error: text('error'),
   },
   (t) => [
     index('background_jobs_name_started_idx').on(t.name, t.startedAt),
+    index('background_jobs_network_impacted_started_idx')
+      .on(t.networkId, t.startedAt, t.id)
+      .where(sql`${t.impactedEntities} > 0`),
+    check(
+      'background_jobs_impacted_nonnegative',
+      sql`${t.impactedEntities} >= 0`,
+    ),
     index('background_jobs_network_started_idx').on(t.networkId, t.startedAt),
     check(
       'background_jobs_status_valid',
