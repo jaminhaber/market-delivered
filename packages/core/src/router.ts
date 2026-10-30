@@ -309,6 +309,7 @@ export const appRouter = t.router({
           .object({
             search: z.string().trim().max(100).default(''),
             category: z.enum(s.produceCategory.enumValues).optional(),
+            farmId: z.uuid().optional(),
           })
           .default({ search: '' }),
       )
@@ -341,6 +342,7 @@ export const appRouter = t.router({
               ctx.db,
               s.produce,
               and(
+                input.farmId ? eq(s.produce.farmId, input.farmId) : undefined,
                 input.category
                   ? eq(s.produce.category, input.category)
                   : undefined,

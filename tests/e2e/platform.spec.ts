@@ -945,6 +945,21 @@ test('Silverstreak administrators manage business pages and OAuth setup', async 
     await expect(
       page.getByText('UI grower · Ojai Valley', { exact: true }),
     ).toBeVisible();
+    const emptyFarm = await operations(
+      networkDatabase(db, silverId, owner.id),
+      {
+        ...owner,
+        name: 'Owner',
+        admin: true,
+        globalAdmin: true,
+      },
+    ).createFarm({
+      name: 'UI empty grower',
+      location: 'Ojai',
+      contactPhone: '',
+      notes: '',
+      active: true,
+    });
     await tabs.getByRole('link', { name: 'Produce', exact: true }).click();
     await page.getByText('Add produce', { exact: true }).first().click();
     const addProduce = page.getByRole('form', {
@@ -960,6 +975,69 @@ test('Silverstreak administrators manage business pages and OAuth setup', async 
     await addProduce
       .getByRole('button', { name: 'Add produce', exact: true })
       .click();
+    await expect(
+      page.getByText('UI carrots · UI grower · Vegetables', { exact: true }),
+    ).toBeVisible();
+    const farmFilter = page.getByRole('form', {
+      name: 'Filter produce',
+      exact: true,
+    });
+    await farmFilter
+      .getByLabel('Filter by farm')
+      .selectOption({ label: 'UI grower' });
+    const selectedFarmId = await farmFilter
+      .getByLabel('Filter by farm')
+      .inputValue();
+    await farmFilter
+      .getByRole('button', { name: 'Filter produce', exact: true })
+      .click();
+    expect(new URL(page.url()).searchParams.get('farmId')).toBe(selectedFarmId);
+    await page.reload();
+    await expect(farmFilter.getByLabel('Filter by farm')).toHaveValue(
+      selectedFarmId,
+    );
+    const filtered = await page.request.get(
+      silverOrigin + '/trpc/produce.list',
+      {
+        params: {
+          input: JSON.stringify({
+            farmId: selectedFarmId,
+            search: 'UI carrots',
+            category: 'Vegetables',
+          }),
+        },
+      },
+    );
+    expect(filtered.status()).toBe(200);
+    expect((await filtered.json()).result.data).toMatchObject([
+      { name: 'UI carrots', farm: { id: selectedFarmId } },
+    ]);
+    const missingFarm = await page.request.get(
+      silverOrigin + '/trpc/produce.list',
+      {
+        params: { input: JSON.stringify({ farmId: randomUUID() }) },
+      },
+    );
+    expect((await missingFarm.json()).result.data).toEqual([]);
+    const invalidFarm = await page.request.get(
+      silverOrigin + '/trpc/produce.list',
+      {
+        params: { input: JSON.stringify({ farmId: 'invalid' }) },
+      },
+    );
+    expect(invalidFarm.status()).toBe(400);
+    await farmFilter.getByLabel('Filter by farm').selectOption(emptyFarm.id);
+    await farmFilter
+      .getByRole('button', { name: 'Filter produce', exact: true })
+      .click();
+    await expect(
+      page.getByText('No produce for this farm.', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText('UI carrots · UI grower · Vegetables', { exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole('link', { name: 'Clear filter', exact: true }).click();
+    await expect(page).toHaveURL(silverOrigin + '/admin/produce');
     await expect(
       page.getByText('UI carrots · UI grower · Vegetables', { exact: true }),
     ).toBeVisible();

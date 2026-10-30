@@ -38,6 +38,7 @@ let stock: Awaited<ReturnType<Api['admin']['inventory']['query']>> = [];
 let orders: Awaited<ReturnType<Api['orders']['list']['query']>> = [];
 let jobs: Awaited<ReturnType<Api['admin']['jobs']['query']>> = [];
 let runId = Astro.url.searchParams.get('run') || '';
+const farmId = Astro.url.searchParams.get('farmId') || '';
 const includeEmpty = Astro.url.searchParams.get('includeEmpty') === '1';
 const includeCancelled = Astro.url.searchParams.get('includeCancelled') === '1';
 const rawOffset = Number(Astro.url.searchParams.get('offset') || 0);
@@ -189,7 +190,7 @@ try {
     if (section === 'produce')
       [farms, produce] = await Promise.all([
         api.farms.list.query(),
-        api.produce.list.query(),
+        api.produce.list.query({ farmId: farmId || undefined }),
       ]);
     if (section === 'drivers') drivers = await api.admin.drivers.query();
     if (section === 'users')
@@ -277,6 +278,30 @@ const inventoryEditable =
               Manage produce listings. Set prices and stock for each market date
               in Inventory. Showing up to 100 listings.
             </p>
+            <form
+              method="get"
+              class="market-picker"
+              aria-label="Filter produce"
+            >
+              <label>
+                Filter by farm
+                <select name="farmId">
+                  <option value="">All farms</option>
+                  {farms.map((farm) => (
+                    <option value={farm.id} selected={farm.id === farmId}>
+                      {farm.name}
+                      {!farm.active && ' (inactive)'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button class="button button-dark">Filter produce</button>
+              {farmId && (
+                <a class="quiet-link" href="/admin/produce">
+                  Clear filter
+                </a>
+              )}
+            </form>
             {!farms.some((farm) => farm.active) && (
               <p>Add an active farm before creating produce.</p>
             )}
@@ -284,7 +309,9 @@ const inventoryEditable =
               <summary>Add produce</summary>
               <AdminProduceForm farms={farms} />
             </details>
-            {!produce.length && <p>No produce yet.</p>}
+            {!produce.length && (
+              <p>{farmId ? 'No produce for this farm.' : 'No produce yet.'}</p>
+            )}
             {produce.map((item) => (
               <details class="admin-record">
                 <summary>
