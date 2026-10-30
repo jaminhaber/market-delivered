@@ -235,6 +235,16 @@ const deliveryReady =
               {inventory.map((item) => (
                 <article class="catalog-item">
                   <div>
+                    {item.image && (
+                      <img
+                        class="produce-photo"
+                        src={item.image.card}
+                        alt={item.image.altText || item.name}
+                        width="320"
+                        height="240"
+                        loading="lazy"
+                      />
+                    )}
                     <p class="small-label">{item.source}</p>
                     <h2>{item.name}</h2>
                     <p>{item.description}</p>

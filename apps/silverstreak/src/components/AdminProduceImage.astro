@@ -1,0 +1,200 @@
+---
+interface Props {
+  produceId: string;
+  name: string;
+  image: { id: string; altText: string; thumbnail: string } | null;
+}
+const { produceId, name, image } = Astro.props;
+---
+
+<form
+  class="shop-form admin-edit-form produce-image-form"
+  data-produce-image
+  data-produce-id={produceId}
+  data-asset-id={image?.id || ''}
+  aria-label={`Image for ${name}`}
+>
+  <h3>Produce image</h3>
+  <img
+    src={image?.thumbnail}
+    alt={image?.altText || name}
+    width="160"
+    height="160"
+    hidden={!image}
+    data-image-preview
+  />
+  <label>
+    Image file
+    <input
+      type="file"
+      name="image"
+      accept="image/jpeg,image/png,image/webp,image/avif"
+    />
+  </label>
+  <p>
+    JPEG, PNG, WebP, or AVIF, up to 10 MB. A replacement appears after its
+    upload succeeds.
+  </p>
+  <label>
+    Image description (alt text)
+    <input name="altText" maxlength="500" value={image?.altText || ''} />
+  </label>
+  <div class="shop-links">
+    <button type="submit" class="button button-dark">
+      Save image
+    </button>
+    <button
+      type="button"
+      class="quiet-button"
+      data-remove-image
+      hidden={!image}
+    >
+      Remove image
+    </button>
+  </div>
+  <p role="status" aria-live="polite" data-image-status></p>
+  <noscript>Enable JavaScript to upload images.</noscript>
+</form>
+
+<script>
+  import { createTRPCClient, httpBatchLink } from '@trpc/client';
+  import type { AppRouter } from '@market/api/router';
+  const api = createTRPCClient<AppRouter>({
+    links: [httpBatchLink({ url: '/trpc' })],
+  });
+  for (const form of document.querySelectorAll<HTMLFormElement>(
+    '[data-produce-image]',
+  )) {
+    const picker = form.querySelector<HTMLInputElement>('input[type=file]')!;
+    const alt = form.querySelector<HTMLInputElement>('[name=altText]')!;
+    const preview = form.querySelector<HTMLImageElement>(
+      '[data-image-preview]',
+    )!;
+    const status = form.querySelector<HTMLElement>('[data-image-status]')!;
+    const remove = form.querySelector<HTMLButtonElement>(
+      '[data-remove-image]',
+    )!;
+    let uploadedId: string | undefined;
+    let busy = false;
+    picker.addEventListener('change', () => {
+      uploadedId = undefined;
+    });
+    function pending(value: boolean) {
+      busy = value;
+      form.setAttribute('aria-busy', String(value));
+      for (const control of form.querySelectorAll<
+        HTMLInputElement | HTMLButtonElement
+      >('input, button'))
+        control.disabled = value;
+    }
+    function failure(error: unknown) {
+      status.textContent =
+        error instanceof Error
+          ? error.message
+          : 'Unable to save the image. Please retry.';
+      status.setAttribute('role', 'alert');
+    }
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      pending(true);
+      status.setAttribute('role', 'status');
+      try {
+        const file = picker.files?.[0];
+        let asset;
+        if (file) {
+          if (
+            !['image/jpeg', 'image/png', 'image/webp', 'image/avif'].includes(
+              file.type,
+            ) ||
+            file.size > 10_000_000 ||
+            !file.size
+          )
+            throw new Error(
+              'Choose a JPEG, PNG, WebP, or AVIF image up to 10 MB.',
+            );
+          if (!uploadedId) {
+            status.textContent = 'Uploading image…';
+            const upload = await api.assets.createUpload.mutate();
+            const body = new FormData();
+            body.set('file', file);
+            const response = await fetch(upload.uploadUrl, {
+              method: 'POST',
+              body,
+              signal: AbortSignal.timeout(120_000),
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success)
+              throw new Error('The image upload failed. Please retry.');
+            uploadedId = upload.cloudflareImageId;
+          }
+          status.textContent = 'Saving image…';
+          asset = await api.assets.register.mutate({
+            cloudflareImageId: uploadedId,
+            altText: alt.value,
+            metadata: { produce_id: form.dataset.produceId! },
+            replaceAssetId: form.dataset.assetId || undefined,
+          });
+        } else if (form.dataset.assetId) {
+          asset = await api.assets.update.mutate({
+            id: form.dataset.assetId,
+            altText: alt.value,
+          });
+        } else throw new Error('Choose an image first.');
+        form.dataset.assetId = asset.id;
+        if (asset.image) {
+          preview.src = asset.image.thumbnail;
+          preview.alt = asset.altText;
+          preview.hidden = false;
+        }
+        remove.hidden = false;
+        picker.value = '';
+        uploadedId = undefined;
+        status.textContent = 'Image saved.';
+      } catch (error) {
+        failure(error);
+      } finally {
+        pending(false);
+      }
+    });
+    remove.addEventListener('click', async () => {
+      if (
+        busy ||
+        !form.dataset.assetId ||
+        !window.confirm('Permanently remove this image?')
+      )
+        return;
+      pending(true);
+      try {
+        await api.assets.delete.mutate({ id: form.dataset.assetId });
+        form.dataset.assetId = '';
+        preview.hidden = true;
+        preview.removeAttribute('src');
+        remove.hidden = true;
+        picker.value = '';
+        uploadedId = undefined;
+        status.setAttribute('role', 'status');
+        status.textContent = 'Image removed.';
+      } catch (error) {
+        failure(error);
+      } finally {
+        pending(false);
+      }
+    });
+  }
+</script>
+
+<style>
+  .produce-image-form {
+    border-top: 1px solid var(--line, #d4d4c8);
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+  }
+  img {
+    object-fit: cover;
+    border-radius: 6px;
+  }
+  [hidden] {
+    display: none;
+  }
+</style>

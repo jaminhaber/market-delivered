@@ -1,5 +1,6 @@
 import { networkIdColumn } from './network-schema.js';
 import { sql } from 'drizzle-orm';
+import { user } from './auth-schema.js';
 import {
   boolean,
   check,
@@ -7,12 +8,47 @@ import {
   unique,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
   timestamp,
   uuid,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
+
+export const assets = pgTable(
+  'assets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    networkId: networkIdColumn(),
+    type: text('type').notNull().default('image'),
+    cloudflareImageId: text('cloudflare_image_id').notNull().unique(),
+    filename: text('filename').notNull(),
+    altText: text('alt_text').notNull().default(''),
+    metadata: jsonb('metadata')
+      .$type<{ produce_id?: string; [key: string]: unknown }>()
+      .notNull()
+      .default({}),
+    createdBy: text('created_by')
+      .notNull()
+      .references(() => user.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index('assets_network_created_idx').on(t.networkId, t.createdAt),
+    uniqueIndex('assets_network_produce_unique')
+      .on(t.networkId, sql`(${t.metadata}->>'produce_id')`)
+      .where(sql`${t.metadata} ? 'produce_id'`),
+    check('assets_image_type', sql`${t.type} = 'image'`),
+    check(
+      'assets_metadata_object',
+      sql`jsonb_typeof(${t.metadata}) = 'object'`,
+    ),
+  ],
+);
 
 export const produceCategory = pgEnum('produce_category', [
   'Vegetables',

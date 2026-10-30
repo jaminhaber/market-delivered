@@ -1,4 +1,5 @@
 ---
+import AdminProduceImage from './AdminProduceImage.astro';
 import type { marketApi } from '../server/market';
 type Api = ReturnType<typeof marketApi>;
 type Produce = Awaited<ReturnType<Api['produce']['list']['query']>>[number];
@@ -70,3 +71,9 @@ const { item, farms } = Astro.props;
     {item ? 'Save produce' : 'Add produce'}
   </button>
 </form>
+
+{item ? (
+  <AdminProduceImage produceId={item.id} name={item.name} image={item.image} />
+) : (
+  <p>Save the produce listing first, then add its image.</p>
+)}

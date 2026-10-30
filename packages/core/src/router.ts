@@ -37,10 +37,20 @@ import {
   runDetail,
 } from './queries.js';
 import { checkRateLimit } from './rate-limit.js';
+import {
+  assetOperations,
+  assetImageSelect,
+  produceAssetJoin,
+  registerAssetInput,
+  listAssetsInput,
+  updateAssetInput,
+  type ImagesConfig,
+} from './assets.js';
 export type Context = {
   db: s.Database;
   actor: Actor | null;
   googleMapsKey?: string;
+  images?: ImagesConfig;
   oauthOrigin: string;
   network: Awaited<ReturnType<typeof resolveNetwork>>;
 };
@@ -313,6 +323,7 @@ export const appRouter = t.router({
             unit: s.produce.unit,
             priceCents: s.produce.priceCents,
             availableQuantity: s.produce.availableQuantity,
+            image: assetImageSelect(ctx.images),
             farm: {
               id: s.farms.id,
               name: s.farms.name,
@@ -320,6 +331,7 @@ export const appRouter = t.router({
             },
           })
           .from(s.produce)
+          .leftJoin(s.assets, produceAssetJoin(ctx.db))
           .innerJoin(
             s.farms,
             s.networkWhere(ctx.db, s.farms, eq(s.produce.farmId, s.farms.id)),
@@ -393,6 +405,7 @@ export const appRouter = t.router({
         .select({
           id: s.inventory.id,
           produceId: s.produce.id,
+          image: assetImageSelect(ctx.images),
           name: s.produce.name,
           description: s.produce.description,
           category: s.produce.category,
@@ -417,6 +430,7 @@ export const appRouter = t.router({
           s.farms,
           s.networkWhere(ctx.db, s.farms, eq(s.farms.id, s.produce.farmId)),
         )
+        .leftJoin(s.assets, produceAssetJoin(ctx.db))
         .where(
           s.networkWhere(
             ctx.db,
@@ -577,6 +591,31 @@ export const appRouter = t.router({
         }),
       )
       .mutation(({ ctx, input }) => ctx.ops.deliver(input)),
+  }),
+  assets: t.router({
+    createUpload: admin.mutation(({ ctx }) =>
+      assetOperations(ctx.db, ctx.actor, ctx.images).createUpload(),
+    ),
+    register: admin
+      .input(registerAssetInput)
+      .mutation(({ ctx, input }) =>
+        assetOperations(ctx.db, ctx.actor, ctx.images).register(input),
+      ),
+    list: admin
+      .input(listAssetsInput.prefault({}))
+      .query(({ ctx, input }) =>
+        assetOperations(ctx.db, ctx.actor, ctx.images).list(input),
+      ),
+    update: admin
+      .input(updateAssetInput)
+      .mutation(({ ctx, input }) =>
+        assetOperations(ctx.db, ctx.actor, ctx.images).update(input),
+      ),
+    delete: admin
+      .input(id)
+      .mutation(({ ctx, input }) =>
+        assetOperations(ctx.db, ctx.actor, ctx.images).delete(input.id),
+      ),
   }),
   farms: t.router({
     list: authenticated.query(({ ctx }) =>

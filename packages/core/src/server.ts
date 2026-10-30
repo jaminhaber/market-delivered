@@ -6,6 +6,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import { isNull } from 'drizzle-orm';
 import { networks, type Database } from '@market/db';
 import { appRouter } from './router.js';
+import type { ImagesConfig } from './assets.js';
 import { createAuth } from './auth.js';
 import { permissions, resolveNetwork, networkEmailConfig } from './networks.js';
 import { registerJobs } from './jobs.js';
@@ -28,6 +29,7 @@ export type ServerConfig = {
   emailFrom?: string;
   cronSecret?: string;
   googleMapsKey?: string;
+  images?: ImagesConfig;
 };
 export type AssistantRouteRegistrar = (
   app: FastifyInstance,
@@ -165,6 +167,7 @@ export async function createServer(
             db,
             network,
             googleMapsKey: config.googleMapsKey,
+            images: config.images,
             oauthOrigin: config.adminOrigin,
             actor:
               current && access

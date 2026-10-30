@@ -31,10 +31,24 @@ export function parseEnvironment(source: NodeJS.ProcessEnv) {
       ADMIN_AUTH_SECRET: z.string().min(32),
       RESEND_API_KEY: z.string().trim().optional(),
       GOOGLE_MAPS_API_KEY: z.string().trim().optional(),
+      CLOUDFLARE_ACCOUNT_ID: z.string().trim().min(1).optional(),
+      CLOUDFLARE_IMAGES_API_TOKEN: z.string().trim().min(1).optional(),
+      CLOUDFLARE_IMAGES_DELIVERY_HASH: z.string().trim().min(1).optional(),
       CRON_SECRET: z.string().min(32).optional(),
       EMAIL_FROM: z.string().trim().optional(),
     })
     .superRefine((values, ctx) => {
+      const images = [
+        values.CLOUDFLARE_ACCOUNT_ID,
+        values.CLOUDFLARE_IMAGES_API_TOKEN,
+        values.CLOUDFLARE_IMAGES_DELIVERY_HASH,
+      ];
+      if (images.some(Boolean) && !images.every(Boolean))
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'Set all three Cloudflare Images environment variables, or omit all three.',
+        });
       if (
         !values.ADMIN_AUTH_SECRET ||
         values.ADMIN_AUTH_SECRET === values.BETTER_AUTH_SECRET
