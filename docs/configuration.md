@@ -50,4 +50,7 @@ and `/oauth/connect`, and proxies `/mcp`, `/oauth/auth/*`, and OAuth discovery.
 Vite forwards these API paths to `API_PORT` locally. On Vercel, set server-only
 `MARKET_API_ORIGIN` to the backend origin. No database or signing credentials
 belong in frontend deployments. Set the backend’s `ADMIN_ORIGIN` to this
-frontend’s exact HTTPS domain; it is the sole OAuth/MCP public origin.
+frontend’s exact HTTPS domain. It hosts the account-wide MCP and all OAuth pages
+and issuers. Silverstreak exposes its network-bound MCP at its own `/api/mcp`,
+using the existing `MARKET_API_ORIGIN` and `SILVERSTREAK_NETWORK_ID` settings.
+The network's registered `frontendOrigin` must match Silverstreak's public domain.

@@ -1,8 +1,8 @@
 import type { APIContext } from 'astro';
 import { marketConfig } from './market';
 
-// Only storefront API calls are proxied. OAuth and MCP live on the shared
-// Market Delivered origin.
+// Storefront calls use this proxy. The separate MCP proxy binds assistant
+// requests to this app's network and forwards Bearer credentials only.
 const storefrontProcedures = new Set([
   'me',
   'produce.categories',

@@ -26,9 +26,11 @@ certificate verification. API instance pools are lifecycle-managed on Vercel.
 
 The shared backend serves business API/browser auth at `/trpc` and `/api/auth/*`,
 global dashboard API/auth at `/admin/trpc` and `/admin/auth/*`, and account-wide
-assistant access at `/mcp` with one OAuth issuer at `/oauth/auth`. The OAuth and
-MCP public origin is `ADMIN_ORIGIN`. Network tools require an explicit network ID
-and current permissions; there are no network-specific OAuth deployments.
+assistant access at `/mcp` with its OAuth issuer at `/oauth/auth`. Network-bound
+MCP and OAuth routes use `/networks/<id>/mcp` and `/networks/<id>/oauth/auth`.
+The admin origin hosts every issuer and consent page. Silverstreak exposes its
+MCP resource at its own `/api/mcp`, proxying to its fixed network's backend route.
+No additional backend deployment is required.
 Health endpoints and protected `/internal/jobs/*` run in the same service.
 
 ## Frontend environment and domains
@@ -41,8 +43,10 @@ these frontend projects.
 The administrator frontend proxies `/admin/trpc`, `/admin/auth/*`, `/mcp`,
 `/oauth/auth/*`, and OAuth discovery paths to the configured backend. Vite provides
 the same forwarding locally. Its `/oauth/*` browser pages serve centralized
-assistant login, consent, setup, and disconnection. Silverstreak only proxies
-storefront calls and links to this central connection flow. Cookies are host-only.
+assistant login, consent, setup, and disconnection, including network-specific
+flows under `/oauth/networks/<id>/`. The admin proxy also forwards network OAuth
+and authorization discovery. Silverstreak proxies storefront calls and its own
+network-bound `/api/mcp` and resource discovery. Cookies are host-only.
 See [MCP](mcp.md) for the exact discovery URLs.
 
 Attach each domain in Vercel Settings > Domains and apply the DNS records Vercel
@@ -68,8 +72,9 @@ registering their domains and network context; they share the same backend.
    automatically transferred.
 5. Configure and deploy both frontend projects. Sign into global administration,
    connect an assistant through **Assistant connection** or `/oauth/connect`.
-   Use the same `/mcp` connection for network management and business tools,
-   supplying explicit network IDs.
+   Use that connection for account-wide management with explicit network IDs.
+   Silverstreak administrators can instead use **MCP setup** on Silverstreak to
+   connect only to that network through its public `/api/mcp` address.
 6. Verify invitations, login/reset email links, order review/placement/cancellation,
    and statistics. Check foreign origins, missing selectors, and token swaps are
    rejected. Use a test network and staging email credentials first.

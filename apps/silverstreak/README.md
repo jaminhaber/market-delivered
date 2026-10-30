@@ -24,6 +24,10 @@ These values belong in this application's `.env` and are server-only. Register
 - `/account`: invitation signup, sign-in/reset, delivery details, and sign-out.
 - `/order`: server-rendered open markets, available items, and order placement.
 - `/orders`: customer order history and eligible cancellation.
+- `/admin` and `/admin/[section]`: business administration pages.
+- `/mcp`: assistant setup instructions for Silverstreak.
+- `/api/mcp`: Bearer-authenticated MCP proxy restricted to Silverstreak's network.
+- `/.well-known/oauth-protected-resource/api/mcp`: MCP resource discovery.
 - `/trpc/*`, `/api/auth/*`: restricted same-origin business proxy.
 
 The homepage/about page work without an API. Account/order pages require a
@@ -43,7 +47,18 @@ Create a project with Root Directory `apps/silverstreak`, allow workspace files
 outside the directory, use the Astro preset and Node 24, and attach Silverstreak's
 domain. Set the two server variables above for that environment and register the
 same HTTPS domain on the network. Use separate staging values for previews.
-The API and administrator dashboard are different Vercel projects.
+The API and administrator dashboard are different Vercel projects. OAuth login,
+consent, and connection management use the admin site's network-specific flow at
+`/oauth/networks/<network UUID>/connect`. The backend's `ADMIN_ORIGIN` must match
+that admin site's public origin. Silverstreak requires no additional secrets.
+
+MCP grants bind the network UUID and Silverstreak's registered `/api/mcp` resource.
+They cannot access other networks or platform administration, including when the
+user has global administrator permission. The admin MCP remains a separate
+account-wide connection. See [MCP](../../docs/mcp.md) for the complete boundary.
+
+Local Vite CORS handling is disabled so API endpoints can answer their own
+preflight requests with the backend's CORS policy.
 
 Validate with `npm run typecheck -w @market/silverstreak` and
 `npm run build -w @market/silverstreak`. The root integration suite exercises the

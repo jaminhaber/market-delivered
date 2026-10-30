@@ -1,4 +1,5 @@
 import { connectAssistant, mcpUrl, oauthPath } from './oauth';
+import { registerMcp } from '@market/mcp';
 import {
   test,
   expect,
@@ -69,8 +70,9 @@ async function mcp(
   token: string,
   method: string,
   params?: unknown,
+  path = '/mcp',
 ) {
-  return context.post('/mcp', {
+  return context.post(path, {
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json, text/event-stream',
@@ -736,13 +738,17 @@ test('administrator email settings remain encrypted and produce business-specifi
     'fastify',
   );
   const { createServer } = await import('@market/core/server');
-  const server = await createServer(db, {
-    secret: businessSecret,
-    adminSecret: 'e2e-admin-only-secret-not-for-production-123456789',
-    adminOrigin,
-    resendKey: 'platform-provider-key',
-    emailFrom: 'platform@example.test',
-  });
+  const server = await createServer(
+    db,
+    {
+      secret: businessSecret,
+      adminSecret: 'e2e-admin-only-secret-not-for-production-123456789',
+      adminOrigin,
+      resendKey: 'platform-provider-key',
+      emailFrom: 'platform@example.test',
+    },
+    registerMcp,
+  );
   const originalFetch = globalThis.fetch;
   const messages: { from: string; reply_to: string; text: string }[] = [];
   const keys: string[] = [];
@@ -799,6 +805,8 @@ test('administrator frontend forwards only admin routes to its configured backen
       '/oauth/auth/sign-in/email',
       '/.well-known/oauth-protected-resource/mcp',
       '/.well-known/oauth-authorization-server/oauth/auth',
+      `/networks/${silverId}/oauth/auth/oauth2/token`,
+      `/.well-known/oauth-authorization-server/networks/${silverId}/oauth/auth`,
     ]) {
       const response = proxy(new Request('https://admin.example.test' + path));
       expect(response.headers.get('x-middleware-rewrite')).toBe(
@@ -1075,7 +1083,9 @@ test('Silverstreak administrators manage business pages and OAuth setup', async 
     });
     const surfaceChoice = page.locator('#setup-surface');
     await expect(providerChoice).toHaveValue('chatgpt');
-    await expect(page.getByLabel('Connection address')).toHaveValue(mcpUrl);
+    await expect(page.getByLabel('Connection address')).toHaveValue(
+      silverOrigin + '/api/mcp',
+    );
     await providerChoice.selectOption('claude');
     await expect(providerChoice).toHaveValue('claude');
     await surfaceChoice.selectOption('terminal');
@@ -1086,7 +1096,10 @@ test('Silverstreak administrators manage business pages and OAuth setup', async 
       page.getByRole('link', {
         name: 'Manage assistant connections in Market Delivered',
       }),
-    ).toHaveAttribute('href', adminOrigin + '/oauth/connect');
+    ).toHaveAttribute(
+      'href',
+      adminOrigin + `/oauth/networks/${silverId}/connect`,
+    );
     await expect(providerChoice.locator('option')).toHaveCount(2);
     await db
       .update(networkMemberships)
@@ -1208,7 +1221,6 @@ test('one account-wide OAuth connection follows current permissions across netwo
       );
       for (const path of [
         '/admin/mcp',
-        '/networks/silverstreak/mcp',
         '/networks/silverstreak/auth/oauth2/token',
         '/.well-known/oauth-protected-resource/networks/silverstreak/mcp',
       ])
@@ -1476,6 +1488,416 @@ test('OAuth refresh replay and revocation enforce client ownership', async () =>
       ).status(),
     ).toBe(200);
     expect((await mcp(client, b.token, 'tools/list')).status()).toBe(401);
+  } finally {
+    await client.dispose();
+  }
+});
+
+test('Silverstreak MCP binds grants to its network across proxying, role changes, and token refresh', async () => {
+  const operator = await bootstrapGlobalAdmin(
+    db,
+    `scoped-mcp-${randomUUID()}@example.test`,
+    password,
+  );
+  await db.delete(userRoles).where(eq(userRoles.userId, operator.id));
+  await db.insert(networkMemberships).values(
+    [silverId, partnerId].map((networkId) => ({
+      networkId,
+      userId: operator.id,
+      role: 'network_admin' as const,
+    })),
+  );
+  const client = await requests.newContext({ baseURL: adminOrigin });
+  const shop = await requests.newContext({
+    baseURL: silverOrigin,
+    extraHTTPHeaders: {
+      Origin: 'https://assistant.example.test',
+      'X-Network-Id': partnerId,
+    },
+  });
+  const backend = await requests.newContext({ baseURL: businessOrigin });
+  const resource = silverOrigin + '/api/mcp';
+  const authPath = `/networks/${silverId}${oauthPath}`;
+  try {
+    const grant = await connectAssistant(operator.email, password, client, {
+      networkId: silverId,
+      resource,
+    });
+    const adminGrant = await connectAssistant(operator.email, password);
+    const challenge = await shop.post('/api/mcp', { data: {} });
+    expect(challenge.status()).toBe(401);
+    const preflight = await shop.fetch('/api/mcp', {
+      method: 'OPTIONS',
+      headers: {
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'authorization,content-type',
+      },
+    });
+    expect(preflight.status(), await preflight.text()).toBe(204);
+    expect(preflight.headers()['access-control-allow-origin']).toBe(
+      'https://assistant.example.test',
+    );
+    expect(preflight.headers()['access-control-allow-headers']).toContain(
+      'authorization',
+    );
+    expect(challenge.headers()['www-authenticate']).toContain(
+      silverOrigin + '/.well-known/oauth-protected-resource/api/mcp',
+    );
+    const metadata = await shop.get(
+      '/.well-known/oauth-protected-resource/api/mcp',
+    );
+    expect(metadata.status(), await metadata.text()).toBe(200);
+    expect(await metadata.json()).toMatchObject({
+      resource,
+      authorization_servers: [adminOrigin + authPath],
+    });
+    const discovery = await client.get(
+      `/.well-known/oauth-authorization-server/networks/${silverId}/oauth/auth`,
+    );
+    expect(discovery.status()).toBe(200);
+    expect((await discovery.json()).issuer).toBe(adminOrigin + authPath);
+    const catalog = await mcp(
+      shop,
+      grant.token,
+      'tools/list',
+      undefined,
+      '/api/mcp',
+    );
+    expect(catalog.status(), await catalog.text()).toBe(200);
+    expect(catalog.headers()['access-control-allow-origin']).toBe(
+      'https://assistant.example.test',
+    );
+    expect(catalog.headers()['cache-control']).toBe('no-store');
+    const tools = (await catalog.json()).result.tools as {
+      name: string;
+      inputSchema: { required?: string[] };
+    }[];
+    expect(tools.map((tool) => tool.name)).not.toContain('create_network');
+    expect(
+      tools.find((tool) => tool.name === 'list_markets')!.inputSchema
+        .required ?? [],
+    ).not.toContain('networkId');
+    const tool = async (name: string, args: Record<string, unknown> = {}) => {
+      const response = await mcp(
+        shop,
+        grant.token,
+        'tools/call',
+        { name, arguments: args },
+        '/api/mcp?network=' + partnerId,
+      );
+      expect(response.status(), await response.text()).toBe(200);
+      return (await response.json()).result;
+    };
+    expect(
+      JSON.parse((await tool('list_networks')).content[0].text).map(
+        (network: { id: string }) => network.id,
+      ),
+    ).toEqual([silverId]);
+    expect((await tool('list_markets')).isError).not.toBe(true);
+    expect((await tool('list_markets', { networkId: partnerId })).isError).toBe(
+      true,
+    );
+    expect(
+      (await tool('update_network', { settings: { slug: 'not-permitted' } }))
+        .isError,
+    ).toBe(true);
+    expect(
+      (
+        await mcp(shop, adminGrant.token, 'tools/list', undefined, '/api/mcp')
+      ).status(),
+    ).toBe(401);
+    expect((await mcp(client, grant.token, 'tools/list')).status()).toBe(401);
+    expect(
+      (
+        await mcp(
+          backend,
+          grant.token,
+          'tools/list',
+          undefined,
+          `/networks/${partnerId}/mcp`,
+        )
+      ).status(),
+    ).toBe(401);
+    expect(
+      (
+        await mcp(
+          backend,
+          grant.token,
+          'tools/list',
+          undefined,
+          `/networks/${silverId}/mcp`,
+        )
+      ).status(),
+    ).toBe(200);
+    for (const resourceOverride of [mcpUrl, 'http://localhost:4333/api/mcp']) {
+      const refresh = await client.post(authPath + '/oauth2/token', {
+        form: {
+          grant_type: 'refresh_token',
+          client_id: grant.clientId,
+          refresh_token: grant.refreshToken,
+          resource: resourceOverride,
+        },
+      });
+      expect(refresh.status(), await refresh.text()).toBe(400);
+    }
+    const crossedRefresh = await client.post(oauthPath + '/oauth2/token', {
+      form: {
+        grant_type: 'refresh_token',
+        client_id: grant.clientId,
+        refresh_token: grant.refreshToken,
+      },
+    });
+    expect(crossedRefresh.status(), await crossedRefresh.text()).toBe(400);
+    const refreshed = await client.post(authPath + '/oauth2/token', {
+      form: {
+        grant_type: 'refresh_token',
+        client_id: grant.clientId,
+        refresh_token: grant.refreshToken,
+        resource,
+      },
+    });
+    expect(refreshed.status(), await refreshed.text()).toBe(200);
+    const tokens = await refreshed.json();
+    expect(
+      (
+        await mcp(
+          shop,
+          tokens.access_token,
+          'tools/list',
+          undefined,
+          '/api/mcp',
+        )
+      ).status(),
+    ).toBe(200);
+    expect(
+      (await mcp(client, tokens.access_token, 'tools/list')).status(),
+    ).toBe(401);
+    await db
+      .insert(userRoles)
+      .values({ userId: operator.id, role: 'global_admin' });
+    expect((await tool('list_markets', { networkId: partnerId })).isError).toBe(
+      true,
+    );
+    expect(
+      (
+        await tool('update_network', {
+          settings: { slug: 'still-not-permitted' },
+        })
+      ).isError,
+    ).toBe(true);
+    const identity = JSON.parse((await tool('who_am_i')).content[0].text);
+    expect(identity).toMatchObject({
+      networkId: silverId,
+      globalAdmin: false,
+      networkAdmin: true,
+    });
+    const stillScoped = await mcp(
+      shop,
+      tokens.access_token,
+      'tools/list',
+      undefined,
+      '/api/mcp',
+    );
+    expect(
+      (await stillScoped.json()).result.tools.map(
+        (entry: { name: string }) => entry.name,
+      ),
+    ).not.toContain('create_network');
+    const [partner] = await db
+      .select({ origin: networks.frontendOrigin })
+      .from(networks)
+      .where(eq(networks.id, partnerId));
+    await db
+      .update(networks)
+      .set({ frontendOrigin: silverOrigin })
+      .where(eq(networks.id, partnerId));
+    try {
+      expect(
+        (
+          await mcp(
+            backend,
+            tokens.access_token,
+            'tools/list',
+            undefined,
+            `/networks/${partnerId}/mcp`,
+          )
+        ).status(),
+      ).toBe(401);
+      const sameOriginRefresh = await client.post(
+        `/networks/${partnerId}${oauthPath}/oauth2/token`,
+        {
+          form: {
+            grant_type: 'refresh_token',
+            client_id: grant.clientId,
+            refresh_token: tokens.refresh_token,
+          },
+        },
+      );
+      expect(sameOriginRefresh.status()).toBe(400);
+    } finally {
+      await db
+        .update(networks)
+        .set({ frontendOrigin: partner!.origin })
+        .where(eq(networks.id, partnerId));
+    }
+    await db.delete(userRoles).where(eq(userRoles.userId, operator.id));
+    await db
+      .update(networkMemberships)
+      .set({ role: 'member' })
+      .where(
+        and(
+          eq(networkMemberships.userId, operator.id),
+          eq(networkMemberships.networkId, silverId),
+        ),
+      );
+    expect(
+      (
+        await mcp(
+          shop,
+          tokens.access_token,
+          'tools/list',
+          undefined,
+          '/api/mcp',
+        )
+      ).status(),
+    ).toBe(403);
+    const login = await client.post(authPath + '/sign-in/email', {
+      headers: { Origin: adminOrigin },
+      data: { email: operator.email, password },
+    });
+    expect(login.status()).toBe(403);
+  } finally {
+    await client.dispose();
+    await shop.dispose();
+    await backend.dispose();
+  }
+});
+
+test('Silverstreak OAuth browser consent and disconnect remain separate from the admin connection', async ({
+  page,
+}) => {
+  const operator = await bootstrapGlobalAdmin(
+    db,
+    `scoped-browser-${randomUUID()}@example.test`,
+    password,
+  );
+  const adminGrant = await connectAssistant(operator.email, password);
+  const client = await requests.newContext({ baseURL: adminOrigin });
+  const authPath = `/networks/${silverId}${oauthPath}`;
+  const pagePath = `/oauth/networks/${silverId}`;
+  const resource = silverOrigin + '/api/mcp';
+  try {
+    const registration = await client.post(authPath + '/oauth2/register', {
+      data: {
+        client_name: 'Silverstreak browser assistant',
+        redirect_uris: [adminOrigin + pagePath + '/connect'],
+        token_endpoint_auth_method: 'none',
+        application_type: 'native',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        scope: 'mcp offline_access',
+      },
+    });
+    expect(registration.status(), await registration.text()).toBe(201);
+    const { client_id: clientId } = await registration.json();
+    const verifier = randomBytes(32).toString('base64url');
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: adminOrigin + pagePath + '/connect',
+      response_type: 'code',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+      code_challenge_method: 'S256',
+      scope: 'mcp offline_access',
+      resource,
+      state: randomUUID(),
+    });
+    const wrong = new URLSearchParams(params);
+    wrong.set('resource', mcpUrl);
+    expect(
+      (
+        await client.get(authPath + '/oauth2/authorize?' + wrong, {
+          maxRedirects: 0,
+        })
+      ).status(),
+    ).toBe(400);
+    await page.goto(adminOrigin + authPath + '/oauth2/authorize?' + params);
+    await page.getByLabel('Email', { exact: true }).fill(operator.email);
+    await page.getByLabel('Password', { exact: true }).fill(password);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(
+      page.getByText('Silverstreak browser assistant', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/This assistant can manage only Silverstreak/),
+    ).toBeVisible();
+    await page
+      .getByRole('button', { name: 'Allow access as me', exact: true })
+      .click();
+    await expect(page).toHaveURL(
+      (url) =>
+        url.pathname === pagePath + '/connect' && url.searchParams.has('code'),
+    );
+    const code = new URL(page.url()).searchParams.get('code')!;
+    const crossed = await client.post(oauthPath + '/oauth2/token', {
+      form: {
+        grant_type: 'authorization_code',
+        client_id: clientId,
+        redirect_uri: adminOrigin + pagePath + '/connect',
+        code,
+        code_verifier: verifier,
+      },
+    });
+    expect(crossed.status(), await crossed.text()).toBe(400);
+    const exchange = await client.post(authPath + '/oauth2/token', {
+      form: {
+        grant_type: 'authorization_code',
+        client_id: clientId,
+        redirect_uri: adminOrigin + pagePath + '/connect',
+        code,
+        code_verifier: verifier,
+        resource,
+      },
+    });
+    expect(exchange.status(), await exchange.text()).toBe(200);
+    const tokens = await exchange.json();
+    expect(
+      (
+        await client.post(silverOrigin + '/api/mcp', {
+          headers: {
+            Authorization: 'Bearer ' + tokens.access_token,
+            Accept: 'application/json, text/event-stream',
+          },
+          data: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        })
+      ).status(),
+    ).toBe(200);
+    await page.getByText('Connected assistants (1)', { exact: true }).click();
+    await expect(
+      page.getByRole('button', {
+        name: 'Disconnect Test assistant',
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await page
+      .getByRole('button', {
+        name: 'Disconnect Silverstreak browser assistant',
+        exact: true,
+      })
+      .click();
+    expect(
+      (
+        await client.post(silverOrigin + '/api/mcp', {
+          headers: {
+            Authorization: 'Bearer ' + tokens.access_token,
+            Accept: 'application/json, text/event-stream',
+          },
+          data: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        })
+      ).status(),
+    ).toBe(401);
+    expect((await mcp(client, adminGrant.token, 'tools/list')).status()).toBe(
+      200,
+    );
   } finally {
     await client.dispose();
   }

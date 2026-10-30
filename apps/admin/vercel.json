@@ -10,8 +10,10 @@
       "/admin/auth/:path*",
       "/mcp",
       "/oauth/auth/:path*",
+      "/networks/:networkId/oauth/auth/:path*",
       "/.well-known/oauth-protected-resource/mcp",
-      "/.well-known/oauth-authorization-server/oauth/auth"
+      "/.well-known/oauth-authorization-server/oauth/auth",
+      "/.well-known/oauth-authorization-server/networks/:networkId/oauth/auth"
     ]
   },
   "headers": [

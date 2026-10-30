@@ -1,10 +1,11 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { fromNodeHeaders } from 'better-auth/node';
-import { and, eq } from 'drizzle-orm';
+import { and, arrayContains, eq, isNull } from 'drizzle-orm';
 import * as s from '@market/db';
 import { createAuth } from './auth.js';
 import { forwardAuth } from './http.js';
-import { permissions } from './networks.js';
+import { permissions, resolveNetwork } from './networks.js';
+import { TRPCError } from '@trpc/server';
 import { OAUTH_BASE_PATH } from './oauth.js';
 import type { ServerConfig } from './server.js';
 
@@ -18,55 +19,116 @@ const oauthEndpoints = new Set([
   'oauth2/public-client',
 ]);
 
-export function createOAuth(db: s.Database, config: ServerConfig) {
+export function createOAuth(
+  db: s.Database,
+  config: ServerConfig,
+  network?: {
+    id: string;
+    name: string;
+    slug: string;
+    frontendOrigin: string | null;
+  },
+) {
   const origin = config.adminOrigin;
-  const resource = new URL('/mcp', origin).href;
+  if (
+    network &&
+    (!network.frontendOrigin ||
+      (config.production &&
+        new URL(network.frontendOrigin).protocol !== 'https:'))
+  )
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message:
+        'Configure the network frontend origin before connecting an assistant.',
+    });
+  const basePath = network
+    ? `/networks/${network.id}${OAUTH_BASE_PATH}`
+    : OAUTH_BASE_PATH;
+  const pagePath = network ? `/oauth/networks/${network.id}` : '/oauth';
+  const resource = new URL(
+    network ? '/api/mcp' : '/mcp',
+    network?.frontendOrigin ?? origin,
+  ).href;
+  const resourceMetadataPath =
+    '/.well-known/oauth-protected-resource' + new URL(resource).pathname;
   const auth = createAuth(db, {
     ...config,
     secret: config.adminSecret,
     baseURL: origin,
     webOrigin: origin,
-    basePath: OAUTH_BASE_PATH,
+    basePath,
     surface: 'oauth',
-    cookiePrefix: 'md-oauth',
+    cookiePrefix: network ? `md-oauth-${network.id}` : 'md-oauth',
     appName: 'Market Delivered',
-    oauth: { resource },
+    oauth: {
+      resource,
+      networkId: network?.id,
+      loginPage: pagePath + '/login',
+      consentPage: pagePath + '/authorize',
+    },
   });
-  return { auth, origin, resource };
+  return {
+    auth,
+    origin,
+    resource,
+    basePath,
+    resourceMetadataPath,
+    network: network
+      ? { id: network.id, name: network.name, slug: network.slug }
+      : undefined,
+  };
 }
 export type OAuth = ReturnType<typeof createOAuth>;
+export type OAuthSource = OAuth | ((request: FastifyRequest) => Promise<OAuth>);
+export const resolveOAuth = (source: OAuthSource, request: FastifyRequest) =>
+  typeof source === 'function' ? source(request) : source;
+
+export async function networkOAuth(
+  db: s.Database,
+  config: ServerConfig,
+  request: FastifyRequest,
+) {
+  const { networkId } = request.params as { networkId: string };
+  const network = await resolveNetwork(db, networkId);
+  return createOAuth(db, config, network);
+}
 
 export async function registerOAuthRoutes(
   app: FastifyInstance,
   db: s.Database,
-  oauth: OAuth,
+  source: OAuthSource,
+  paths = {
+    auth: OAUTH_BASE_PATH,
+    resource: '/.well-known/oauth-protected-resource/mcp',
+    discovery: '/.well-known/oauth-authorization-server/oauth/auth',
+  },
 ) {
-  const { auth, origin } = oauth;
   await app.register(async (app) => {
-    app.get('/.well-known/oauth-protected-resource/mcp', (request, reply) =>
-      forwardAuth(
+    app.get(paths.resource, async (request, reply) => {
+      const { auth, origin, resourceMetadataPath } = await resolveOAuth(
+        source,
+        request,
+      );
+      return forwardAuth(auth, origin, request, reply, resourceMetadataPath);
+    });
+    app.get(paths.discovery, async (request, reply) => {
+      const { auth, origin, basePath } = await resolveOAuth(source, request);
+      return forwardAuth(
         auth,
         origin,
         request,
         reply,
-        '/.well-known/oauth-protected-resource/mcp',
-      ),
-    );
-    app.get(
-      '/.well-known/oauth-authorization-server/oauth/auth',
-      (request, reply) =>
-        forwardAuth(
-          auth,
-          origin,
-          request,
-          reply,
-          `${OAUTH_BASE_PATH}/.well-known/oauth-authorization-server`,
-        ),
-    );
+        `${basePath}/.well-known/oauth-authorization-server`,
+      );
+    });
     app.route({
       method: ['GET', 'POST'],
-      url: `${OAUTH_BASE_PATH}/*`,
+      url: `${paths.auth}/*`,
       async handler(request, reply) {
+        const { auth, origin, resource, network } = await resolveOAuth(
+          source,
+          request,
+        );
         reply.header('Cache-Control', 'no-store');
         const suffix = (request.params as { '*': string })['*'];
         // Connection management has one owner-checked disconnect path. Do not
@@ -88,6 +150,7 @@ export async function registerOAuthRoutes(
             return {
               ...current.user,
               ...(await permissions(db, current.user.id)),
+              connection: { resource, network },
             };
           }
           if (request.method === 'GET') {
@@ -103,7 +166,15 @@ export async function registerOAuthRoutes(
                 s.oauthClient,
                 eq(s.oauthClient.clientId, s.oauthConsent.clientId),
               )
-              .where(eq(s.oauthConsent.userId, current.user.id));
+              .where(
+                and(
+                  eq(s.oauthConsent.userId, current.user.id),
+                  arrayContains(s.oauthConsent.resources, [resource]),
+                  network
+                    ? eq(s.oauthConsent.referenceId, network.id)
+                    : isNull(s.oauthConsent.referenceId),
+                ),
+              );
             return { connections };
           }
           if (request.headers.origin !== origin)
@@ -118,6 +189,10 @@ export async function registerOAuthRoutes(
                 and(
                   eq(s.oauthConsent.id, body.id as string),
                   eq(s.oauthConsent.userId, current.user.id),
+                  arrayContains(s.oauthConsent.resources, [resource]),
+                  network
+                    ? eq(s.oauthConsent.referenceId, network.id)
+                    : isNull(s.oauthConsent.referenceId),
                 ),
               )
               .returning();
@@ -125,6 +200,10 @@ export async function registerOAuthRoutes(
             const match = [
               eq(s.oauthAccessToken.userId, current.user.id),
               eq(s.oauthAccessToken.clientId, grant.clientId),
+              arrayContains(s.oauthAccessToken.resources, [resource]),
+              network
+                ? eq(s.oauthAccessToken.referenceId, network.id)
+                : isNull(s.oauthAccessToken.referenceId),
             ];
             await tx.delete(s.oauthAccessToken).where(and(...match));
             await tx
@@ -134,6 +213,10 @@ export async function registerOAuthRoutes(
                 and(
                   eq(s.oauthRefreshToken.userId, current.user.id),
                   eq(s.oauthRefreshToken.clientId, grant.clientId),
+                  arrayContains(s.oauthRefreshToken.resources, [resource]),
+                  network
+                    ? eq(s.oauthRefreshToken.referenceId, network.id)
+                    : isNull(s.oauthRefreshToken.referenceId),
                 ),
               );
           });

@@ -15,11 +15,17 @@ export async function connectAssistant(
   email: string,
   password: string,
   context?: APIRequestContext,
+  connection?: { networkId: string; resource: string },
 ) {
   const client =
     context ?? (await requests.newContext({ baseURL: oauthOrigin }));
   try {
-    const registration = await client.post(oauthPath + '/oauth2/register', {
+    const authPath = connection
+      ? `/networks/${connection.networkId}${oauthPath}`
+      : oauthPath;
+    const resource = connection?.resource ?? mcpUrl;
+    const scope = 'mcp offline_access';
+    const registration = await client.post(authPath + '/oauth2/register', {
       data: {
         client_name: 'Test assistant',
         redirect_uris: ['http://localhost:9999/callback'],
@@ -27,12 +33,12 @@ export async function connectAssistant(
         application_type: 'native',
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
-        scope: 'mcp offline_access',
+        scope,
       },
     });
     expect(registration.status(), await registration.text()).toBe(201);
     const { client_id: clientId } = await registration.json();
-    const login = await client.post(oauthPath + '/sign-in/email', {
+    const login = await client.post(authPath + '/sign-in/email', {
       headers: { Origin: oauthOrigin },
       data: { email, password },
     });
@@ -44,33 +50,37 @@ export async function connectAssistant(
       response_type: 'code',
       code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       code_challenge_method: 'S256',
-      scope: 'mcp offline_access',
-      resource: mcpUrl,
+      scope,
+      resource,
       state: randomUUID(),
     });
     const authorization = await client.get(
-      oauthPath + '/oauth2/authorize?' + query,
+      authPath + '/oauth2/authorize?' + query,
       { maxRedirects: 0 },
     );
     expect([302, 303], await authorization.text()).toContain(
       authorization.status(),
     );
     const consentUrl = new URL(authorization.headers().location!, oauthOrigin);
-    expect(consentUrl.pathname).toBe('/oauth/authorize');
-    const consent = await client.post(oauthPath + '/oauth2/consent', {
+    expect(consentUrl.pathname).toBe(
+      connection
+        ? `/oauth/networks/${connection.networkId}/authorize`
+        : '/oauth/authorize',
+    );
+    const consent = await client.post(authPath + '/oauth2/consent', {
       headers: { Origin: oauthOrigin },
       data: { accept: true, oauth_query: consentUrl.search.slice(1) },
     });
     expect(consent.status(), await consent.text()).toBe(200);
     const callback = new URL((await consent.json()).url);
-    const exchange = await client.post(oauthPath + '/oauth2/token', {
+    const exchange = await client.post(authPath + '/oauth2/token', {
       form: {
         grant_type: 'authorization_code',
         client_id: clientId,
         redirect_uri: 'http://localhost:9999/callback',
         code: callback.searchParams.get('code')!,
         code_verifier: verifier,
-        resource: mcpUrl,
+        resource,
       },
     });
     expect(exchange.status(), await exchange.text()).toBe(200);

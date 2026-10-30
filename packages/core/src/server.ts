@@ -1,4 +1,4 @@
-import type { FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
 import { TRPCError } from '@trpc/server';
@@ -9,11 +9,15 @@ import { appRouter } from './router.js';
 import { createAuth } from './auth.js';
 import { permissions, resolveNetwork, networkEmailConfig } from './networks.js';
 import { registerJobs } from './jobs.js';
-import { registerMcp } from './mcp.js';
 import { webOrigins } from './origins.js';
 import { createHttpServer, forwardAuth } from './http.js';
 import { registerAdminRoutes } from './admin-routes.js';
-import { createOAuth, registerOAuthRoutes } from './oauth-routes.js';
+import {
+  createOAuth,
+  registerOAuthRoutes,
+  networkOAuth,
+  type OAuthSource,
+} from './oauth-routes.js';
 
 export type ServerConfig = {
   secret: string;
@@ -25,7 +29,19 @@ export type ServerConfig = {
   cronSecret?: string;
   googleMapsKey?: string;
 };
-export async function createServer(db: Database, config: ServerConfig) {
+export type AssistantRouteRegistrar = (
+  app: FastifyInstance,
+  db: Database,
+  config: ServerConfig,
+  oauth: OAuthSource,
+  path?: string,
+) => void | Promise<void>;
+
+export async function createServer(
+  db: Database,
+  config: ServerConfig,
+  registerAssistantRoutes: AssistantRouteRegistrar,
+) {
   const server = createHttpServer(db);
   const oauth = createOAuth(db, config);
   await server.register(async (server) => {
@@ -33,6 +49,9 @@ export async function createServer(db: Database, config: ServerConfig) {
       const identityRoute =
         request.url.split('?')[0] === '/mcp' ||
         request.url.startsWith('/oauth/auth/') ||
+        /^\/networks\/[^/]+\/(?:mcp(?:\?|$)|oauth\/auth\/|\.well-known\/)/.test(
+          request.url,
+        ) ||
         request.url.startsWith('/.well-known/oauth-');
       if (identityRoute)
         return {
@@ -65,7 +84,23 @@ export async function createServer(db: Database, config: ServerConfig) {
       };
     });
     await registerOAuthRoutes(server, db, oauth);
-    registerMcp(server, db, config, oauth);
+    await registerAssistantRoutes(server, db, config, oauth);
+    const scopedOAuth: OAuthSource = (request) =>
+      networkOAuth(db, config, request);
+    await registerOAuthRoutes(server, db, scopedOAuth, {
+      auth: '/networks/:networkId/oauth/auth',
+      resource:
+        '/networks/:networkId/.well-known/oauth-protected-resource/api/mcp',
+      discovery:
+        '/.well-known/oauth-authorization-server/networks/:networkId/oauth/auth',
+    });
+    await registerAssistantRoutes(
+      server,
+      db,
+      config,
+      scopedOAuth,
+      '/networks/:networkId/mcp',
+    );
     async function requestAuth(headers: {
       [key: string]: string | string[] | undefined;
     }) {

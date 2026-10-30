@@ -38,12 +38,11 @@ const setup = connection
   ? getSetupInstructions({
       provider,
       interface: surface,
-      serverName: 'market-delivered',
-      displayName: 'Market Delivered',
+      serverName: 'silverstreak',
+      displayName: 'Silverstreak',
       serverUrl: connection.url,
       approvalLabel: 'Allow access as me',
-      examplePrompt:
-        'Use Market Delivered to list the networks I can access, then list Silverstreak’s upcoming markets.',
+      examplePrompt: 'Use Silverstreak to list upcoming markets.',
     })
   : null;
 ---
@@ -63,9 +62,8 @@ const setup = connection
         <section class="mcp-setup">
           <h2>Connect your assistant</h2>
           <p>
-            Connect once to Market Delivered. Your assistant uses your current
-            permissions across the networks you administer, including platform
-            administration if you have that permission.
+            Connect your assistant to Silverstreak. This connection can manage
+            only Silverstreak, using your current administrator permissions.
           </p>
           <form method="get" class="mcp-choices">
             <label>
@@ -88,7 +86,6 @@ const setup = connection
                 ))}
               </select>
             </label>
-            <button class="quiet-button">Show instructions</button>
           </form>
           <McpInstructionBlocks blocks={setup.blocks} />
           <p>

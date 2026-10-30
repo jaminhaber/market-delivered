@@ -7,7 +7,7 @@ export default defineConfig({
   outExtension: () => ({ js: '.mjs' }),
   platform: 'node',
   target: 'node24',
-  noExternal: ['@market/core', '@market/db'],
+  noExternal: ['@market/core', '@market/db', '@market/mcp'],
   external: ['pg'],
   clean: true,
   sourcemap: true,

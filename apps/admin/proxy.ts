@@ -8,6 +8,10 @@ export default function proxy(request: Request) {
     !/^\/(?:mcp|oauth\/auth\/.+|admin\/(?:trpc(?:\/[^/]+)?|auth\/.+))$/.test(
       url.pathname,
     ) &&
+    !/^\/networks\/[0-9a-f-]+\/oauth\/auth\/.+$/.test(url.pathname) &&
+    !/^\/\.well-known\/oauth-authorization-server\/networks\/[0-9a-f-]+\/oauth\/auth$/.test(
+      url.pathname,
+    ) &&
     !/^\/\.well-known\/oauth-(?:protected-resource\/mcp|authorization-server\/oauth\/auth)$/.test(
       url.pathname,
     )

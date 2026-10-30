@@ -100,8 +100,11 @@ const orderListInput = z.object({
 });
 export const appRouter = t.router({
   assistantConnection: t.procedure.query(({ ctx }) => ({
-    url: new URL('/mcp', ctx.oauthOrigin).href,
-    connectUrl: new URL('/oauth/connect', ctx.oauthOrigin).href,
+    url: new URL('/api/mcp', ctx.network.frontendOrigin!).href,
+    connectUrl: new URL(
+      `/oauth/networks/${ctx.network.id}/connect`,
+      ctx.oauthOrigin,
+    ).href,
   })),
   me: t.procedure.query(async ({ ctx }) => {
     if (!ctx.actor) return null;

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { authClient as adminClient, oauthClient } from './auth';
+import { authClient as adminClient, oauthClient, oauthPagePath } from './auth';
 import { Panel, useAction } from './ui';
 
 export function AuthForm({ oauth = false }: { oauth?: boolean }) {
@@ -7,8 +7,8 @@ export function AuthForm({ oauth = false }: { oauth?: boolean }) {
   const params = new URLSearchParams(location.search);
   const returnTo = oauth
     ? params.has('client_id')
-      ? '/oauth/authorize' + location.search
-      : '/oauth/connect'
+      ? oauthPagePath('authorize') + location.search
+      : oauthPagePath('connect')
     : '/';
   const token = params.get('token') || '';
   const [mode, setMode] = useState<'signin' | 'forgot' | 'reset'>(
@@ -31,7 +31,7 @@ export function AuthForm({ oauth = false }: { oauth?: boolean }) {
                   email,
                   redirectTo:
                     location.origin +
-                    (oauth ? '/oauth/login' + location.search : '/'),
+                    (oauth ? oauthPagePath('login') + location.search : '/'),
                 })
               : await authClient.resetPassword({
                   newPassword: password,

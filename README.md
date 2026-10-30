@@ -13,13 +13,16 @@ network ID; its pages have no network selector or platform configuration.
 | `apps/admin`        | Dashboard and account-wide assistant connections       | http://localhost:5173      |
 | `apps/silverstreak` | Astro SSR website, customer accounts, shopping, orders | http://localhost:4321      |
 | `packages/core`     | Shared backend implementation                          | Used by the shared backend |
+| `packages/mcp`      | Reusable server-side MCP tools and transport           | Imported by backend apps   |
 | `packages/db`       | PostgreSQL schema, migrations, network scoping, jobs   | Managed PostgreSQL         |
 
 One backend serves business routes at `/trpc`, global administration at
-`/admin/trpc`, and one account-wide assistant endpoint at `/mcp`. Assistant OAuth
-runs at `ADMIN_ORIGIN/oauth/auth`; users connect through `/oauth/connect`.
-The same token identifies the user for platform and business tools, which check
-current roles on every operation. Business tools require an explicit `networkId`.
+`/admin/trpc`, and an account-wide admin assistant endpoint at `/mcp`. Silverstreak
+exposes a separate, network-bound `/api/mcp` proxy. OAuth login and consent run on
+the admin origin, with separate issuer paths for network grants. See [MCP](docs/mcp.md).
+Admin connection tokens identify the user for platform and business tools, which
+check current roles on every operation and require explicit network IDs. A
+Silverstreak connection defaults to its fixed network and rejects other IDs.
 Business website and administrator dashboard sessions remain separate.
 
 ## Run locally
@@ -68,8 +71,8 @@ The invitation points at Silverstreak’s `/account` page. Customers can join, s
 a delivery address, order from an open market, and view/cancel their orders.
 Orders use cash on delivery and the existing fulfillment model. Silverstreak
 administrators use the **Admin** profile-menu entry for business management tabs
-and MCP setup. Driver fulfillment remains available through the business API or
-MCP with an explicit network ID.
+and MCP setup. Driver fulfillment remains available through the business API.
+MCP supports order inspection, catalog management, and scheduling.
 
 ## Checks
 

@@ -9,17 +9,24 @@ import {
   type InterfaceId,
 } from '@market/mcp-instructions';
 
-export function McpSetupInstructions() {
+export function McpSetupInstructions({
+  serverUrl,
+  displayName = 'Market Delivered',
+  serverName = 'market-delivered',
+}: { serverUrl?: string; displayName?: string; serverName?: string } = {}) {
   const [provider, setProvider] = useState<ProviderId>('chatgpt');
   const [surface, setSurface] = useState<InterfaceId>('desktop');
   const setup = getSetupInstructions({
     provider,
     interface: surface,
-    serverName: 'market-delivered',
-    displayName: 'Market Delivered',
-    serverUrl: new URL('/mcp', location.origin).href,
+    serverName,
+    displayName,
+    serverUrl: serverUrl ?? new URL('/mcp', location.origin).href,
     approvalLabel: 'Allow access as me',
-    examplePrompt: 'Use Market Delivered to list the networks I can access.',
+    examplePrompt:
+      serverName === 'market-delivered'
+        ? 'Use Market Delivered to list the networks I can access.'
+        : `Use ${displayName} to list upcoming markets.`,
   });
   return (
     <div className="mcp-setup">

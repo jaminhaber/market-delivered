@@ -14,8 +14,15 @@ addresses, approvals, orders, or credentials.
 3. Configure email identity and business support/location settings on the admin API.
 4. Deploy its own frontend, pointing its server at the shared public API and
    attaching its fixed `X-Network-Id` on every business/auth request.
-5. Have the owner connect an assistant at `ADMIN_ORIGIN/oauth/connect`. The same
-   connection follows their current permissions; business tools take explicit network IDs.
+5. Expose `/api/mcp` and its resource-discovery route using `@market/mcp/proxy`
+   with the frontend's fixed network UUID. Have the owner connect through that
+   frontend's MCP setup page. Silverstreak provides this at `/mcp`; its consent
+   and connection management use `ADMIN_ORIGIN/oauth/networks/<id>/connect`.
+   The grant stays restricted to that network even if the owner gains global
+   permission. See [MCP](mcp.md) for routing and discovery details.
+
+The separate admin connection at `ADMIN_ORIGIN/oauth/connect` follows current
+account-wide permissions and requires explicit network IDs in business tools.
 
 No backend deployment or database is created per business. Browser authentication
 uses the registered frontend origin and host-only cookies; use a same-origin

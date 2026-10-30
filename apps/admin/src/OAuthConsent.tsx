@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { AuthForm } from './Account';
-import { oauthClient } from './auth';
+import { oauthClient, oauthBasePath, oauthPagePath } from './auth';
 import { McpSetupInstructions } from './McpSetupInstructions';
 import { useQuery } from '@tanstack/react-query';
 import { ErrorState, Loading, Panel, useAction } from './ui';
 
 async function oauthRequest(path: string, body?: unknown) {
-  const response = await fetch('/oauth/auth/oauth2/' + path, {
+  const response = await fetch(oauthBasePath + '/oauth2/' + path, {
     credentials: 'same-origin',
     ...(body === undefined
       ? {}
@@ -23,7 +23,7 @@ async function oauthRequest(path: string, body?: unknown) {
   return response.json();
 }
 
-function OAuthConsent() {
+function OAuthConsent({ networkName }: { networkName?: string }) {
   const oauthQuery = location.search.slice(1);
   const params = new URLSearchParams(location.search);
   const client = useQuery({
@@ -65,13 +65,19 @@ function OAuthConsent() {
                   client.data.name ||
                   'Your AI assistant'}
               </strong>{' '}
-              is asking to act as you in Market Delivered.
+              is asking to act as you in {networkName ?? 'Market Delivered'}.
             </p>
             <p>
-              This assistant can act across the networks you administer, and can
-              perform platform administration if you have that permission. Every
-              operation uses your current permissions. New permissions you
-              receive also apply to this connection.
+              {networkName ? (
+                `This assistant can manage only ${networkName}. It cannot manage other networks or perform platform administration. Every operation uses your current permissions in ${networkName}.`
+              ) : (
+                <>
+                  This assistant can act across the networks you administer, and
+                  can perform platform administration if you have that
+                  permission. Every operation uses your current permissions. New
+                  permissions you receive also apply to this connection.
+                </>
+              )}
             </p>
             <p>You can disconnect it at any time from Assistant connections.</p>
             <div className="inline-actions">
@@ -95,9 +101,9 @@ function OAuthConsent() {
 
 export function OAuthConnections() {
   const connections = useQuery({
-    queryKey: ['oauth-connections'],
+    queryKey: ['oauth-connections', oauthBasePath],
     queryFn: async () => {
-      const response = await fetch('/oauth/auth/connections');
+      const response = await fetch(oauthBasePath + '/connections');
       if (!response.ok) throw new Error('Unable to load connected assistants.');
       return response.json() as Promise<{
         connections: { id: string; name: string | null }[];
@@ -123,11 +129,14 @@ export function OAuthConnections() {
                 disabled={busy}
                 onClick={() =>
                   void act(async () => {
-                    const response = await fetch('/oauth/auth/connections', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ id: item.id }),
-                    });
+                    const response = await fetch(
+                      oauthBasePath + '/connections',
+                      {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: item.id }),
+                      },
+                    );
                     if (!response.ok)
                       throw new Error('Unable to disconnect assistant.');
                     await connections.refetch();
@@ -146,15 +155,19 @@ export function OAuthConnections() {
 
 export function OAuthPage() {
   const identity = useQuery({
-    queryKey: ['oauth-identity'],
+    queryKey: ['oauth-identity', oauthBasePath],
     queryFn: async () => {
-      const response = await fetch('/oauth/auth/identity');
+      const response = await fetch(oauthBasePath + '/identity');
       if (response.status === 401) return null;
       if (!response.ok) throw new Error('Unable to load your account.');
       return response.json() as Promise<{
         name: string;
         email: string;
         globalAdmin: boolean;
+        connection: {
+          resource: string;
+          network?: { id: string; name: string; slug: string };
+        };
       }>;
     },
     retry: false,
@@ -168,18 +181,26 @@ export function OAuthPage() {
           <Loading />
         ) : identity.isError ? (
           <ErrorState error={identity.error} />
-        ) : !identity.data || location.pathname === '/oauth/login' ? (
+        ) : !identity.data || location.pathname === oauthPagePath('login') ? (
           <AuthForm oauth />
-        ) : location.pathname === '/oauth/authorize' ? (
-          <OAuthConsent />
+        ) : location.pathname === oauthPagePath('authorize') ? (
+          <OAuthConsent networkName={identity.data.connection.network?.name} />
         ) : (
           <>
             <h1>Assistant connections</h1>
             <p>
               Signed in as {identity.data.email}. Assistants use your current
-              permissions across Market Delivered.
+              permissions{' '}
+              {identity.data.connection.network
+                ? `only in ${identity.data.connection.network.name}`
+                : 'across Market Delivered'}
+              .
             </p>
-            <McpSetupInstructions />
+            <McpSetupInstructions
+              serverUrl={identity.data.connection.resource}
+              displayName={identity.data.connection.network?.name}
+              serverName={identity.data.connection.network?.slug}
+            />
             <OAuthConnections />
             <button
               className="secondary"
@@ -188,7 +209,7 @@ export function OAuthPage() {
                   .signOut()
                   .then((result) => {
                     if (result.error) throw new Error(result.error.message);
-                    location.assign('/oauth/connect');
+                    location.assign(oauthPagePath('connect'));
                   })
                   .catch(setError)
               }

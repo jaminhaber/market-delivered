@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { createEmailSender } from './email.js';
+import { createEmailSender } from '@market/core/email';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type {
@@ -30,7 +30,7 @@ import {
   runInput,
   scheduleInput,
   scheduleInventoryInput,
-} from './operations.js';
+} from '@market/core/operations';
 import {
   permissions,
   resolveNetwork,
@@ -39,11 +39,11 @@ import {
   networkInput,
   networkSettingsInput,
   membershipInput,
-} from './networks.js';
-import { MCP_SCOPE, oauthIdentity } from './oauth.js';
-import type { OAuth } from './oauth-routes.js';
-import type { ServerConfig } from './server.js';
-import { orderDetails, recentJobRuns } from './queries.js';
+} from '@market/core/networks';
+import { MCP_SCOPE, oauthIdentity } from '@market/core/oauth';
+import { resolveOAuth, type OAuthSource } from '@market/core/oauth-routes';
+import type { ServerConfig } from '@market/core/server';
+import { orderDetails, recentJobRuns } from '@market/core/queries';
 
 const result = (value: unknown): CallToolResult => ({
   content: [{ type: 'text', text: JSON.stringify(value) }],
@@ -78,25 +78,29 @@ export function registerMcp(
   app: FastifyInstance,
   rootDb: s.Database,
   defaults: ServerConfig,
-  oauth: OAuth,
+  source: OAuthSource,
+  path = '/mcp',
 ) {
   app.register(async (app) => {
     app.route({
       method: ['GET', 'POST', 'DELETE'],
-      url: '/mcp',
+      url: path,
       async handler(request, reply) {
+        const oauth = await resolveOAuth(source, request);
+        const boundNetworkId = oauth.network?.id;
         reply.header('Cache-Control', 'no-store');
         const userId = await oauthIdentity(
           rootDb,
           oauth.auth,
           fromNodeHeaders(request.headers),
           oauth.resource,
+          boundNetworkId,
         );
         if (!userId)
           return reply
             .header(
               'WWW-Authenticate',
-              `Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/mcp', oauth.origin).href}", scope="${MCP_SCOPE} offline_access"`,
+              `Bearer resource_metadata="${new URL(oauth.resourceMetadataPath, new URL(oauth.resource).origin).href}", scope="${MCP_SCOPE} offline_access"`,
             )
             .code(401)
             .send({ error: 'Connect your assistant to Market Delivered.' });
@@ -111,21 +115,49 @@ export function registerMcp(
           .where(eq(s.user.id, userId));
         if (!person)
           return reply.code(401).send({ error: 'Account no longer exists' });
-        const access = await permissions(rootDb, userId);
+        const currentAccess = await permissions(rootDb, userId, boundNetworkId);
+        if (
+          boundNetworkId &&
+          !currentAccess.globalAdmin &&
+          !currentAccess.networkAdmin
+        )
+          return reply
+            .code(403)
+            .send({ error: 'Network administrator access required' });
+        const access = boundNetworkId
+          ? {
+              ...currentAccess,
+              globalAdmin: false,
+              networkAdmin:
+                currentAccess.globalAdmin || currentAccess.networkAdmin,
+            }
+          : currentAccess;
         const actor = {
           id: person.id,
           name: person.name,
           email: person.email,
           ...access,
-          admin: access.globalAdmin,
+          admin: access.globalAdmin || access.networkAdmin,
         };
         const mcp = new McpServer({
           name: 'market-delivered',
           version: '4.0.0',
         });
         async function networkContext(networkId: string) {
+          ensure(
+            !boundNetworkId || networkId === boundNetworkId,
+            'This connection is restricted to its own network',
+            'FORBIDDEN',
+          );
           const network = await resolveNetwork(rootDb, networkId);
-          const access = await permissions(rootDb, userId!, network.id);
+          const current = await permissions(rootDb, userId!, network.id);
+          const access = boundNetworkId
+            ? {
+                ...current,
+                globalAdmin: false,
+                networkAdmin: current.globalAdmin || current.networkAdmin,
+              }
+            : current;
           ensure(
             access.globalAdmin || access.networkAdmin,
             'Network administrator access required',
@@ -184,9 +216,14 @@ export function registerMcp(
           ) => Promise<CallToolResult>,
         ) {
           const inputSchema = config.inputSchema.safeExtend({
-            networkId: z
-              .uuid()
-              .describe('Explicit network ID from list_networks.'),
+            networkId: boundNetworkId
+              ? z
+                  .uuid()
+                  .optional()
+                  .describe(
+                    'Optional network ID; must match this connection’s network.',
+                  )
+              : z.uuid().describe('Explicit network ID from list_networks.'),
           });
           mcp.registerTool(name, { ...config, inputSchema }, async (input) => {
             try {
@@ -195,7 +232,7 @@ export function registerMcp(
               } & Record<string, unknown>;
               return await handler(
                 values as z.output<T>,
-                await networkContext(networkId),
+                await networkContext(networkId ?? boundNetworkId!),
               );
             } catch (error) {
               return failure(error);
@@ -206,11 +243,15 @@ export function registerMcp(
           'who_am_i',
           {
             description:
-              'Read your account identity and current platform permissions.',
+              'Read your account identity and current permissions for this connection.',
             inputSchema: {},
             annotations: readOnly,
           },
-          () => call(async () => actor),
+          () =>
+            call(async () => ({
+              ...actor,
+              ...(boundNetworkId ? { networkId: boundNetworkId } : {}),
+            })),
         );
         mcp.registerTool(
           'list_networks',
@@ -240,9 +281,14 @@ export function registerMcp(
                 .where(
                   and(
                     isNull(s.networks.deletedAt),
+                    boundNetworkId
+                      ? eq(s.networks.id, boundNetworkId)
+                      : undefined,
                     access.globalAdmin
                       ? undefined
-                      : eq(s.networkMemberships.userId, userId!),
+                      : boundNetworkId
+                        ? undefined
+                        : eq(s.networkMemberships.userId, userId!),
                   ),
                 )
                 .orderBy(s.networks.name, s.networks.id);

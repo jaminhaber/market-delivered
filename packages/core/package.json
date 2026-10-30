@@ -15,7 +15,6 @@
     "@better-auth/oauth-provider": "^1.7.14",
     "@fastify/cors": "^11.0.0",
     "@market/db": "*",
-    "@modelcontextprotocol/sdk": "^1.28.0",
     "@trpc/server": "^11.0.0",
     "@vercel/functions": "^3.10.2",
     "better-auth": "^1.7.12",

@@ -4,6 +4,11 @@ Use Node 24 (`.nvmrc`) and npm workspaces. `apps/api` is the single Fastify entr
 separate public/admin router registries. `apps/admin` is a minimal React/Vite
 application. `apps/silverstreak` uses Astro SSR and server-side typed API calls.
 
+`packages/mcp` provides the shared server-side MCP tools and HTTP transport.
+`apps/api` imports `registerMcp` from `@market/mcp` and supplies it to the core
+server factory. See the [package guide](../packages/mcp/README.md) for reuse in
+another app. Core business logic does not depend on the MCP package.
+
 `packages/mcp-instructions` provides shared MCP provider/interface discovery and
 structured OAuth setup instructions. Both frontends render this content
 with their own components. See its [package guide](../packages/mcp-instructions/README.md)

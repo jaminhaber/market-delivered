@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@market/core": "*",
+    "@market/mcp": "*",
     "@better-auth/drizzle-adapter": "^1.7.12",
     "@fastify/cors": "^11.0.0",
     "@market/db": "*",

@@ -1,0 +1,22 @@
+{
+  "name": "@market/mcp",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./proxy": "./src/proxy.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@market/core": "*",
+    "@market/db": "*",
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "@trpc/server": "^11.0.0",
+    "better-auth": "^1.7.12",
+    "drizzle-orm": "^0.45.4",
+    "fastify": "^5.0.0",
+    "zod": "^4.6.7"
+  }
+}

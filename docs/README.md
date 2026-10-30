@@ -9,7 +9,7 @@
 | [Workflows](workflows.md)          | Silverstreak customers and API/MCP operations                            |
 | [Configuration](configuration.md)  | Secrets, business domains, email identity, and support/location settings |
 | [Networks and access](networks.md) | Onboarding businesses, roles, credentials, and isolation                 |
-| [MCP](mcp.md)                      | Separate platform and business tool catalogs                             |
+| [MCP](mcp.md)                      | Admin and network-bound connections, OAuth, discovery, and permissions   |
 | [Jobs](jobs.md)                    | Scheduling, closing markets, and cron                                    |
 | [Development](development.md)      | Workspace layout, migrations, and checks                                 |
 | [Deployment](deployment.md)        | Three Vercel projects and environment settings                           |

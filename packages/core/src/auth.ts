@@ -67,7 +67,7 @@ export function createAuth(db: Database, config: AuthConfig) {
     }),
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
-        if (config.oauth) await checkOAuthRequest(ctx);
+        if (config.oauth) await checkOAuthRequest(ctx, config.oauth);
         if (ctx.path !== '/reset-password') return;
         const token = ctx.body?.token || ctx.query?.token;
         if (typeof token !== 'string') return;
@@ -127,6 +127,17 @@ export function createAuth(db: Database, config: AuthConfig) {
       session: {
         create: {
           before: async (session) => {
+            if (config.oauth?.networkId) {
+              const access = await permissions(
+                db,
+                session.userId,
+                config.oauth.networkId,
+              );
+              if (!access.globalAdmin && !access.networkAdmin)
+                throw new APIError('FORBIDDEN', {
+                  message: 'Network administrator access required.',
+                });
+            }
             if (
               config.surface === 'admin' &&
               !(await permissions(db, session.userId)).globalAdmin

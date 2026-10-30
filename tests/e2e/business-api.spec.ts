@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { connectAssistant } from './oauth';
 import { createOAuth } from '../../packages/core/src/oauth-routes.js';
-import { registerMcp } from '../../packages/core/src/mcp.js';
+import { registerMcp } from '@market/mcp';
 import {
   addressInput,
   geocodeAddress,
@@ -1980,11 +1980,15 @@ test('fresh migrations create no network or implicit business ownership and rema
       password,
     );
     const adminOrigin = 'http://localhost:5190';
-    const platform = await createServer(fresh.db, {
-      adminSecret: 'empty-admin-test-secret-at-least-32-characters',
-      secret: 'empty-business-test-secret-at-least-32-characters',
-      adminOrigin,
-    });
+    const platform = await createServer(
+      fresh.db,
+      {
+        adminSecret: 'empty-admin-test-secret-at-least-32-characters',
+        secret: 'empty-business-test-secret-at-least-32-characters',
+        adminOrigin,
+      },
+      registerMcp,
+    );
     try {
       const login = await platform.inject({
         method: 'POST',

@@ -32,8 +32,10 @@ Copy blocks include their label, button label, value, and kind (`address` or
 OAuth consent button name; it defaults to `Allow access to <displayName>`.
 
 `listInterfaces('chatgpt')` and `listInterfaces('claude')` return Desktop app
-and Terminal. Both use the same account-wide OAuth connection. API token creation
-and credential-file instructions are not supported.
+and Terminal. Both use OAuth for the supplied `serverUrl`. The admin URL provides
+an account-wide connection; Silverstreak supplies its own `/api/mcp` URL for a
+network-only connection. Use distinct `serverName` values so both connections can
+coexist in a client. API token creation and credential-file instructions are not supported.
 
 Silverstreak uses the Astro renderer in
 `apps/silverstreak/src/components/McpInstructionBlocks.astro`. The admin app uses

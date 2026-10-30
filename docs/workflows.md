@@ -34,11 +34,13 @@ empty runs** toggle for the full history.
 
 Invitations created in the Users page produce a shareable link; they do not send
 an email. The MCP invitation tool can send invitation emails. The Users list
-contains only members of this business. Network settings and global roles remain
-platform-admin operations.
+contains only members of this business. Network settings use the API or MCP;
+global-role grants use the trusted CLI.
 
 Driver shopping, packing, shortages, delivery, and cash recording remain available
-through the business API and MCP with explicit network IDs.
+through the business API. MCP provides read-only order inspection alongside
+catalog and scheduling tools. Silverstreak's `/api/mcp` connection is bound to
+Silverstreak; the admin MCP requires explicit network IDs.
 
 Approved drivers can claim orders, shop and pack them, then record delivery and
 cash. Suspended drivers cannot claim work. Orders preserve the customer and item
@@ -49,6 +51,9 @@ snapshots from placement; later catalog/address edits do not change those record
 The dashboard provides global administrator sign-in and statistics. Account-wide
 assistant setup and connection management live at `/oauth/connect` and accept
 existing user accounts.
-Network provisioning, settings, and membership belong to the admin API or shared
-MCP, with current global permission checks. There is no network configuration screen in the dashboard and no network
-selection or management UI in Silverstreak.
+Network provisioning uses the admin API or admin MCP and requires current global
+permission. Settings and membership can also be managed by the network's own
+administrators through API/MCP tools. Silverstreak's `/mcp` setup page offers its
+network-only connection; consent and disconnection use
+`ADMIN_ORIGIN/oauth/networks/<id>/connect`. There is no network configuration
+screen in the dashboard or network picker in Silverstreak.
