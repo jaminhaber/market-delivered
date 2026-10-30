@@ -1,0 +1,130 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
+import { messageFor } from '../../server/market';
+import OrderCard from '../../components/OrderCard.astro';
+import { nonCancelledOrderStatuses } from '../../server/order-statuses';
+
+const admin = await adminRequest(Astro);
+if (admin.response) return admin.response;
+const { authorized } = admin;
+let error = admin.error;
+let orders: Awaited<ReturnType<AdminApi['orders']['list']['query']>> = [];
+let drivers: Awaited<ReturnType<AdminApi['admin']['drivers']['query']>> = [];
+let markets: Awaited<ReturnType<AdminApi['markets']['list']['query']>> = [];
+const includeCancelled = Astro.url.searchParams.get('includeCancelled') === '1';
+const rawOffset = Number(Astro.url.searchParams.get('offset') || 0);
+const offset =
+  Number.isInteger(rawOffset) && rawOffset >= 0 && rawOffset <= 1_000_000
+    ? rawOffset
+    : 0;
+
+try {
+  if (admin.api) {
+    const api = admin.api;
+    if (Astro.request.method === 'POST') {
+      const { field } = await adminForm(Astro.request, ['assign']);
+      await api.admin.assignDriver.mutate({
+        orderId: field('orderId'),
+        driverId: field('driverId') || null,
+      });
+      const next = new URL(Astro.url);
+      next.searchParams.set('saved', '1');
+      return Astro.redirect(next.pathname + next.search, 303);
+    }
+    [orders, drivers, markets] = await Promise.all([
+      api.orders.list.query({
+        scope: 'network',
+        limit: 50,
+        offset,
+        statuses: includeCancelled ? [] : nonCancelledOrderStatuses,
+      }),
+      api.admin.drivers.query(),
+      api.markets.list.query(),
+    ]);
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<AdminLayout title="Orders" authorized={authorized} error={error}>
+  <p>
+    Orders across Silverstreak. Showing {offset + (orders.length ? 1 : 0)}–
+    {offset + orders.length}.
+  </p>
+  {!orders.length && <p>No orders to show.</p>}
+  {orders.map((order) => (
+    <OrderCard
+      order={order}
+      showCustomer
+      timezone={
+        markets.find((market) => market.id === order.run.marketId)?.timezone ||
+        'America/Los_Angeles'
+      }
+    >
+      {!['cancelled', 'delivered', 'unavailable'].includes(order.status) && (
+        <form
+          method="post"
+          class="shop-form admin-edit-form"
+          aria-label={`Assign driver for ${order.id.slice(0, 8)}`}
+        >
+          <input type="hidden" name="intent" value="assign" />
+          <input type="hidden" name="orderId" value={order.id} />
+          <label>
+            Driver
+            <select aria-label="Driver" name="driverId">
+              <option value="">Unassigned</option>
+              {drivers
+                .filter(
+                  (driver) =>
+                    driver.profile.status === 'approved' ||
+                    driver.profile.userId === order.driverId,
+                )
+                .map((driver) => (
+                  <option
+                    value={driver.profile.userId}
+                    selected={driver.profile.userId === order.driverId}
+                  >
+                    {driver.name} · {driver.profile.status}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <button class="button button-dark">Save assignment</button>
+        </form>
+      )}
+    </OrderCard>
+  ))}
+  <div class="shop-links">
+    {offset > 0 && (
+      <a
+        href={`/admin/orders?offset=${Math.max(0, offset - 50)}${includeCancelled ? '&includeCancelled=1' : ''}`}
+      >
+        Previous orders
+      </a>
+    )}
+    {orders.length === 50 && (
+      <a
+        href={`/admin/orders?offset=${offset + 50}${includeCancelled ? '&includeCancelled=1' : ''}`}
+      >
+        More orders
+      </a>
+    )}
+  </div>
+
+  <form method="get" class="orders-filter" data-admin-filter>
+    <label>
+      <input
+        type="checkbox"
+        name="includeCancelled"
+        value="1"
+        checked={includeCancelled}
+      />
+      Show cancelled orders
+    </label>
+    <noscript>
+      <button class="quiet-button">Update view</button>
+    </noscript>
+  </form>
+</AdminLayout>
