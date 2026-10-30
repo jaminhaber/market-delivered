@@ -642,23 +642,72 @@ h1 em {
   cursor: pointer;
   font-family: inherit;
 }
+.market-page {
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+}
 .catalog-item {
   display: grid;
-  grid-template-columns: 1fr 170px;
-  gap: 30px;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 24px;
   align-items: center;
-  padding: 28px 0;
-  border-bottom: 1px solid var(--ink);
+  padding: 24px 0;
+  border-bottom: 1px solid #24231e30;
+}
+
+.catalog-item.has-image {
+  grid-template-columns: 192px minmax(0, 1fr) 96px;
+}
+
+.produce-description {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.produce-description .small-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: #66645b;
+}
+.produce-description h2 {
+  margin: 0 0 8px;
+  font-size: 27px;
+  line-height: 1.15;
+}
+.produce-description p:not(.small-label) {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #66645b;
+}
+.produce-description p.produce-price {
+  margin-top: 12px;
+  font-size: 18px;
+  color: var(--ink);
+}
+.produce-quantity > span {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.produce-quantity input {
+  padding: 10px;
+  min-height: 44px;
+}
+.produce-quantity .stock-note {
+  text-transform: none;
+  letter-spacing: 0;
+  color: #66645b;
 }
 
 .produce-photo {
   display: block;
   width: 100%;
-  max-width: 320px;
   height: auto;
   aspect-ratio: 4 / 3;
   object-fit: cover;
-  margin-bottom: 1rem;
+  border-radius: 6px;
 }
 .order-card {
   padding: 25px 0;
@@ -725,8 +774,18 @@ h1 em {
     grid-template-columns: 1fr;
     gap: 15px;
   }
+  .catalog-item.has-image {
+    grid-template-columns: 112px minmax(0, 1fr);
+    align-items: start;
+  }
+  .catalog-item.has-image > label {
+    grid-column: 2;
+  }
   .catalog-item input {
-    max-width: 140px;
+    width: 96px;
+  }
+  .produce-description h2 {
+    font-size: 23px;
   }
   .shop-page {
     padding-top: 25px;

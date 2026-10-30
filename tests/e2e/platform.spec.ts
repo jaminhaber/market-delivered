@@ -2097,7 +2097,8 @@ test('image assets register only completed uploads and isolate produce associati
     );
     if (target.pathname.endsWith('/direct_upload')) {
       const body = options!.body as FormData;
-      const id = randomUUID();
+      const id = String(body.get('id'));
+      expect(id).toMatch(new RegExp(`^produce/${silverId}/[a-f0-9-]{36}$`));
       imageRecords.set(id, {
         id,
         filename: 'carrots.jpg',
@@ -2113,7 +2114,7 @@ test('image assets register only completed uploads and isolate produce associati
         },
       });
     }
-    const id = target.pathname.split('/').at(-1)!;
+    const id = decodeURIComponent(target.pathname.split('/').at(-1)!);
     if (options?.method === 'DELETE') {
       if (failDelete) return Response.json({ success: false }, { status: 503 });
       imageRecords.delete(id);
@@ -2166,7 +2167,7 @@ test('image assets register only completed uploads and isolate produce associati
     expect(retry.id).toBe(first.id);
     expect(first.metadata).toEqual(input.metadata);
     expect(first.image?.card).toBe(
-      `https://imagedelivery.net/test-delivery/${upload.cloudflareImageId}/produce-card`,
+      `https://imagedelivery.net/test-delivery/${upload.cloudflareImageId}/produceCard`,
     );
     expect(
       (await caller.produce.list({ search: 'Image carrots' }))[0]!.image?.id,

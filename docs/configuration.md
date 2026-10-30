@@ -69,11 +69,11 @@ only; omit all three to leave uploads disabled:
 
 Create these public named variants in Cloudflare Images (strip image metadata):
 
-| Variant          | Suggested settings            |
-| ---------------- | ----------------------------- |
-| `thumbnail`      | 160 × 160, cover              |
-| `produce-card`   | 640 × 480, cover              |
-| `produce-detail` | Up to 1600 × 1600, scale down |
+| Variant         | Suggested settings            |
+| --------------- | ----------------------------- |
+| `thumbnail`     | 160 × 160, cover              |
+| `produceCard`   | 640 × 480, cover              |
+| `produceDetail` | Up to 1600 × 1600, scale down |
 
 See [direct uploads](https://developers.cloudflare.com/images/storage/upload-images/direct-creator-upload/)
 and [named variants](https://developers.cloudflare.com/images/optimization/hosted-images/create-variants/).
@@ -95,6 +95,11 @@ produce belongs to the same network. A unique index allows one image per produce
 listing. Delivery is public; admin authorization protects image management.
 Additional JSON metadata is retained, but farm image associations are not yet
 implemented.
+
+New uploads use Cloudflare custom image IDs shaped as
+`produce/<network-id>/<uuid>`, providing a folder-like namespace per network.
+Existing images with plain UUID IDs continue to work. Custom ID paths support
+public delivery; Cloudflare does not support signed private delivery for them.
 
 Replacing an image requires the current asset ID and atomically removes its
 `produce_id` metadata before registering the replacement. The previous asset stays

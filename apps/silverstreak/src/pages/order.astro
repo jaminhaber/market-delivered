@@ -82,7 +82,7 @@ const deliveryReady =
 ---
 
 <Site title="Order — Silverstreak">
-  <section class="shop-page">
+  <section class="shop-page market-page">
     <p class="small-label">Your next market morning</p>
     <h1>
       {reviewing ? (
@@ -233,36 +233,42 @@ const deliveryReady =
             <input type="hidden" name="requestId" value={requestId} />
             <div class="catalog">
               {inventory.map((item) => (
-                <article class="catalog-item">
-                  <div>
-                    {item.image && (
-                      <img
-                        class="produce-photo"
-                        src={item.image.card}
-                        alt={item.image.altText || item.name}
-                        width="320"
-                        height="240"
-                        loading="lazy"
-                      />
-                    )}
+                <article
+                  class:list={['catalog-item', { 'has-image': item.image }]}
+                >
+                  {item.image && (
+                    <img
+                      class="produce-photo"
+                      src={item.image.card}
+                      alt={item.image.altText || item.name}
+                      width="320"
+                      height="240"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  )}
+                  <div class="produce-description">
                     <p class="small-label">{item.source}</p>
                     <h2>{item.name}</h2>
                     <p>{item.description}</p>
-                    <p>
+                    <p class="produce-price">
                       {money(item.priceCents)} / {item.unit}
                     </p>
                   </div>
-                  <label>
-                    Quantity for {item.name}
+                  <label class="produce-quantity">
+                    <span>Quantity</span>
                     <input
                       type="number"
+                      aria-label={`Quantity for ${item.name}`}
                       name={'quantity:' + item.id}
                       min="0"
                       max={Math.min(1000, item.availableQuantity)}
                       value={quantities.get(item.id) || 0}
                       disabled={item.availableQuantity <= 0}
                     />
-                    {item.availableQuantity <= 0 && <span>Sold out</span>}
+                    {item.availableQuantity <= 0 && (
+                      <span class="stock-note">Sold out</span>
+                    )}
                   </label>
                 </article>
               ))}

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { randomUUID } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import * as s from '@market/db';
 import { z } from 'zod';
@@ -11,7 +12,10 @@ export type ImagesConfig = {
   deliveryHash: string;
 };
 type Tx = Parameters<Parameters<s.Database['transaction']>[0]>[0];
-const imageId = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
+const imageId = z
+  .string()
+  .max(1024)
+  .regex(/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/);
 export const assetMetadataInput = z
   .object({
     produce_id: z
@@ -50,13 +54,17 @@ export function assetImage(
   asset: { id: string; cloudflareImageId: string; altText: string } | null,
 ) {
   if (!config || !asset) return null;
-  const base = `https://imagedelivery.net/${encodeURIComponent(config.deliveryHash)}/${encodeURIComponent(asset.cloudflareImageId)}`;
+  const imagePath = asset.cloudflareImageId
+    .split('/')
+    .map(encodeURIComponent)
+    .join('/');
+  const base = `https://imagedelivery.net/${encodeURIComponent(config.deliveryHash)}/${imagePath}`;
   return {
     id: asset.id,
     altText: asset.altText,
     thumbnail: `${base}/thumbnail`,
-    card: `${base}/produce-card`,
-    detail: `${base}/produce-detail`,
+    card: `${base}/produceCard`,
+    detail: `${base}/produceDetail`,
   };
 }
 
@@ -76,8 +84,8 @@ export function assetImageSelect(config?: ImagesConfig) {
   >`case when ${s.assets.id} is null or ${!config} then null else json_build_object(
     'id', ${s.assets.id}, 'altText', ${s.assets.altText},
     'thumbnail', ${base} || ${s.assets.cloudflareImageId} || '/thumbnail',
-    'card', ${base} || ${s.assets.cloudflareImageId} || '/produce-card',
-    'detail', ${base} || ${s.assets.cloudflareImageId} || '/produce-detail'
+    'card', ${base} || ${s.assets.cloudflareImageId} || '/produceCard',
+    'detail', ${base} || ${s.assets.cloudflareImageId} || '/produceDetail'
   ) end`;
 }
 
@@ -153,6 +161,7 @@ export function assetOperations(
       );
       const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
       const body = new FormData();
+      body.set('id', `produce/${s.requireNetworkId(db)}/${randomUUID()}`);
       body.set('expiry', expiresAt);
       body.set('requireSignedURLs', 'false');
       body.set(
