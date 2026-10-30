@@ -1,4 +1,12 @@
 import { TRPCError } from '@trpc/server';
+import {
+  assetOperations,
+  assetImageSelect,
+  produceAssetJoin,
+  registerAssetInput,
+  listAssetsInput,
+  updateAssetInput,
+} from '@market/core/assets';
 import { createEmailSender } from '@market/core/email';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -239,6 +247,79 @@ export function registerMcp(
             }
           });
         }
+        networkTool(
+          'create_image_upload',
+          {
+            description:
+              'Create a temporary Cloudflare image upload URL. POST multipart/form-data with a file field to uploadUrl, then call register_asset with the returned cloudflareImageId and metadata {produce_id: <existing produce UUID>}. No asset row is created until registration. Clients without file/HTTP access should open uploadPageUrl and select a file in the dashboard; chat attachments are not automatically available.',
+            inputSchema: z.object({}),
+            annotations: { destructiveHint: false, openWorldHint: true },
+          },
+          (_input, { db, actor, network }) =>
+            call(async () => ({
+              ...(await assetOperations(
+                db,
+                actor,
+                defaults.images,
+              ).createUpload()),
+              uploadPageUrl: network.frontendOrigin
+                ? new URL('/admin/produce', network.frontendOrigin).href
+                : undefined,
+            })),
+        );
+        networkTool(
+          'register_asset',
+          {
+            description:
+              'Verify a completed public Cloudflare upload and register it. Set metadata.produce_id to associate with produce in this network. For replacement supply the current asset ID as replaceAssetId; the previous asset is retained without its produce association. Retries return the original asset without changing its association.',
+            inputSchema: registerAssetInput,
+            annotations: {
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: true,
+            },
+          },
+          (input, { db, actor }) =>
+            call(() =>
+              assetOperations(db, actor, defaults.images).register(input),
+            ),
+        );
+        networkTool(
+          'list_assets',
+          {
+            description:
+              'List network image assets and delivery URLs, optionally filtered by produceId. Includes images retained after replacement.',
+            inputSchema: listAssetsInput,
+            annotations: readOnly,
+          },
+          (input, { db, actor }) =>
+            call(() => assetOperations(db, actor, defaults.images).list(input)),
+        );
+        networkTool(
+          'update_asset',
+          {
+            description: 'Update an image asset’s alt text.',
+            inputSchema: updateAssetInput,
+            annotations: { destructiveHint: false },
+          },
+          (input, { db, actor }) =>
+            call(() =>
+              assetOperations(db, actor, defaults.images).update(input),
+            ),
+        );
+        networkTool(
+          'delete_asset',
+          {
+            description:
+              'Permanently delete an image from Cloudflare and this network’s asset library. If attached to produce, its image is removed.',
+            inputSchema: z.object({ id: z.uuid() }),
+            annotations: { destructiveHint: true, openWorldHint: true },
+          },
+          (input, { db, actor }) =>
+            call(() =>
+              assetOperations(db, actor, defaults.images).delete(input.id),
+            ),
+        );
         mcp.registerTool(
           'who_am_i',
           {
@@ -803,10 +884,12 @@ export function registerMcp(
               db
                 .select({
                   ...getTableColumns(s.produce),
+                  image: assetImageSelect(defaults.images),
                   source: s.farms.name,
                   location: s.farms.location,
                 })
                 .from(s.produce)
+                .leftJoin(s.assets, produceAssetJoin(db))
                 .innerJoin(
                   s.farms,
                   s.networkWhere(db, s.farms, eq(s.farms.id, s.produce.farmId)),
@@ -848,10 +931,12 @@ export function registerMcp(
               const [item] = await db
                 .select({
                   ...getTableColumns(s.produce),
+                  image: assetImageSelect(defaults.images),
                   source: s.farms.name,
                   location: s.farms.location,
                 })
                 .from(s.produce)
+                .leftJoin(s.assets, produceAssetJoin(db))
                 .innerJoin(
                   s.farms,
                   s.networkWhere(db, s.farms, eq(s.farms.id, s.produce.farmId)),

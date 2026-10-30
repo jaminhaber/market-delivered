@@ -16,6 +16,11 @@ const storefrontProcedures = new Set([
   'orders.mine',
   'orders.place',
   'orders.cancel',
+  'assets.createUpload',
+  'assets.register',
+  'assets.list',
+  'assets.update',
+  'assets.delete',
 ]);
 
 const json = (message: string, status: number) =>

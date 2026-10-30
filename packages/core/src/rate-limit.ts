@@ -10,6 +10,7 @@ export async function checkRateLimit(
   key: string,
   max: number,
   windowMs: number,
+  message = 'Too many address requests. Please wait a minute and try again.',
 ) {
   const now = Date.now();
   const expired = sql`${rateLimit.lastRequest} <= ${now - windowMs}`;
@@ -28,6 +29,6 @@ export async function checkRateLimit(
   if (!allowed)
     throw new TRPCError({
       code: 'TOO_MANY_REQUESTS',
-      message: 'Too many address requests. Please wait a minute and try again.',
+      message,
     });
 }

@@ -15,6 +15,7 @@ import {
   networkMemberships,
   networks,
   farms,
+  assets,
   produce,
   orders,
   driverProfiles,
@@ -24,6 +25,8 @@ import { operations } from '@market/core/operations';
 import { networkOperations } from '@market/core/networks';
 import { networkDatabase } from '@market/db';
 import { parseEnvironment } from '@market/core/config';
+import { appRouter } from '@market/core/router';
+import { resolveNetwork } from '@market/core/networks';
 import {
   listProviders,
   listInterfaces,
@@ -942,6 +945,21 @@ test('Silverstreak administrators manage business pages and OAuth setup', async 
     await expect(
       page.getByText('UI grower · Ojai Valley', { exact: true }),
     ).toBeVisible();
+    const emptyFarm = await operations(
+      networkDatabase(db, silverId, owner.id),
+      {
+        ...owner,
+        name: 'Owner',
+        admin: true,
+        globalAdmin: true,
+      },
+    ).createFarm({
+      name: 'UI empty grower',
+      location: 'Ojai',
+      contactPhone: '',
+      notes: '',
+      active: true,
+    });
     await tabs.getByRole('link', { name: 'Produce', exact: true }).click();
     await page.getByText('Add produce', { exact: true }).first().click();
     const addProduce = page.getByRole('form', {
@@ -960,6 +978,153 @@ test('Silverstreak administrators manage business pages and OAuth setup', async 
     await expect(
       page.getByText('UI carrots · UI grower · Vegetables', { exact: true }),
     ).toBeVisible();
+    const farmFilter = page.getByRole('form', {
+      name: 'Filter produce',
+      exact: true,
+    });
+    await farmFilter
+      .getByLabel('Filter by farm')
+      .selectOption({ label: 'UI grower' });
+    const selectedFarmId = await farmFilter
+      .getByLabel('Filter by farm')
+      .inputValue();
+    await farmFilter
+      .getByRole('button', { name: 'Filter produce', exact: true })
+      .click();
+    expect(new URL(page.url()).searchParams.get('farmId')).toBe(selectedFarmId);
+    await page.reload();
+    await expect(farmFilter.getByLabel('Filter by farm')).toHaveValue(
+      selectedFarmId,
+    );
+    const filtered = await page.request.get(
+      silverOrigin + '/trpc/produce.list',
+      {
+        params: {
+          input: JSON.stringify({
+            farmId: selectedFarmId,
+            search: 'UI carrots',
+            category: 'Vegetables',
+          }),
+        },
+      },
+    );
+    expect(filtered.status()).toBe(200);
+    expect((await filtered.json()).result.data).toMatchObject([
+      { name: 'UI carrots', farm: { id: selectedFarmId } },
+    ]);
+    const missingFarm = await page.request.get(
+      silverOrigin + '/trpc/produce.list',
+      {
+        params: { input: JSON.stringify({ farmId: randomUUID() }) },
+      },
+    );
+    expect((await missingFarm.json()).result.data).toEqual([]);
+    const invalidFarm = await page.request.get(
+      silverOrigin + '/trpc/produce.list',
+      {
+        params: { input: JSON.stringify({ farmId: 'invalid' }) },
+      },
+    );
+    expect(invalidFarm.status()).toBe(400);
+    await farmFilter.getByLabel('Filter by farm').selectOption(emptyFarm.id);
+    await farmFilter
+      .getByRole('button', { name: 'Filter produce', exact: true })
+      .click();
+    await expect(
+      page.getByText('No produce for this farm.', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText('UI carrots · UI grower · Vegetables', { exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole('link', { name: 'Clear filter', exact: true }).click();
+    await expect(page).toHaveURL(silverOrigin + '/admin/produce');
+    await expect(
+      page.getByText('UI carrots · UI grower · Vegetables', { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByText('UI carrots · UI grower · Vegetables', { exact: true })
+      .click();
+    const imageEditor = page.getByRole('form', {
+      name: 'Image for UI carrots',
+      exact: true,
+    });
+    await imageEditor.getByLabel('Image file', { exact: true }).setInputFiles({
+      name: 'carrots.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lRkAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    });
+    await imageEditor
+      .getByRole('button', { name: 'Save image', exact: true })
+      .click();
+    await expect(imageEditor.getByRole('alert')).toHaveText(
+      'Image uploads are not configured.',
+    );
+    const assetId = randomUUID();
+    const uploadId = randomUUID();
+    await page.route('**/trpc/assets.createUpload?*', (route) =>
+      route.fulfill({
+        json: [
+          {
+            result: {
+              data: {
+                cloudflareImageId: uploadId,
+                uploadUrl: `https://upload.imagedelivery.net/test/${uploadId}`,
+                expiresAt: new Date(Date.now() + 60000).toISOString(),
+              },
+            },
+          },
+        ],
+      }),
+    );
+    await page.route('https://upload.imagedelivery.net/**', async (route) => {
+      expect(route.request().postDataBuffer()!.toString()).toContain(
+        'filename="carrots.png"',
+      );
+      await route.fulfill({ json: { success: true } });
+    });
+    await page.route('**/trpc/assets.register?*', async (route) => {
+      const input = route.request().postDataJSON()['0'];
+      expect(input.metadata.produce_id).toBe(
+        await imageEditor.getAttribute('data-produce-id'),
+      );
+      expect(input.cloudflareImageId).toBe(uploadId);
+      expect(input.altText).toBe('Carrots from UI grower');
+      await route.fulfill({
+        json: [
+          {
+            result: {
+              data: {
+                id: assetId,
+                altText: input.altText,
+                image: {
+                  thumbnail: `https://imagedelivery.net/test/${uploadId}/thumbnail`,
+                },
+              },
+            },
+          },
+        ],
+      });
+    });
+    await imageEditor
+      .getByLabel('Image description (alt text)')
+      .fill('Carrots from UI grower');
+    await imageEditor
+      .getByRole('button', { name: 'Save image', exact: true })
+      .click();
+    await expect(imageEditor.getByRole('status')).toHaveText('Image saved.');
+    await expect(imageEditor.getByRole('img')).toHaveAttribute(
+      'alt',
+      'Carrots from UI grower',
+    );
+    await expect(
+      imageEditor.getByRole('button', { name: 'Remove image' }),
+    ).toBeVisible();
+    await page.unroute('**/trpc/assets.createUpload?*');
+    await page.unroute('**/trpc/assets.register?*');
+    await page.unroute('https://upload.imagedelivery.net/**');
     await tabs.getByRole('link', { name: 'Markets', exact: true }).click();
     await page.getByText('Add a market', { exact: true }).click();
     const addMarket = page.getByRole('form', {
@@ -1157,6 +1322,25 @@ test('one account-wide OAuth connection follows current permissions across netwo
       'WWW-Authenticate',
     );
     expect(catalog.headers()['cache-control']).toBe('no-store');
+    const imageTools = (await catalog.json()).result.tools.map(
+      (entry: { name: string }) => entry.name,
+    );
+    expect(imageTools).toEqual(
+      expect.arrayContaining([
+        'create_image_upload',
+        'register_asset',
+        'list_assets',
+        'update_asset',
+        'delete_asset',
+      ]),
+    );
+    expect(
+      (await tool('list_assets', { networkId: silverId })).isError,
+    ).not.toBe(true);
+    expect((await tool('list_assets', { networkId: partnerId })).isError).toBe(
+      true,
+    );
+    expect((await tool('list_assets')).isError).toBe(true);
     const list = await tool('list_networks');
     expect(
       JSON.parse(list.content[0].text).map((row: { id: string }) => row.id),
@@ -1920,5 +2104,196 @@ test('assistant setup supports OAuth app and terminal connections only', () => {
     expect(setup.auth).toBe('oauth');
     expect(JSON.stringify(setup.blocks)).not.toContain('header-file');
     expect(JSON.stringify(setup.blocks)).not.toContain('claude mcp login');
+  }
+});
+
+test('image assets register only completed uploads and isolate produce associations', async () => {
+  const imagesConfig = {
+    accountId: 'test-account',
+    apiToken: 'test-only-image-token',
+    deliveryHash: 'test-delivery',
+  };
+  const actor = {
+    ...owner,
+    name: 'Image admin',
+    admin: true,
+    globalAdmin: true,
+    member: true,
+  };
+  const scoped = networkDatabase(db, silverId, owner.id);
+  const ops = operations(scoped, actor);
+  const farm = await ops.createFarm({
+    name: 'Image farm',
+    location: 'Ojai',
+    contactPhone: '',
+    notes: '',
+    active: true,
+  });
+  const item = await ops.createProduce({
+    name: 'Image carrots',
+    description: 'Fresh carrots',
+    farmId: farm.id,
+    category: 'Vegetables',
+    unit: 'bunch',
+  });
+  const context = {
+    db,
+    actor,
+    images: imagesConfig,
+    oauthOrigin: adminOrigin,
+    network: await resolveNetwork(db, silverId),
+  };
+  const caller = appRouter.createCaller(context);
+  const foreign = appRouter.createCaller({
+    ...context,
+    network: await resolveNetwork(db, partnerId),
+  });
+  const nonAdmin = appRouter.createCaller({
+    ...context,
+    actor: { ...actor, admin: false, globalAdmin: false },
+  });
+  const originalFetch = globalThis.fetch;
+  const imageRecords = new Map<
+    string,
+    {
+      id: string;
+      filename: string;
+      draft: boolean;
+      uploaded?: string;
+      requireSignedURLs: boolean;
+      meta: { network_id: string; uploaded_by: string };
+    }
+  >();
+  let failDelete = false;
+  let storageCalls = 0;
+  globalThis.fetch = async (url, options) => {
+    storageCalls++;
+    const target = new URL(String(url));
+    expect(target.origin).toBe('https://api.cloudflare.com');
+    expect(new Headers(options?.headers).get('Authorization')).toBe(
+      'Bearer test-only-image-token',
+    );
+    if (target.pathname.endsWith('/direct_upload')) {
+      const body = options!.body as FormData;
+      const id = String(body.get('id'));
+      expect(id).toMatch(new RegExp(`^produce/${silverId}/[a-f0-9-]{36}$`));
+      imageRecords.set(id, {
+        id,
+        filename: 'carrots.jpg',
+        draft: true,
+        requireSignedURLs: false,
+        meta: JSON.parse(String(body.get('metadata'))),
+      });
+      return Response.json({
+        success: true,
+        result: {
+          id,
+          uploadURL: `https://upload.imagedelivery.net/test-delivery/${id}`,
+        },
+      });
+    }
+    const id = decodeURIComponent(target.pathname.split('/').at(-1)!);
+    if (options?.method === 'DELETE') {
+      if (failDelete) return Response.json({ success: false }, { status: 503 });
+      imageRecords.delete(id);
+      return Response.json({ success: true, result: {} });
+    }
+    return Response.json({ success: true, result: imageRecords.get(id) });
+  };
+  try {
+    await expect(nonAdmin.assets.createUpload()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(storageCalls).toBe(0);
+    const upload = await caller.assets.createUpload();
+    const input = {
+      cloudflareImageId: upload.cloudflareImageId,
+      altText: 'A bunch of carrots',
+      metadata: { produce_id: item.id, credit: 'Farm team' },
+    };
+    expect(await caller.assets.list({ produceId: item.id })).toEqual([]);
+    await expect(caller.assets.register(input)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(await caller.assets.list({ produceId: item.id })).toEqual([]);
+    const record = imageRecords.get(upload.cloudflareImageId)!;
+    record.draft = false;
+    record.uploaded = new Date().toISOString();
+    await expect(foreign.assets.register(input)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    record.meta.uploaded_by = 'different-admin';
+    await expect(caller.assets.register(input)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    record.meta.uploaded_by = owner.id;
+    await expect(
+      caller.assets.register({
+        ...input,
+        metadata: { produce_id: randomUUID() },
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(
+      // Exercise validation of malformed JSON from an untyped client.
+      // @ts-expect-error produce_id must be a UUID string when present
+      caller.assets.register({ ...input, metadata: { produce_id: null } }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    const [first, retry] = await Promise.all([
+      caller.assets.register(input),
+      caller.assets.register(input),
+    ]);
+    expect(retry.id).toBe(first.id);
+    expect(first.metadata).toEqual(input.metadata);
+    expect(first.image?.card).toBe(
+      `https://imagedelivery.net/test-delivery/${upload.cloudflareImageId}/produceCard`,
+    );
+    expect(
+      (await caller.produce.list({ search: 'Image carrots' }))[0]!.image?.id,
+    ).toBe(first.id);
+    expect(await foreign.assets.list({ produceId: item.id })).toEqual([]);
+    await expect(
+      foreign.assets.update({ id: first.id, altText: 'Wrong network' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const nextUpload = await caller.assets.createUpload();
+    Object.assign(imageRecords.get(nextUpload.cloudflareImageId)!, {
+      draft: false,
+      uploaded: new Date().toISOString(),
+    });
+    const replacement = {
+      ...input,
+      cloudflareImageId: nextUpload.cloudflareImageId,
+    };
+    await expect(caller.assets.register(replacement)).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    const next = await caller.assets.register({
+      ...replacement,
+      replaceAssetId: first.id,
+    });
+    const oldRetry = await caller.assets.register(input);
+    expect(oldRetry.metadata).not.toHaveProperty('produce_id');
+    expect(
+      (await caller.assets.list({ produceId: item.id })).map((row) => row.id),
+    ).toEqual([next.id]);
+    await caller.assets.update({
+      id: next.id,
+      altText: 'Fresh carrots from our farm',
+    });
+    failDelete = true;
+    await expect(caller.assets.delete({ id: next.id })).rejects.toMatchObject({
+      code: 'BAD_GATEWAY',
+    });
+    expect(await caller.assets.list({ produceId: item.id })).toHaveLength(1);
+    failDelete = false;
+    await caller.assets.delete({ id: next.id });
+    expect(
+      (await caller.produce.list({ search: 'Image carrots' }))[0]!.image,
+    ).toBeNull();
+    await caller.assets.delete({ id: first.id });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await db.delete(assets).where(eq(assets.createdBy, owner.id));
+    await db.delete(produce).where(eq(produce.id, item.id));
+    await db.delete(farms).where(eq(farms.id, farm.id));
   }
 });

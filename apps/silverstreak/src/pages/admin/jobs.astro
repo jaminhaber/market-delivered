@@ -1,0 +1,115 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
+import { messageFor, dateLabel } from '../../server/market';
+
+const admin = await adminRequest(Astro);
+if (admin.response) return admin.response;
+const { authorized } = admin;
+let error = admin.error;
+let jobs: Awaited<ReturnType<AdminApi['admin']['jobs']['query']>> = [];
+const includeEmpty = Astro.url.searchParams.get('includeEmpty') === '1';
+try {
+  if (admin.api) {
+    const api = admin.api;
+    if (Astro.request.method === 'POST') {
+      await adminForm(Astro.request, ['run-jobs']);
+      const result = await api.admin.runSchedulingJob.mutate();
+      if (result.status === 'skipped')
+        throw new Error(
+          'A scheduling job is already running. Check the job history below.',
+        );
+      const next = new URL(Astro.url);
+      next.searchParams.set('saved', '1');
+      return Astro.redirect(next.pathname + next.search, 303);
+    }
+    jobs = await api.admin.jobs.query({ includeEmpty });
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<AdminLayout title="Jobs" authorized={authorized} error={error}>
+  <p>
+    Recent scheduling and market-closing jobs for Silverstreak. Showing the
+    latest 20 {includeEmpty ? 'runs' : 'runs with changes'}.
+  </p>
+  <form method="post">
+    <input type="hidden" name="intent" value="run-jobs" />
+    <button class="button button-dark">Run scheduling job</button>
+  </form>
+  {!jobs.length ? (
+    <p>
+      {includeEmpty
+        ? 'No job runs yet.'
+        : 'No job runs have changed any entities yet.'}
+    </p>
+  ) : (
+    <div
+      class="admin-table-wrap"
+      role="region"
+      aria-label="Job history"
+      tabindex="0"
+    >
+      <table aria-label="Job runs">
+        <thead>
+          <tr>
+            <th scope="col">Started</th>
+            <th scope="col">Job</th>
+            <th scope="col">Status</th>
+            <th
+              scope="col"
+              title="Market dates created or closed, plus orders cancelled"
+            >
+              Impacted entities
+            </th>
+            <th scope="col">Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((job) => (
+            <tr>
+              <td>{dateLabel(job.startedAt, 'America/Los_Angeles')}</td>
+              <th scope="row">{job.name}</th>
+              <td>{job.status}</td>
+              <td>{job.impactedEntities}</td>
+              <td>
+                <details>
+                  <summary>View details</summary>
+                  <p>
+                    {job.source}
+                    <br />
+                    {job.schedulesProcessed} schedules processed ·{' '}
+                    {job.runsCreated} dates created · {job.runsClosed} dates
+                    closed · {job.ordersCancelled} orders cancelled
+                  </p>
+                  {job.error && (
+                    <p class="shop-notice" role="alert">
+                      {job.error}
+                    </p>
+                  )}
+                </details>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )}
+
+  <form method="get" class="orders-filter" data-admin-filter>
+    <label>
+      <input
+        type="checkbox"
+        name="includeEmpty"
+        value="1"
+        checked={includeEmpty}
+      />
+      Include empty runs
+    </label>
+    <noscript>
+      <button class="quiet-button">Update view</button>
+    </noscript>
+  </form>
+</AdminLayout>

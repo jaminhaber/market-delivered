@@ -1,0 +1,86 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
+import { messageFor } from '../../server/market';
+import AdminProduceForm from '../../components/AdminProduceForm.astro';
+
+const admin = await adminRequest(Astro);
+if (admin.response) return admin.response;
+const { authorized } = admin;
+let error = admin.error;
+let farms: Awaited<ReturnType<AdminApi['farms']['list']['query']>> = [];
+let produce: Awaited<ReturnType<AdminApi['produce']['list']['query']>> = [];
+const farmId = Astro.url.searchParams.get('farmId') || '';
+try {
+  if (admin.api) {
+    const api = admin.api;
+    if (Astro.request.method === 'POST') {
+      const { field } = await adminForm(Astro.request, ['produce']);
+      const input = {
+        name: field('name'),
+        description: field('description'),
+        farmId: field('farmId'),
+        category: field('category') as 'Vegetables' | 'Fruit' | 'Herbs',
+        unit: field('unit') as 'lb' | 'bunch' | 'basket' | 'each',
+      };
+      if (field('id'))
+        await api.admin.updateProduce.mutate({ id: field('id'), ...input });
+      else await api.admin.createProduce.mutate(input);
+      const next = new URL(Astro.url);
+      next.searchParams.set('saved', '1');
+      return Astro.redirect(next.pathname + next.search, 303);
+    }
+    [farms, produce] = await Promise.all([
+      api.farms.list.query(),
+      api.produce.list.query({ farmId: farmId || undefined }),
+    ]);
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<AdminLayout title="Produce" authorized={authorized} error={error}>
+  <p>
+    Manage produce listings. Set prices and stock for each market date in
+    Inventory. Showing up to 100 listings.
+  </p>
+  <form method="get" class="market-picker" aria-label="Filter produce">
+    <label>
+      Filter by farm
+      <select name="farmId">
+        <option value="">All farms</option>
+        {farms.map((farm) => (
+          <option value={farm.id} selected={farm.id === farmId}>
+            {farm.name}
+            {!farm.active && ' (inactive)'}
+          </option>
+        ))}
+      </select>
+    </label>
+    <button class="button button-dark">Filter produce</button>
+    {farmId && (
+      <a class="quiet-link" href="/admin/produce">
+        Clear filter
+      </a>
+    )}
+  </form>
+  {!farms.some((farm) => farm.active) && (
+    <p>Add an active farm before creating produce.</p>
+  )}
+  <details class="admin-record">
+    <summary>Add produce</summary>
+    <AdminProduceForm farms={farms} />
+  </details>
+  {!produce.length && (
+    <p>{farmId ? 'No produce for this farm.' : 'No produce yet.'}</p>
+  )}
+  {produce.map((item) => (
+    <details class="admin-record">
+      <summary>
+        {item.name} · {item.farm.name} · {item.category}
+      </summary>
+      <AdminProduceForm item={item} farms={farms} />
+    </details>
+  ))}
+</AdminLayout>

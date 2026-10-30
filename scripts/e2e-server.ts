@@ -83,7 +83,27 @@ const env = {
   MARKET_API_ORIGIN: 'http://127.0.0.1:5180',
   SILVERSTREAK_NETWORK_ID: '00000000-0000-4000-8000-000000000002',
 };
-const child = spawn('npm', ['run', 'dev:apps'], { env, stdio: 'inherit' });
+// Test configuration is explicit: do not reload the developer's .env or use
+// their Cloudflare account in the dashboard upload checks.
+for (const key of [
+  'CLOUDFLARE_ACCOUNT_ID',
+  'CLOUDFLARE_IMAGES_API_TOKEN',
+  'CLOUDFLARE_IMAGES_DELIVERY_HASH',
+])
+  delete (env as NodeJS.ProcessEnv)[key];
+const child = spawn(
+  'npm',
+  [
+    'exec',
+    '--',
+    'concurrently',
+    '-k',
+    'npm run dev -w @market/api',
+    'npm run dev -w @market/admin',
+    'npm run dev -w @market/silverstreak',
+  ],
+  { env, stdio: 'inherit' },
+);
 for (const signal of ['SIGTERM', 'SIGINT'] as const)
   process.on(signal, () => child.kill(signal));
 child.on('exit', (code) => {

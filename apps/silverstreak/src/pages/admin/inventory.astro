@@ -1,0 +1,215 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
+import { messageFor, money, dateLabel } from '../../server/market';
+
+const admin = await adminRequest(Astro);
+if (admin.response) return admin.response;
+const { authorized } = admin;
+let error = admin.error;
+let runs: Awaited<ReturnType<AdminApi['admin']['runs']['query']>> = [];
+let produce: Awaited<ReturnType<AdminApi['produce']['list']['query']>> = [];
+let stock: Awaited<ReturnType<AdminApi['admin']['inventory']['query']>> = [];
+let runId = Astro.url.searchParams.get('run') || '';
+try {
+  if (admin.api) {
+    const api = admin.api;
+    if (Astro.request.method === 'POST') {
+      const { form, field, numeric, cents } = await adminForm(Astro.request, [
+        'inventory',
+      ]);
+      runId = field('runId');
+      await api.admin.saveInventory.mutate({
+        runId,
+        produceId: field('produceId'),
+        quantity: numeric('quantity'),
+        priceCents: cents('price'),
+        active: form.has('active'),
+        repeat: form.has('repeat'),
+      });
+      const next = new URL(Astro.url);
+      next.searchParams.set('saved', '1');
+      next.searchParams.set('run', runId);
+      return Astro.redirect(next.pathname + next.search, 303);
+    }
+    [runs, produce] = await Promise.all([
+      api.admin.runs.query(),
+      api.produce.list.query(),
+    ]);
+    runId ||= runs[0]?.run.id || '';
+    if (runId && !runs.some((item) => item.run.id === runId))
+      throw new Error('Choose an available market date.');
+    if (runId) stock = await api.admin.inventory.query({ id: runId });
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+const selectedRun = runs.find((item) => item.run.id === runId);
+const inventoryEditable =
+  selectedRun?.run.status === 'scheduled' &&
+  new Date(selectedRun.run.cutoffAt) > new Date();
+---
+
+<AdminLayout title="Inventory" authorized={authorized} error={error}>
+  <p>
+    Set stock and prices for a market date. Existing reservations are preserved.
+  </p>
+  <form method="get" class="market-picker">
+    <label>
+      Market date
+      <select aria-label="Market date" name="run">
+        {runs.map(({ run, market }) => (
+          <option value={run.id} selected={run.id === runId}>
+            {market.name} — {dateLabel(run.startsAt, market.timezone)} ·{' '}
+            {run.status}
+          </option>
+        ))}
+      </select>
+    </label>
+    <button class="button button-dark" disabled={!runs.length}>
+      View inventory
+    </button>
+  </form>
+  {!runs.length && (
+    <p>
+      No market dates yet. Add weekly hours in Markets or run the scheduling
+      job.
+    </p>
+  )}
+  {selectedRun && (
+    <p>
+      Ordering cutoff:{' '}
+      {dateLabel(selectedRun.run.cutoffAt, selectedRun.market.timezone)}.
+    </p>
+  )}
+  {selectedRun && !inventoryEditable && (
+    <p>
+      Ordering has closed or this market date is underway. Inventory is
+      read-only.
+    </p>
+  )}
+  {inventoryEditable &&
+    produce.some((item) => !stock.some((row) => row.produceId === item.id)) && (
+      <details class="admin-record">
+        <summary>Add an item to this date</summary>
+        <form
+          method="post"
+          class="shop-form admin-edit-form"
+          aria-label="Add inventory"
+        >
+          <input type="hidden" name="intent" value="inventory" />
+          <input type="hidden" name="runId" value={runId} />
+          <label>
+            Produce
+            <select aria-label="Produce" name="produceId">
+              {produce
+                .filter(
+                  (item) => !stock.some((row) => row.produceId === item.id),
+                )
+                .map((item) => (
+                  <option value={item.id}>
+                    {item.name} · {item.farm.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            Price per sale unit ($)
+            <input
+              type="number"
+              name="price"
+              min="0"
+              max="10000"
+              step="0.01"
+              required
+            />
+          </label>
+          <label>
+            Total quantity
+            <input
+              type="number"
+              name="quantity"
+              min="0"
+              max="100000"
+              step="1"
+              required
+            />
+          </label>
+          <label class="admin-checkbox">
+            <input type="checkbox" name="active" checked />
+            Available for ordering
+          </label>
+          <label class="admin-checkbox">
+            <input type="checkbox" name="repeat" />
+            Use these defaults for future dates
+          </label>
+          <button class="button button-dark">Add inventory</button>
+        </form>
+      </details>
+    )}
+  {stock.map((item) => (
+    <details class="admin-record">
+      <summary>
+        {item.name} · {money(item.priceCents)} / {item.unit} ·{' '}
+        {item.availableQuantity} available
+        {!item.active && ' · Inactive'}
+      </summary>
+      <form
+        method="post"
+        class="shop-form admin-edit-form"
+        aria-label={`Inventory for ${item.name}`}
+      >
+        <input type="hidden" name="intent" value="inventory" />
+        <input type="hidden" name="runId" value={runId} />
+        <input type="hidden" name="produceId" value={item.produceId} />
+        <p>
+          {item.reservedQuantity} reserved. Total quantity includes
+          reservations.
+        </p>
+        <label>
+          Price per sale unit ($)
+          <input
+            type="number"
+            name="price"
+            min="0"
+            max="10000"
+            step="0.01"
+            value={(item.priceCents / 100).toFixed(2)}
+            readonly={!inventoryEditable}
+            required
+          />
+        </label>
+        <label>
+          Total quantity
+          <input
+            type="number"
+            name="quantity"
+            min={item.reservedQuantity}
+            max="100000"
+            step="1"
+            value={item.quantity}
+            readonly={!inventoryEditable}
+            required
+          />
+        </label>
+        <label class="admin-checkbox">
+          <input
+            type="checkbox"
+            name="active"
+            checked={item.active}
+            disabled={!inventoryEditable}
+          />
+          Available for ordering
+        </label>
+        <label class="admin-checkbox">
+          <input type="checkbox" name="repeat" />
+          Use these defaults for future dates
+        </label>
+        <button class="button button-dark" disabled={!inventoryEditable}>
+          Save inventory
+        </button>
+      </form>
+    </details>
+  ))}
+  {selectedRun && !stock.length && <p>No inventory for this date yet.</p>}
+</AdminLayout>
