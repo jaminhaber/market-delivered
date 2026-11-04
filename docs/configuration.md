@@ -54,3 +54,55 @@ frontend’s exact HTTPS domain. It hosts the account-wide MCP and all OAuth pag
 and issuers. Silverstreak exposes its network-bound MCP at its own `/api/mcp`,
 using the existing `MARKET_API_ORIGIN` and `SILVERSTREAK_NETWORK_ID` settings.
 The network's registered `frontendOrigin` must match Silverstreak's public domain.
+
+## Catalog images
+
+Enable Cloudflare Images on one platform account. Set these on the shared backend
+only; omit all three to leave uploads disabled:
+
+- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account ID.
+- `CLOUDFLARE_IMAGES_API_TOKEN`: an API token restricted to that account with
+  Cloudflare Images Read and Edit permissions.
+- `CLOUDFLARE_IMAGES_DELIVERY_HASH`: the account hash from its
+  `https://imagedelivery.net/<hash>/<image-id>/<variant>` delivery URLs. This is
+  different from the account ID.
+
+Create these public named variants in Cloudflare Images (strip image metadata):
+
+| Variant         | Suggested settings            |
+| --------------- | ----------------------------- |
+| `thumbnail`     | 160 × 160, cover              |
+| `produceCard`   | 640 × 480, cover              |
+| `produceDetail` | Up to 1600 × 1600, scale down |
+
+See [direct uploads](https://developers.cloudflare.com/images/storage/upload-images/direct-creator-upload/)
+and [named variants](https://developers.cloudflare.com/images/optimization/hosted-images/create-variants/).
+Apply database migrations as usual, then restart the backend. No webhook, R2 bucket,
+or frontend Cloudflare credentials are needed. Existing catalog entries without
+images continue to work.
+
+In Silverstreak, save a produce listing, then open its editor under
+`/admin/produce` to upload, replace, describe, or remove its image. The browser
+uploads directly to Cloudflare and calls the API to register the completed image.
+Image changes save independently of the produce text fields. Dashboard image
+uploads accept JPEG, PNG, WebP, and AVIF up to 10 MB; Cloudflare enforces its own
+upload format and size limits for all clients.
+
+Assets are created only after the backend verifies upload completion and the
+network/uploader metadata set when issuing the upload URL. Associations live in
+`assets.metadata`, e.g. `{"produce_id":"<uuid>"}`; the backend validates the
+produce belongs to the same network. A unique index allows one image per produce
+listing. Delivery is public; admin authorization protects image management.
+Additional JSON metadata is retained, but farm image associations are not yet
+implemented.
+
+New uploads use Cloudflare custom image IDs shaped as
+`produce/<network-id>/<uuid>`, providing a folder-like namespace per network.
+Existing images with plain UUID IDs continue to work. Custom ID paths support
+public delivery; Cloudflare does not support signed private delivery for them.
+
+Replacing an image requires the current asset ID and atomically removes its
+`produce_id` metadata before registering the replacement. The previous asset stays
+in the library; administrators can delete it through MCP. Deletes remove the
+Cloudflare image and database row. If a completed upload is abandoned before
+registration, it remains in Cloudflare; automatic orphan cleanup is not included.

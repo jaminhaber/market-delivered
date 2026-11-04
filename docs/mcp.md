@@ -73,3 +73,30 @@ The library uses the selected network's scoped database context and current
 permissions for catalog, inventory, scheduling, orders, invitations, and jobs.
 `invite_user` emails the registered frontend's `/account` link; success means the
 email provider accepted the message. Failed sends revoke the invitation.
+
+### Image assets
+
+Image tools use the same current network admin permissions as catalog tools.
+Account-wide connections require `networkId`; network-bound connections default
+to their network and reject other IDs.
+
+1. Call `create_image_upload`. It returns `cloudflareImageId`, `uploadUrl`,
+   `expiresAt`, and a dashboard `uploadPageUrl`. No database asset is created.
+2. POST the file directly to `uploadUrl` as multipart/form-data with a `file`
+   field. Keep the returned image ID.
+3. Call `register_asset` with `cloudflareImageId`, `altText`, and
+   `metadata: {"produce_id":"<existing-produce-uuid>"}`. The backend verifies
+   Cloudflare completion and upload ownership, then inserts the asset.
+
+Use `list_assets` with `produceId` to discover the current image. To replace it,
+include that asset ID as `replaceAssetId` in registration. The original image is
+retained without its produce association. Registration retries return the existing
+asset without reattaching it. `update_asset` edits alt text; `delete_asset`
+permanently deletes the Cloudflare image and asset row, removing it from produce
+if attached. Produce list/detail tools also return image variant URLs.
+
+Clients must have HTTP/file access to send the bytes; chat attachments are not
+automatically exposed to MCP. Otherwise open `uploadPageUrl`, sign in as a
+business administrator, and use the produce image editor. This starts a separate
+dashboard upload. See [configuration](configuration.md#catalog-images) for
+Cloudflare credentials and required variants.

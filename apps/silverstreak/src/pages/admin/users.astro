@@ -1,0 +1,151 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
+import { messageFor } from '../../server/market';
+
+const admin = await adminRequest(Astro);
+if (admin.response) return admin.response;
+const { authorized } = admin;
+let error = admin.error;
+let users: Awaited<ReturnType<AdminApi['admin']['users']['query']>> = [];
+let invites: Awaited<ReturnType<AdminApi['admin']['invitations']['query']>> =
+  [];
+let invitationUrl = '';
+const day = (value: string) =>
+  new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeZone: 'America/Los_Angeles',
+  }).format(new Date(value));
+
+try {
+  if (admin.api) {
+    const api = admin.api;
+    if (Astro.request.method === 'POST') {
+      const { field, intent } = await adminForm(Astro.request, [
+        'invite',
+        'revoke-invite',
+      ]);
+      if (intent === 'invite') {
+        const result = await api.admin.invite.mutate({
+          email: field('email'),
+          role: field('role') as 'customer' | 'driver' | 'network_admin',
+        });
+        const url = new URL('/account', Astro.url.origin);
+        url.searchParams.set('invite', result.token);
+        invitationUrl = url.href;
+      }
+      if (intent === 'revoke-invite') {
+        await api.admin.revokeInvite.mutate({ id: field('id') });
+      }
+      if (!invitationUrl) {
+        const next = new URL(Astro.url);
+        next.searchParams.set('saved', '1');
+        return Astro.redirect(next.pathname + next.search, 303);
+      }
+    }
+    [users, invites] = await Promise.all([
+      api.admin.users.query(),
+      api.admin.invitations.query(),
+    ]);
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<AdminLayout title="Users" authorized={authorized} error={error}>
+  <p>
+    Current Silverstreak members and invitations. Showing up to 100 of each.
+  </p>
+  <details class="admin-record">
+    <summary>Create an invitation</summary>
+    <form
+      method="post"
+      class="shop-form admin-edit-form"
+      aria-label="Create invitation"
+    >
+      <input type="hidden" name="intent" value="invite" />
+      <label>
+        Email
+        <input name="email" type="email" required />
+      </label>
+      <label>
+        Access
+        <select aria-label="Access" name="role">
+          <option value="customer">Customer</option>
+          <option value="driver">Driver</option>
+          <option value="network_admin">Administrator</option>
+        </select>
+      </label>
+      <button class="button button-dark">Create invitation</button>
+    </form>
+  </details>
+  {invitationUrl && (
+    <div class="shop-notice">
+      <p role="status">
+        Invitation created. Copy and share this link; it is shown only now. No
+        email has been sent.
+      </p>
+      <label>
+        Invitation link
+        <input readonly value={invitationUrl} />
+      </label>
+    </div>
+  )}
+  <div class="admin-table-wrap" role="region" aria-label="Users" tabindex="0">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Email</th>
+          <th scope="col">Access</th>
+        </tr>
+      </thead>
+      <tbody>
+        {users.map((user) => (
+          <tr>
+            <th scope="row">{user.name}</th>
+            <td>{user.email}</td>
+            <td>
+              {user.role === 'network_admin' ? 'Administrator' : 'Member'}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+  {!users.length && <p>No members yet.</p>}
+  <h3>Invitations</h3>
+  {!invites.length && <p>No invitations yet.</p>}
+  {invites.map((invite) => (
+    <div class="admin-record admin-row">
+      <div>
+        <strong>{invite.email}</strong>
+        <p>
+          {invite.role === 'network_admin' ? 'Administrator' : invite.role} ·{' '}
+          {invite.revokedAt
+            ? 'Revoked'
+            : invite.usedAt
+              ? 'Accepted'
+              : new Date(invite.expiresAt) <= new Date()
+                ? 'Expired'
+                : `Expires ${day(invite.expiresAt)}`}
+        </p>
+      </div>
+      {!invite.usedAt &&
+        !invite.revokedAt &&
+        new Date(invite.expiresAt) > new Date() && (
+          <form method="post" data-admin-confirm="Revoke this invitation?">
+            <input type="hidden" name="intent" value="revoke-invite" />
+            <input type="hidden" name="id" value={invite.id} />
+            <button
+              class="quiet-button"
+              aria-label={`Revoke invitation for ${invite.email}`}
+            >
+              Revoke invitation
+            </button>
+          </form>
+        )}
+    </div>
+  ))}
+</AdminLayout>

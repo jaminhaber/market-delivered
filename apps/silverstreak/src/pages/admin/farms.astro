@@ -1,0 +1,54 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
+import { messageFor } from '../../server/market';
+import AdminFarmForm from '../../components/AdminFarmForm.astro';
+
+const admin = await adminRequest(Astro);
+if (admin.response) return admin.response;
+const { authorized } = admin;
+let error = admin.error;
+let farms: Awaited<ReturnType<AdminApi['farms']['list']['query']>> = [];
+try {
+  if (admin.api) {
+    const api = admin.api;
+    if (Astro.request.method === 'POST') {
+      const { form, field } = await adminForm(Astro.request, ['farm']);
+      const input = {
+        name: field('name'),
+        location: field('location'),
+        contactPhone: field('contactPhone'),
+        notes: field('notes'),
+        active: form.has('active'),
+      };
+      if (field('id'))
+        await api.admin.updateFarm.mutate({ id: field('id'), ...input });
+      else await api.admin.createFarm.mutate(input);
+      const next = new URL(Astro.url);
+      next.searchParams.set('saved', '1');
+      return Astro.redirect(next.pathname + next.search, 303);
+    }
+    farms = await api.farms.list.query();
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<AdminLayout title="Farms" authorized={authorized} error={error}>
+  <p>Manage the growers and vendors supplying Silverstreak.</p>
+  <details class="admin-record">
+    <summary>Add a farm</summary>
+    <AdminFarmForm />
+  </details>
+  {!farms.length && <p>No farms yet.</p>}
+  {farms.map((farm) => (
+    <details class="admin-record">
+      <summary>
+        {farm.name} · {farm.location}
+        {!farm.active && ' · Inactive'}
+      </summary>
+      <AdminFarmForm farm={farm} />
+    </details>
+  ))}
+</AdminLayout>

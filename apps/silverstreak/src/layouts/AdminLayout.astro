@@ -1,0 +1,46 @@
+---
+import Site from './Site.astro';
+import AdminNav from '../components/AdminNav.astro';
+
+interface Props {
+  title: string;
+  authorized: boolean;
+  error: string;
+}
+const { title, authorized, error } = Astro.props;
+---
+
+<Site title={`${title} — Admin — Silverstreak`}>
+  <section class="shop-page business-admin-page">
+    <p class="small-label">Silverstreak administration</p>
+    <h1>Admin.</h1>
+    {authorized && <AdminNav />}
+    <h2>{title}</h2>
+    {error && (
+      <p class="shop-notice" role="alert">
+        {error}
+      </p>
+    )}
+    {authorized && Astro.url.searchParams.has('saved') && (
+      <p class="shop-notice" role="status">
+        Changes saved.
+      </p>
+    )}
+    {authorized && <slot />}
+  </section>
+</Site>
+
+<script>
+  const filter = document.querySelector<HTMLFormElement>('[data-admin-filter]');
+  filter
+    ?.querySelector('input')
+    ?.addEventListener('change', () => filter?.requestSubmit());
+
+  document
+    .querySelectorAll<HTMLFormElement>('[data-admin-confirm]')
+    .forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        if (!window.confirm(form.dataset.adminConfirm)) event.preventDefault();
+      });
+    });
+</script>

@@ -1,0 +1,207 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
+import { messageFor, money } from '../../server/market';
+
+const admin = await adminRequest(Astro);
+if (admin.response) return admin.response;
+const { authorized } = admin;
+let error = admin.error;
+let markets: Awaited<ReturnType<AdminApi['markets']['list']['query']>> = [];
+let schedules: Awaited<ReturnType<AdminApi['admin']['schedules']['query']>> =
+  [];
+const days = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+const time = (minutes: number) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+try {
+  if (admin.api) {
+    const api = admin.api;
+    if (Astro.request.method === 'POST') {
+      const { form, field, numeric, cents, minute, intent } = await adminForm(
+        Astro.request,
+        ['market', 'schedule'],
+      );
+      if (intent === 'market') {
+        await api.admin.createMarket.mutate({
+          name: field('name'),
+          address: field('address'),
+          timezone: field('timezone'),
+        });
+      }
+      if (intent === 'schedule') {
+        await api.admin.saveSchedule.mutate({
+          marketId: field('marketId'),
+          weekday: numeric('weekday'),
+          opensMinute: minute('opens'),
+          closesMinute: minute('closes'),
+          cutoffMinutes: numeric('cutoffHours') * 60,
+          deliveryDurationMinutes: numeric('deliveryHours') * 60,
+          deliveryFeeCents: cents('fee'),
+          skipThanksgiving: form.has('skipThanksgiving'),
+          active: form.has('active'),
+        });
+        await api.admin.runSchedulingJob.mutate();
+      }
+      const next = new URL(Astro.url);
+      next.searchParams.set('saved', '1');
+      return Astro.redirect(next.pathname + next.search, 303);
+    }
+    [markets, schedules] = await Promise.all([
+      api.markets.list.query(),
+      api.admin.schedules.query(),
+    ]);
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<AdminLayout title="Markets" authorized={authorized} error={error}>
+  <details class="admin-record">
+    <summary>Add a market</summary>
+    <form
+      method="post"
+      class="shop-form admin-edit-form"
+      aria-label="Add market"
+    >
+      <input type="hidden" name="intent" value="market" />
+      <label>
+        Market name
+        <input name="name" required minlength="2" maxlength="150" />
+      </label>
+      <label>
+        Market address
+        <input name="address" required minlength="5" maxlength="500" />
+      </label>
+      <label>
+        Time zone
+        <input name="timezone" required value="America/Los_Angeles" />
+      </label>
+      <button class="button button-dark">Add market</button>
+    </form>
+  </details>
+  {!markets.length && <p>No markets yet.</p>}
+  {markets.map((market) => (
+    <article class="admin-record">
+      <h3>{market.name}</h3>
+      <p>
+        {market.address}
+        <br />
+        {market.timezone}
+      </p>
+    </article>
+  ))}
+  {markets.length > 0 && (
+    <details class="admin-record">
+      <summary>Add or update weekly hours</summary>
+      <p>
+        Times use the selected market’s time zone. Saving an existing market and
+        weekday updates its schedule. Existing dates and orders are preserved.
+      </p>
+      <form
+        method="post"
+        class="shop-form admin-edit-form"
+        aria-label="Weekly market hours"
+      >
+        <input type="hidden" name="intent" value="schedule" />
+        <label>
+          Market
+          <select aria-label="Market" name="marketId">
+            {markets.map((market) => (
+              <option value={market.id}>{market.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Weekday
+          <select aria-label="Weekday" name="weekday">
+            {days.map((name, i) => (
+              <option value={i}>{name}</option>
+            ))}
+          </select>
+        </label>
+        <div class="form-pair">
+          <label>
+            Opens
+            <input type="time" name="opens" value="09:00" required />
+          </label>
+          <label>
+            Closes
+            <input type="time" name="closes" value="13:00" required />
+          </label>
+        </div>
+        <label>
+          Ordering cutoff (hours before opening)
+          <input
+            type="number"
+            name="cutoffHours"
+            min="0"
+            max="168"
+            step="1"
+            value="12"
+            required
+          />
+        </label>
+        <label>
+          Delivery window (hours from opening)
+          <input
+            type="number"
+            name="deliveryHours"
+            min="1"
+            max="24"
+            step="1"
+            value="4"
+            required
+          />
+        </label>
+        <label>
+          Delivery fee ($)
+          <input
+            type="number"
+            name="fee"
+            min="0"
+            max="1000"
+            step="0.01"
+            value="5.00"
+            required
+          />
+        </label>
+        <label class="admin-checkbox">
+          <input type="checkbox" name="active" checked />
+          Active schedule
+        </label>
+        <label class="admin-checkbox">
+          <input type="checkbox" name="skipThanksgiving" />
+          Skip Thanksgiving
+        </label>
+        <button class="button button-dark">Save weekly hours</button>
+      </form>
+    </details>
+  )}
+  <h3>Weekly schedules</h3>
+  {!schedules.length && <p>No recurring schedules yet.</p>}
+  {schedules.map(({ market, schedule }) => (
+    <article class="admin-record">
+      <h3>
+        {market.name} · {days[schedule.weekday]}
+      </h3>
+      <p>
+        {time(schedule.opensMinute)}–{time(schedule.closesMinute)} (
+        {market.timezone}) · {money(schedule.deliveryFeeCents)} delivery
+        <br />
+        {schedule.cutoffMinutes / 60} hour ordering cutoff ·{' '}
+        {schedule.active ? 'Active' : 'Paused'}
+        {schedule.skipThanksgiving && ' · Skips Thanksgiving'}
+      </p>
+    </article>
+  ))}
+</AdminLayout>

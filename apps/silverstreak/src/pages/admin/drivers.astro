@@ -1,0 +1,76 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
+import { messageFor } from '../../server/market';
+
+const admin = await adminRequest(Astro);
+if (admin.response) return admin.response;
+const { authorized } = admin;
+let error = admin.error;
+let drivers: Awaited<ReturnType<AdminApi['admin']['drivers']['query']>> = [];
+try {
+  if (admin.api) {
+    const api = admin.api;
+    if (Astro.request.method === 'POST') {
+      const { field } = await adminForm(Astro.request, ['review']);
+      const status = field('status');
+      if (status !== 'approved' && status !== 'suspended')
+        throw new Error('Choose a valid driver status.');
+      await api.admin.reviewDriver.mutate({
+        userId: field('userId'),
+        status,
+      });
+      const next = new URL(Astro.url);
+      next.searchParams.set('saved', '1');
+      return Astro.redirect(next.pathname + next.search, 303);
+    }
+    drivers = await api.admin.drivers.query();
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<AdminLayout title="Drivers" authorized={authorized} error={error}>
+  {!drivers.length && (
+    <p>No drivers yet. Create a driver invitation in Users.</p>
+  )}
+  {drivers.map((driver) => (
+    <article class="admin-record">
+      <h3>{driver.name}</h3>
+      <p>
+        {driver.email} · {driver.profile.phone}
+        <br />
+        {driver.profile.vehicle} · {driver.profile.status}
+      </p>
+      <div class="shop-links">
+        {driver.profile.status !== 'approved' && (
+          <form method="post">
+            <input type="hidden" name="intent" value="review" />
+            <input type="hidden" name="userId" value={driver.profile.userId} />
+            <input type="hidden" name="status" value="approved" />
+            <button
+              class="button button-dark"
+              aria-label={`Approve ${driver.name}`}
+            >
+              Approve driver
+            </button>
+          </form>
+        )}
+        {driver.profile.status !== 'suspended' && (
+          <form
+            method="post"
+            data-admin-confirm="Suspend this driver? They will no longer be able to claim orders."
+          >
+            <input type="hidden" name="intent" value="review" />
+            <input type="hidden" name="userId" value={driver.profile.userId} />
+            <input type="hidden" name="status" value="suspended" />
+            <button class="quiet-button" aria-label={`Suspend ${driver.name}`}>
+              Suspend driver
+            </button>
+          </form>
+        )}
+      </div>
+    </article>
+  ))}
+</AdminLayout>
