@@ -176,14 +176,6 @@ main:focus {
   transform: translateX(-50%);
   width: min(80%, 960px);
   aspect-ratio: 1560 / 420;
-  background: linear-gradient(#ffedce 78%, #fff 78%);
-  /* Crop the original 2000 × 1499 animation to its 1560 × 420 lettering.
-     A luminance mask removes black on every frame, including distressed holes. */
-  mask-image: url('/images/silverstreak-logo.png');
-  mask-mode: luminance;
-  mask-size: 128.205128% 356.904762%;
-  mask-position: 50% 35.217794%;
-  mask-repeat: no-repeat;
   pointer-events: none;
 }
 .hero-content {
@@ -317,9 +309,12 @@ h1 em {
   }
   .masthead-top {
     min-height: 58px;
-    gap: 10px;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 12px 0;
   }
   .home-link {
+    flex: 0 0 100%;
     font-size: 8px;
     gap: 8px;
   }
@@ -329,8 +324,18 @@ h1 em {
   nav {
     font-size: 16px;
     gap: clamp(10px, 3vw, 25px);
-    flex-shrink: 0;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  nav > a {
     white-space: nowrap;
+  }
+  .profile-menu {
+    margin-left: auto;
+    min-width: 0;
+  }
+  .profile-menu summary {
+    max-width: 100%;
   }
   .wordmark {
     font-size: 14.15vw;
@@ -349,6 +354,7 @@ h1 em {
     font-size: clamp(40px, 12vw, 78px);
   }
   .hero-actions {
+    flex-wrap: wrap;
     gap: 18px;
     margin-top: 27px;
   }

@@ -23,6 +23,7 @@
     "db:seed": "dotenv -- npm run seed -w @market/db",
     "start:api": "dotenv -- npm run start -w @market/api",
     "test:e2e": "playwright test",
+    "test:ui": "playwright test tests/e2e/silverstreak-layout.spec.ts",
     "admin:grant": "dotenv -- tsx scripts/grant-admin.ts",
     "invite:create": "dotenv -- tsx scripts/create-invite.ts",
     "test:db": "docker compose --profile test up -d --wait postgres-e2e",

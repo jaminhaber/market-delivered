@@ -2,6 +2,8 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
+  snapshotPathTemplate:
+    '{testDir}/{testFilePath}-snapshots/{projectName}/{arg}{ext}',
   workers: 1,
   timeout: 60000,
   expect: { timeout: 10000 },
@@ -17,5 +19,12 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 60000,
   },
-  projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium' } },
+    {
+      name: 'webkit',
+      testMatch: 'silverstreak-layout.spec.ts',
+      use: { browserName: 'webkit', isMobile: true, hasTouch: true },
+    },
+  ],
 });

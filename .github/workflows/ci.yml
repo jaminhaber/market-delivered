@@ -31,8 +31,15 @@ jobs:
       - run: npm run typecheck:e2e
       - run: npm run build
       - run: npm run db:migrate
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-page-screenshots
+          path: artifacts/playwright/
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

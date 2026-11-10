@@ -81,12 +81,24 @@ npm run typecheck
 npm run typecheck:e2e
 npm run build
 npm run test:db
+npx playwright install chromium webkit
 npm run test:e2e
 ```
 
 Integration tests use only a database ending in `_e2e` and dedicated test ports.
 They retain business invariants and cover the API boundary, independent auth,
 MCP identity and live permissions, registered origins, and both frontends.
+
+Run the focused homepage layout checks with
+`npm run test:ui`. These cover signed-in
+and signed-out navigation at 320px, 402px, and desktop widths in Chromium and
+WebKit, with logo screenshot comparisons and full-page report attachments.
+Full-page screenshots are also saved under
+`artifacts/playwright/<browser>/<width>/logged-in/` and `logged-out/`,
+including a separate screenshot of the open profile menu. Each run overwrites
+the matching images. CI uploads this folder as `playwright-page-screenshots`.
+After reviewing an intentional logo change, update its baselines with the same
+command plus `-- --update-snapshots`.
 
 ## Hosting
 
