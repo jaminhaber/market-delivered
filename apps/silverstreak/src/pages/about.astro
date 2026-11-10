@@ -1,11 +1,11 @@
 ---
+import ArrowUpRight from '../components/ArrowUpRight.astro';
 import Site from '../layouts/Site.astro';
 ---
 
 <Site title="About us — Silverstreak">
   <section class="story" aria-labelledby="story-title">
     <div class="story-copy">
-      <p class="small-label">A little closer to the source.</p>
       <h1 id="story-title">
         A market morning.
         <br />
@@ -21,7 +21,7 @@ import Site from '../layouts/Site.astro';
         table.
       </p>
       <a class="button button-dark" href="/order">
-        Order now <span aria-hidden="true">↗</span>
+        Order now <ArrowUpRight />
       </a>
     </div>
   </section>

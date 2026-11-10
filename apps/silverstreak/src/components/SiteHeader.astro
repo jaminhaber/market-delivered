@@ -1,0 +1,42 @@
+---
+import ArrowUpRight from './ArrowUpRight.astro';
+import ProfileMenu from './ProfileMenu.astro';
+
+interface Props {
+  home?: boolean;
+  profile: { name: string; admin: boolean } | null;
+}
+
+const { home = false, profile } = Astro.props;
+---
+
+<header class="masthead">
+  <div class="masthead-top">
+    <a class="small-label home-link" href="/" aria-label="Silverstreak home">
+      <span class="streak" aria-hidden="true">
+        ↠
+      </span>{' '}
+      From the market. To your door.
+    </a>
+    <nav aria-label="Main navigation">
+      <a
+        href="/order"
+        aria-current={Astro.url.pathname === '/order' ? 'page' : undefined}
+      >
+        Order now <ArrowUpRight />
+      </a>
+      <a
+        href="/about"
+        aria-current={Astro.url.pathname === '/about' ? 'page' : undefined}
+      >
+        About us
+      </a>
+      {profile && <ProfileMenu name={profile.name} admin={profile.admin} />}
+    </nav>
+  </div>
+  {!home && (
+    <a class="wordmark" href="/" aria-label="Silverstreak home">
+      SILVERSTREAK
+    </a>
+  )}
+</header>

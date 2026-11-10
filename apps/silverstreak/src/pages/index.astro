@@ -1,4 +1,5 @@
 ---
+import ArrowUpRight from '../components/ArrowUpRight.astro';
 import Site from '../layouts/Site.astro';
 ---
 
@@ -13,12 +14,8 @@ import Site from '../layouts/Site.astro';
       fetchpriority="high"
     />
     <div class="hero-shade" aria-hidden="true"></div>
-    <div class="hero-eyebrow small-label">
-      <span>A little closer to the source.</span>
-      <span aria-hidden="true">No. 001</span>
-    </div>
+    <div class="hero-logo" role="img" aria-label="Silverstreak Produce"></div>
     <div class="hero-content">
-      <p class="small-label">Farmers market delivery</p>
       <h1 id="hero-title">
         Fresh produce.
         <br />
@@ -26,17 +23,12 @@ import Site from '../layouts/Site.astro';
       </h1>
       <div class="hero-actions">
         <a class="button button-cream" href="/order">
-          Order now <span aria-hidden="true">↗</span>
+          Order now <ArrowUpRight />
         </a>
         <a class="text-link" href="/about">
-          About us <span aria-hidden="true">↗</span>
+          About us <ArrowUpRight />
         </a>
       </div>
     </div>
-    <p class="hero-note small-label">
-      Grown with care.
-      <br />
-      Gathered for you.
-    </p>
   </section>
 </Site>

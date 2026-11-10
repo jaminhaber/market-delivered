@@ -1,4 +1,5 @@
 ---
+import ArrowUpRight from '../components/ArrowUpRight.astro';
 import { randomUUID } from 'node:crypto';
 import Site from '../layouts/Site.astro';
 import { marketApi, messageFor, money, dateLabel } from '../server/market';
@@ -83,7 +84,6 @@ const deliveryReady =
 
 <Site title="Order — Silverstreak">
   <section class="shop-page market-page">
-    <p class="small-label">Your next market morning</p>
     <h1>
       {reviewing ? (
         <>
@@ -109,7 +109,7 @@ const deliveryReady =
           to join.
         </p>
         <a class="button button-dark" href="/account">
-          Sign in <span aria-hidden="true">↗</span>
+          Sign in <ArrowUpRight />
         </a>
       </div>
     ) : !runs.length ? (
@@ -202,7 +202,7 @@ const deliveryReady =
             class="button button-dark"
             disabled={!deliveryReady}
           >
-            Confirm and place order <span aria-hidden="true">↗</span>
+            Confirm and place order <ArrowUpRight />
           </button>
         </div>
       </form>
@@ -280,7 +280,7 @@ const deliveryReady =
               your order.
             </p>
             <button class="button button-dark" name="intent" value="review">
-              Review order <span aria-hidden="true">↗</span>
+              Review order <ArrowUpRight />
             </button>
           </form>
         ) : (

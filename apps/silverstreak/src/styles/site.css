@@ -169,19 +169,27 @@ main:focus {
       rgb(18 26 18 / 60%)
     );
 }
-.hero-eyebrow {
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  padding: 22px 27px;
+.hero-logo {
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(80%, 960px);
+  aspect-ratio: 1560 / 420;
+  background: linear-gradient(#ffedce 78%, #fff 78%);
+  /* Crop the original 2000 × 1499 animation to its 1560 × 420 lettering.
+     A luminance mask removes black on every frame, including distressed holes. */
+  mask-image: url('/images/silverstreak-logo.png');
+  mask-mode: luminance;
+  mask-size: 128.205128% 356.904762%;
+  mask-position: 50% 35.217794%;
+  mask-repeat: no-repeat;
+  pointer-events: none;
 }
 .hero-content {
   position: absolute;
   left: 5%;
   bottom: 11%;
-}
-.hero-content > p {
-  margin: 0 0 18px;
 }
 h1 {
   font-family: var(--serif);
@@ -236,30 +244,12 @@ h1 em {
 .text-link span {
   margin-left: 30px;
 }
-.hero-note {
-  position: absolute;
-  right: 27px;
-  bottom: 28px;
-  margin: 0;
-  text-align: right;
-}
-.site-footer {
-  display: flex;
-  flex: none;
-  justify-content: space-between;
-  gap: 20px;
-  align-items: center;
-  min-height: 45px;
-}
-.site-footer span span {
-  margin-left: 15px;
-  font-size: 20px;
-}
 .is-home .site-shell {
   height: 100svh;
+  padding-bottom: 3.2vw;
 }
 .is-home .hero {
-  min-height: 370px;
+  min-height: clamp(520px, 50vw, 720px);
 }
 .story {
   flex: 1;
@@ -322,13 +312,16 @@ h1 em {
   .site-shell {
     padding: 0 18px;
   }
+  .is-home .site-shell {
+    padding-bottom: 18px;
+  }
   .masthead-top {
     min-height: 58px;
     gap: 10px;
   }
   .home-link {
-    font-size: 0;
-    gap: 0;
+    font-size: 8px;
+    gap: 8px;
   }
   .streak {
     font-size: 32px;
@@ -336,14 +329,16 @@ h1 em {
   nav {
     font-size: 16px;
     gap: clamp(10px, 3vw, 25px);
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .wordmark {
     font-size: 14.15vw;
     padding: 15px 0 18px;
   }
-  .hero-eyebrow {
-    padding: 18px;
-    font-size: 9px;
+  .hero-logo {
+    top: 14%;
+    width: 96%;
   }
   .hero-content {
     left: 23px;
@@ -368,19 +363,6 @@ h1 em {
   }
   .text-link span {
     margin-left: 12px;
-  }
-  .hero-note {
-    bottom: 20px;
-    right: 18px;
-    font-size: 9px;
-  }
-  .site-footer {
-    min-height: 47px;
-    font-size: 8px;
-    letter-spacing: 0.06em;
-  }
-  .site-footer span span {
-    margin-left: 6px;
   }
   .story-copy {
     padding: 30px 5px 45px;
