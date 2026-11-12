@@ -1,6 +1,6 @@
 ---
-import ArrowUpRight from './ArrowUpRight.astro';
 import ProfileMenu from './ProfileMenu.astro';
+import SiteLogo from './SiteLogo.astro';
 
 interface Props {
   home?: boolean;
@@ -10,33 +10,35 @@ interface Props {
 const { home = false, profile } = Astro.props;
 ---
 
-<header class="masthead">
-  <div class="masthead-top">
-    <a class="small-label home-link" href="/" aria-label="Silverstreak home">
-      <span class="streak" aria-hidden="true">
-        ↠
-      </span>{' '}
-      From the market. To your door.
-    </a>
-    <nav aria-label="Main navigation">
-      <a
-        href="/order"
-        aria-current={Astro.url.pathname === '/order' ? 'page' : undefined}
-      >
-        Order now <ArrowUpRight />
+<header class:list={['masthead', { 'home-profile': home }]}>
+  {home ? (
+    profile && <ProfileMenu name={profile.name} admin={profile.admin} />
+  ) : (
+    <>
+      <a class="home-link" href="/" aria-label="Silverstreak home">
+        <SiteLogo />
       </a>
-      <a
-        href="/about"
-        aria-current={Astro.url.pathname === '/about' ? 'page' : undefined}
-      >
-        About us
-      </a>
-      {profile && <ProfileMenu name={profile.name} admin={profile.admin} />}
-    </nav>
-  </div>
-  {!home && (
-    <a class="wordmark" href="/" aria-label="Silverstreak home">
-      SILVERSTREAK
-    </a>
+      <nav aria-label="Main navigation">
+        <a
+          href="/order"
+          aria-current={Astro.url.pathname === '/order' ? 'page' : undefined}
+        >
+          Order
+        </a>
+        <a
+          href="/about"
+          aria-current={Astro.url.pathname === '/about' ? 'page' : undefined}
+        >
+          About
+        </a>
+        <a
+          href="/contact"
+          aria-current={Astro.url.pathname === '/contact' ? 'page' : undefined}
+        >
+          Contact
+        </a>
+        {profile && <ProfileMenu name={profile.name} admin={profile.admin} />}
+      </nav>
+    </>
   )}
 </header>

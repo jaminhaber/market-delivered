@@ -1,16 +1,8 @@
-@font-face {
-  font-family: 'Silverstreak Sans';
-  src: local('Helvetica Neue');
-  font-display: swap;
-}
-
 :root {
   color-scheme: light;
-  --paper: #eeece2;
-  --ink: #24231e;
-  --serif:
-    'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
-  font-family: var(--serif);
+  --paper: #fff8e9;
+  --ink: #292820;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
   color: var(--ink);
   background: var(--paper);
   -webkit-font-smoothing: antialiased;
@@ -46,14 +38,35 @@ a:focus-visible {
 }
 .masthead {
   flex: none;
-}
-.masthead-top {
-  min-height: 64px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
   gap: 24px;
-  border-bottom: 1px solid var(--ink);
+  padding: 40px 0 0;
+}
+.home-link {
+  display: block;
+  width: min(64vw, 310px);
+}
+.site-logo {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1560 / 420;
+}
+.masthead nav {
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.masthead .profile-menu-links {
+  font-size: 13px;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
 }
 .small-label {
   font-family: 'Courier New', monospace;
@@ -61,16 +74,6 @@ a:focus-visible {
   font-size: 10px;
   letter-spacing: 0.1em;
   line-height: 1.6;
-}
-.home-link {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-.streak {
-  font-family: Georgia, serif;
-  font-size: 36px;
-  line-height: 1;
 }
 nav {
   display: flex;
@@ -122,16 +125,6 @@ nav span {
   padding: 12px;
   white-space: nowrap;
 }
-.wordmark {
-  display: block;
-  font-family: 'Silverstreak Sans', 'Helvetica Neue', Arial, sans-serif;
-  font-size: 14.8vw;
-  font-weight: 500;
-  line-height: 1.03;
-  letter-spacing: -0.075em;
-  padding: 8px 0 17px;
-  white-space: nowrap;
-}
 main {
   flex: 1;
   display: flex;
@@ -143,7 +136,7 @@ main:focus {
 .hero {
   position: relative;
   flex: 1;
-  min-height: 510px;
+  min-height: 100svh;
   overflow: hidden;
   color: var(--paper);
   background: #5b6047;
@@ -170,45 +163,83 @@ main:focus {
     );
 }
 .hero-logo {
-  position: absolute;
-  top: 12%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(80%, 960px);
+  display: block;
+  width: 100%;
   aspect-ratio: 1560 / 420;
-  pointer-events: none;
 }
 .hero-content {
-  position: absolute;
-  left: 5%;
-  bottom: 11%;
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(24px, 4vh, 48px);
+  padding: 12svh 6vw 4svh;
+  text-align: center;
 }
+.hero-content h1 {
+  width: min(100%, 1160px);
+}
+.hero-order,
+.hero-nav {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.hero-order {
+  padding: 0.2em 0.25em;
+  background: #fff;
+  color: #078a12;
+  font-size: clamp(30px, 5.2vw, 80px);
+  line-height: 1.2;
+}
+.hero-order:hover {
+  background: #ffedce;
+}
+.hero-nav {
+  margin-top: clamp(24px, 7vh, 90px);
+  justify-content: center;
+  font-size: clamp(22px, 4vw, 64px);
+  letter-spacing: 0.15em;
+  color: #fff;
+}
+.home-profile {
+  position: absolute;
+  top: 20px;
+  right: 6vw;
+  z-index: 2;
+  color: #fff;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  padding: 0;
+}
+.home-profile .profile-menu-links {
+  color: var(--ink);
+}
+
 h1 {
-  font-family: var(--serif);
-  font-size: clamp(54px, 6.6vw, 110px);
-  line-height: 0.98;
-  letter-spacing: -0.05em;
-  font-weight: 400;
+  font-size: clamp(32px, 4vw, 48px);
+  line-height: 1.07;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+  text-transform: uppercase;
   margin: 0;
 }
 h1 em {
-  font-weight: 400;
-}
-.hero-actions {
-  display: flex;
-  gap: 30px;
-  align-items: center;
-  margin-top: 35px;
+  font-style: normal;
+  font-weight: inherit;
 }
 .button {
   display: inline-flex;
   justify-content: space-between;
-  gap: 56px;
+  gap: 20px;
   align-items: center;
   padding: 15px 24px;
   min-height: 52px;
-  font-size: 17px;
-  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: normal;
   border: 1px solid transparent;
   transition:
     background 0.18s,
@@ -222,11 +253,11 @@ h1 em {
   background: #fffdf3;
 }
 .button-dark {
-  background: var(--ink);
+  background: #078a12;
   color: var(--paper);
 }
 .button-dark:hover {
-  background: #484b37;
+  background: #076d10;
 }
 .text-link {
   border-bottom: 1px solid rgb(238 236 226 / 65%);
@@ -237,50 +268,45 @@ h1 em {
   margin-left: 30px;
 }
 .is-home .site-shell {
-  height: 100svh;
-  padding-bottom: 3.2vw;
-}
-.is-home .hero {
-  min-height: clamp(520px, 50vw, 720px);
+  padding: 0;
 }
 .story {
   flex: 1;
-  border-top: 1px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
+}
+.story-copy,
+.shop-intro {
+  text-align: center;
 }
 .story-copy {
-  padding: 65px 9% 75px 3%;
+  max-width: 600px;
+  margin-inline: auto;
+  padding: 105px 0 80px;
 }
 .story-copy h1 {
-  font-size: clamp(46px, 4.7vw, 76px);
-  margin: 30px 0;
+  margin: 0 0 32px;
 }
-.story-copy > p:not(.small-label) {
-  font-size: 20px;
-  line-height: 1.55;
+.story-copy > p {
   max-width: 470px;
+  margin: 0 auto 22px;
+  font-size: 17px;
+  line-height: 1.6;
 }
 .story-copy .button {
-  margin-top: 22px;
+  margin-top: 25px;
 }
 .order-intro {
   flex: 1;
-  padding: 75px 20px 100px;
+  padding: 105px 0 80px;
   text-align: center;
-  border-block: 1px solid var(--ink);
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  justify-content: center;
 }
 .order-intro h1 {
-  margin: 24px 0;
+  margin: 0 0 32px;
 }
 .order-intro > p:not(.small-label) {
-  font-size: 20px;
+  font-size: 17px;
   max-width: 450px;
-  line-height: 1.5;
-  margin-bottom: 30px;
+  line-height: 1.6;
+  margin: 0 auto 30px;
 }
 .quiet-link {
   display: block;
@@ -304,23 +330,6 @@ h1 em {
   .site-shell {
     padding: 0 18px;
   }
-  .is-home .site-shell {
-    padding-bottom: 18px;
-  }
-  .masthead-top {
-    min-height: 58px;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 12px 0;
-  }
-  .home-link {
-    flex: 0 0 100%;
-    font-size: 8px;
-    gap: 8px;
-  }
-  .streak {
-    font-size: 32px;
-  }
   nav {
     font-size: 16px;
     gap: clamp(10px, 3vw, 25px);
@@ -331,32 +340,10 @@ h1 em {
     white-space: nowrap;
   }
   .profile-menu {
-    margin-left: auto;
     min-width: 0;
   }
   .profile-menu summary {
     max-width: 100%;
-  }
-  .wordmark {
-    font-size: 14.15vw;
-    padding: 15px 0 18px;
-  }
-  .hero-logo {
-    top: 14%;
-    width: 96%;
-  }
-  .hero-content {
-    left: 23px;
-    right: 23px;
-    bottom: 85px;
-  }
-  .hero-content h1 {
-    font-size: clamp(40px, 12vw, 78px);
-  }
-  .hero-actions {
-    flex-wrap: wrap;
-    gap: 18px;
-    margin-top: 27px;
   }
   .button {
     padding: 14px 16px;
@@ -370,24 +357,9 @@ h1 em {
   .text-link span {
     margin-left: 12px;
   }
-  .story-copy {
-    padding: 30px 5px 45px;
-  }
-  .story-copy h1 {
-    font-size: 49px;
-  }
+  .story-copy,
   .order-intro {
-    padding: 50px 5px 75px;
-  }
-  .order-intro h1 {
-    font-size: 50px;
-  }
-}
-
-@media (max-height: 650px) and (min-width: 681px) {
-  .is-home .site-shell {
-    height: auto;
-    min-height: 100svh;
+    padding: 75px 0 60px;
   }
 }
 
@@ -399,22 +371,40 @@ h1 em {
 
 .shop-page {
   flex: 1;
-  padding: 45px 0 70px;
-  border-block: 1px solid var(--ink);
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+  padding: 75px 0 80px;
 }
 .shop-page > h1 {
-  font-size: clamp(44px, 6vw, 85px);
-  margin: 25px 0;
+  margin: 0 0 32px;
 }
 .shop-page h2 {
   font-size: 26px;
-  font-weight: 400;
+  font-weight: 600;
   margin: 12px 0;
 }
 .shop-page p,
 .shop-page li {
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1.6;
+}
+.shop-intro {
+  padding-top: 105px;
+}
+.shop-intro .shop-empty,
+.shop-intro .shop-notice {
+  margin-inline: auto;
+}
+.shop-intro .shop-empty {
+  max-width: 470px;
+  padding: 0;
+}
+.shop-intro .button {
+  margin-top: 25px;
+}
+.account-content > h1 {
+  text-align: center;
 }
 .shop-empty {
   padding: 30px 0;
@@ -776,10 +766,10 @@ h1 em {
     font-size: 23px;
   }
   .shop-page {
-    padding-top: 25px;
+    padding-top: 75px;
   }
   .shop-page > h1 {
-    font-size: 44px;
+    font-size: 32px;
   }
   .market-picker {
     align-items: stretch;

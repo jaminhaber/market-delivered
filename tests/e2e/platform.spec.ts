@@ -447,7 +447,7 @@ test('Silverstreak renders real routes and a supplied photo without network conf
   await expect(page.getByLabel(/network/i)).toHaveCount(0);
   await page.goto(silverOrigin + '/about');
   await expect(
-    page.getByRole('heading', { name: 'A market morning. Without the rush.' }),
+    page.getByRole('heading', { name: 'From the market. To your door.' }),
   ).toBeVisible();
   expect((await page.goto(silverOrigin + '/missing-page'))?.status()).toBe(404);
 });

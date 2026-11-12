@@ -1,0 +1,29 @@
+---
+import Site from '../layouts/Site.astro';
+---
+
+<Site title="Contact — Silverstreak">
+  <section class="story" aria-labelledby="contact-title">
+    <div class="story-copy">
+      <h1 id="contact-title">Say hello.</h1>
+      <p>
+        Have a question about our produce, delivery, or an order? Send us an
+        email. We'd love to hear from you.
+      </p>
+      <p>
+        <a href="mailto:silverstreakproduce@gmail.com">
+          silverstreakproduce@gmail.com
+        </a>
+      </p>
+    </div>
+  </section>
+</Site>
+
+<style>
+  .story-copy a {
+    overflow-wrap: anywhere;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+</style>

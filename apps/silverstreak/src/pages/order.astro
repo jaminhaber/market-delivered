@@ -83,11 +83,17 @@ const deliveryReady =
 ---
 
 <Site title="Order — Silverstreak">
-  <section class="shop-page market-page">
+  <section class:list={['shop-page', 'market-page', { 'shop-intro': !me }]}>
     <h1>
       {reviewing ? (
         <>
           Review your <em>order.</em>
+        </>
+      ) : !me ? (
+        <>
+          Let’s get
+          <br />
+          you fed.
         </>
       ) : (
         <>
@@ -109,7 +115,7 @@ const deliveryReady =
           to join.
         </p>
         <a class="button button-dark" href="/account">
-          Sign in <ArrowUpRight />
+          Sign in
         </a>
       </div>
     ) : !runs.length ? (

@@ -1,6 +1,6 @@
 ---
-import ArrowUpRight from '../components/ArrowUpRight.astro';
 import Site from '../layouts/Site.astro';
+import SiteLogo from '../components/SiteLogo.astro';
 ---
 
 <Site home>
@@ -14,58 +14,17 @@ import Site from '../layouts/Site.astro';
       fetchpriority="high"
     />
     <div class="hero-shade" aria-hidden="true"></div>
-    <svg
-      class="hero-logo"
-      viewBox="220 380 1560 420"
-      role="img"
-      aria-label="Silverstreak Produce"
-    >
-      <defs>
-        <!-- SVG luminance masks also work in Safari versions that treat CSS
-             image masks as alpha masks (which renders the opaque rectangle). -->
-        <mask
-          id="hero-lettering"
-          maskUnits="userSpaceOnUse"
-          x="220"
-          y="380"
-          width="1560"
-          height="420"
-          style="mask-type: luminance"
-        >
-          <image
-            href="/images/silverstreak-logo.png"
-            width="2000"
-            height="1499"
-          />
-        </mask>
-        <linearGradient id="hero-ink" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="78%" stop-color="#ffedce" />
-          <stop offset="78%" stop-color="#fff" />
-        </linearGradient>
-      </defs>
-      <rect
-        x="220"
-        y="380"
-        width="1560"
-        height="420"
-        fill="url(#hero-ink)"
-        mask="url(#hero-lettering)"
-      />
-    </svg>
     <div class="hero-content">
       <h1 id="hero-title">
-        Fresh produce.
-        <br />
-        <em>Delivered.</em>
+        <SiteLogo home />
       </h1>
-      <div class="hero-actions">
-        <a class="button button-cream" href="/order">
-          Order now <ArrowUpRight />
-        </a>
-        <a class="text-link" href="/about">
-          About us <ArrowUpRight />
-        </a>
-      </div>
+      <a class="hero-order" href="/order">
+        Order now
+      </a>
+      <nav class="hero-nav" aria-label="Main navigation">
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+      </nav>
     </div>
   </section>
 </Site>
