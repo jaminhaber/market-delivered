@@ -1,0 +1,578 @@
+/* Driver workspace styles are scoped to preserve the storefront navigation. */
+.driver-page {
+  --brand-primary: #49653b;
+  --brand-border: #dce3d3;
+  --brand-surface: #fffdf7;
+  --brand-surface-muted: #eef2e7;
+  max-width: 1440px;
+  width: 100%;
+}
+.driver-page {
+  .workspace {
+    padding: 12px 0 32px;
+  }
+  .page-heading {
+    margin-bottom: 24px;
+  }
+  .page-heading h1 {
+    font-family: Georgia, serif;
+    font-weight: 400;
+    font-size: clamp(32px, 5vw, 54px);
+    margin: 12px 0;
+  }
+  .eyebrow {
+    font:
+      11px 'Courier New',
+      monospace;
+    letter-spacing: 0.12em;
+  }
+  button {
+    font: inherit;
+    font-size: 14px;
+    padding: 12px 18px;
+    border: 1px solid #49653b;
+    border-radius: 6px;
+    background: #49653b;
+    color: white;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--ink);
+    border-color: #abb5a1;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid #49653b;
+    outline-offset: 3px;
+  }
+  input,
+  select,
+  textarea {
+    font: inherit;
+    max-width: 100%;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid #abb5a1;
+    border-radius: 4px;
+    background: #fffdf7;
+    color: var(--ink);
+  }
+  .panel {
+    padding: 24px;
+    border: 1px solid #dce3d3;
+    border-radius: 10px;
+    background: #fffdf7;
+    margin-bottom: 20px;
+    min-width: 0;
+  }
+  .panel h2 {
+    margin-top: 0;
+    font:
+      26px Georgia,
+      serif;
+  }
+  p,
+  li {
+    line-height: 1.6;
+  }
+  .muted,
+  small {
+    color: #63715e;
+  }
+  .inline-actions,
+  .subnav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .subnav {
+    margin: 24px 0;
+  }
+  .split-line {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 12px;
+    border-radius: 20px;
+    background: #eef2e7;
+    padding: 6px 10px;
+  }
+  .driver-layout {
+    display: grid;
+    gap: 24px;
+    align-items: start;
+  }
+  .list-row,
+  .purchase-row {
+    border-top: 1px solid #dce3d3;
+    padding: 16px 0;
+  }
+  .purchase-row,
+  .form-stack {
+    display: grid;
+    gap: 14px;
+  }
+  label {
+    overflow-wrap: anywhere;
+  }
+  .form-stack label,
+  .purchase-row label {
+    display: grid;
+    gap: 8px;
+  }
+  .notice {
+    padding: 14px;
+    margin: 16px 0;
+    border: 1px solid #abb5a1;
+  }
+  .notice.error {
+    color: #912e27;
+  }
+  .notice.success {
+    background: #eef2e7;
+  }
+  .empty-notice {
+    display: none;
+  }
+  .driver-market-list {
+    min-width: 0;
+    display: grid;
+    gap: 24px;
+  }
+  .driver-market {
+    border: 1px solid var(--brand-border, #dce3d3);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--brand-surface, #fff);
+  }
+  .driver-market-heading,
+  .driver-date-heading,
+  .driver-claim-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 20px 24px;
+  }
+  .driver-market-heading {
+    background: var(--brand-surface-muted, #eef2e7);
+    align-items: start;
+  }
+  .driver-market-heading h2 {
+    margin: 4px 0 8px;
+    font-family: var(--brand-heading-font, 'DM Serif Display', serif);
+    font-size: 28px;
+    font-weight: 400;
+  }
+  .driver-market p {
+    margin: 4px 0;
+  }
+  .driver-market-date + .driver-market-date {
+    border-top: 2px solid var(--brand-border, #dce3d3);
+  }
+  .driver-date-heading h3 {
+    margin: 0 0 6px;
+    font-size: 16px;
+  }
+  .driver-date-heading p,
+  .driver-order-summary p,
+  .driver-claim-bar p {
+    font-size: 13px;
+    color: var(--brand-muted-text, #63715e);
+    line-height: 1.6;
+  }
+  .driver-select-all {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .driver-select-all input,
+  .driver-order-checkbox {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    accent-color: var(--brand-primary, #49653b);
+  }
+  .driver-order-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    border-radius: 0;
+    border: 0;
+    border-top: 1px solid var(--brand-border, #e4e6dc);
+    padding: 16px 24px;
+    background: var(--brand-surface, #fff);
+  }
+  .driver-order-row:has(input:checked),
+  .driver-order-row.selected {
+    background: var(--brand-highlight, #f3f6eb);
+    box-shadow: inset 3px 0 var(--brand-primary, #6e8c56);
+  }
+  .driver-order-summary {
+    flex: 1;
+    min-width: 0;
+  }
+  .driver-order-summary h4 {
+    margin: 0 0 4px;
+    font-size: 14px;
+  }
+  .driver-order-row > button {
+    flex-shrink: 0;
+  }
+  .driver-claim-bar {
+    background: var(--brand-surface-muted, #fafbf5);
+    border-top: 1px solid var(--brand-border, #e4e6dc);
+  }
+  .driver-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+  }
+  .driver-layout:has(.driver-market-list) {
+    grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+  }
+  .driver-layout .driver-market-heading h2 {
+    font-size: 23px;
+  }
+  @media (max-width: 1000px) {
+    .driver-layout:has(.driver-market-list) {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (max-width: 650px) {
+    .driver-market-heading,
+    .driver-date-heading,
+    .driver-claim-bar,
+    .driver-order-row {
+      padding: 16px;
+    }
+    .driver-order-row {
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .driver-order-row > button,
+    .driver-claim-bar > .inline-actions,
+    .driver-claim-bar > .inline-actions > button {
+      width: 100%;
+    }
+  }
+  .driver-market-filter {
+    display: grid;
+    gap: 8px;
+    max-width: 420px;
+    margin: 20px 0;
+    font-size: 13px;
+  }
+  .driver-date-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: flex-end;
+    padding: 16px 24px;
+    border-top: 1px solid var(--brand-border, #e4e6dc);
+  }
+  .combined-shopping > .page-heading h2 {
+    margin-bottom: 8px;
+  }
+  .shopping-trip-actions,
+  .shopping-vendor-heading,
+  .shopping-quantities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+  }
+  .shopping-vendor-heading {
+    justify-content: space-between;
+    align-items: start;
+  }
+  .shopping-vendor-heading h2 {
+    margin: 4px 0 8px;
+  }
+  .shopping-quantities {
+    padding: 12px 0;
+    font-size: 13px;
+    color: var(--brand-muted-text, #63715e);
+  }
+  .combined-product {
+    border-top: 1px solid var(--brand-border, #e0e5d8);
+    padding: 20px 0;
+  }
+  .combined-product h3 {
+    margin: 0;
+  }
+  .combined-purchase-form {
+    display: grid;
+    gap: 16px;
+  }
+  .combined-purchase-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    max-width: 600px;
+  }
+  .combined-purchase-fields label {
+    display: grid;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .combined-purchase-form > button {
+    justify-self: start;
+  }
+  .purchase-allocations {
+    background: var(--brand-surface-muted, #fafbf5);
+    border: 1px solid var(--brand-border, #dce3d3);
+    border-radius: 6px;
+    padding: 14px;
+  }
+  .purchase-allocations summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .purchase-allocation {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 0;
+    border-top: 1px solid var(--brand-border, #e0e5d8);
+  }
+  .purchase-allocation small,
+  .packing-check small {
+    display: block;
+    color: var(--brand-muted-text, #63715e);
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .purchase-allocation input {
+    max-width: 100px;
+  }
+  .packing-order {
+    border-top: 1px solid var(--brand-border, #e0e5d8);
+    padding: 20px 0;
+  }
+  .packing-check {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px;
+    background: var(--brand-surface-muted, #fafbf5);
+    border: 1px solid var(--brand-border, #e0e5d8);
+    border-radius: 6px;
+    margin: 8px 0;
+  }
+  .packing-check input {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    accent-color: var(--brand-primary, #49653b);
+  }
+  .packing-check:has(input:checked) {
+    background: var(--brand-surface-muted, #edf3e7);
+  }
+  @media (max-width: 650px) {
+    .combined-purchase-fields {
+      grid-template-columns: 1fr;
+    }
+    .shopping-trip-actions > button,
+    .combined-purchase-form > button {
+      width: 100%;
+    }
+  }
+}
+
+.driver-page {
+  max-width: 960px;
+  padding-top: 48px;
+  .trip-heading {
+    margin-bottom: 24px;
+  }
+  .trip-heading h1 {
+    margin: 8px 0 12px;
+    font-family: Georgia, serif;
+    font-weight: 400;
+    font-size: clamp(30px, 5vw, 44px);
+    text-transform: none;
+    letter-spacing: -0.02em;
+  }
+  .trip-heading p {
+    margin: 6px 0;
+  }
+  .trip-steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 24px 0;
+  }
+  .trip-steps button {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+  }
+  .trip-steps button span {
+    margin: 0;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    line-height: 22px;
+    font-size: 12px;
+  }
+  .trip-progress {
+    padding: 8px 0 24px;
+  }
+  .trip-progress p {
+    margin: 8px 0 0;
+    color: #63715e;
+  }
+  progress {
+    display: block;
+    width: 100%;
+    height: 8px;
+    margin-top: 12px;
+    border: 0;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #e1e5d7;
+    accent-color: #49653b;
+  }
+  progress::-webkit-progress-bar {
+    background: #e1e5d7;
+  }
+  progress::-webkit-progress-value {
+    background: #49653b;
+  }
+  progress::-moz-progress-bar {
+    background: #49653b;
+  }
+  .trip-next-action {
+    margin-bottom: 24px;
+  }
+  .trip-next-action > button {
+    width: 100%;
+  }
+  .item-quantity {
+    display: inline-block;
+    font-weight: 400;
+    margin-left: 12px;
+  }
+  .combined-product h3 {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .saved-purchase {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .saved-purchase p {
+    color: #49653b;
+  }
+  .bag-items {
+    list-style: none;
+    padding: 0;
+    margin: 20px 0;
+  }
+  .bag-items li {
+    padding: 14px 0;
+    border-top: 1px solid #dce3d3;
+  }
+  .bag-items small {
+    display: block;
+    margin-top: 4px;
+  }
+  .trip-details {
+    border: 1px solid #dce3d3;
+    border-radius: 8px;
+    padding: 18px;
+    margin-top: 24px;
+  }
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .order-overview {
+    margin-top: 20px;
+    border-top: 1px solid #dce3d3;
+  }
+  .delivery-address {
+    font-size: 22px;
+  }
+  .action-link {
+    border: 1px solid #abb5a1;
+    border-radius: 6px;
+    padding: 12px 18px;
+    display: inline-block;
+  }
+  .text-link {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .delivery-notes {
+    background: #eef2e7;
+    border-radius: 6px;
+    padding: 14px;
+  }
+  .cash-due {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 28px 0;
+  }
+  .cash-due strong {
+    font-size: 30px;
+  }
+  .delivery-exceptions {
+    margin-top: 24px;
+  }
+  .delivery-exceptions form {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #dce3d3;
+  }
+  .find-more {
+    margin-top: 20px;
+  }
+  @media (max-width: 650px) {
+    .trip-steps button {
+      padding: 12px 8px;
+    }
+    .panel > button,
+    .trip-next-action > button {
+      width: 100%;
+    }
+    .combined-purchase-fields {
+      grid-template-columns: 1fr 1fr;
+    }
+    .combined-purchase-form > .inline-actions > button {
+      flex: 1;
+    }
+    .trip-heading h1 {
+      font-size: 32px;
+    }
+  }
+}

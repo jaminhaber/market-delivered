@@ -37,8 +37,40 @@ an email. The MCP invitation tool can send invitation emails. The Users list
 contains only members of this business. Network settings use the API or MCP;
 global-role grants use the trusted CLI.
 
-Driver shopping, packing, shortages, delivery, and cash recording remain available
-through the business API. MCP provides read-only order inspection alongside
+Approved drivers open **Driver** from the profile menu (`/driver`) and resume
+their active market trip. A single workspace moves through **Shop → Pack →
+Deliver** for both one order and multiple orders. Shopping is combined by vendor;
+packing shows one customer bag at a time; delivery shows the address, directions,
+phone, notes, and cash due. **View orders** contains the individual order details.
+**Find orders** opens the claim pool. A trip picker appears only when there is
+another active market date to choose. Driver phone and vehicle are editable in
+the account page.
+
+The driver API uses these trip-level procedures (amounts are integer cents):
+
+- `driver.workspace({ runId? })` returns `{ trips, trip }`. Without a run ID it
+  selects an in-progress trip before an unstarted trip, then the earliest market
+  date. With no active work it returns `trip: null`. An explicit run ID can reopen
+  an assigned completed trip. Another driver's trip is never returned.
+- `trip` contains the market, run, all assigned orders, the complete vendor
+  shopping list, cash records, `progress`, and `actions`. Progress includes the
+  current `step` (`shop`, `pack`, `deliver`, or `complete`), recorded purchases,
+  packed items, delivered orders, and outstanding cash. `actions.startShopping`
+  and `actions.finishShopping` report current eligibility. These are hints;
+  mutations recheck their rules inside transactions.
+- `driver.packOrder({ orderId })` confirms the whole bag in one transaction.
+  Repeating it leaves already packed items unchanged.
+- `driver.completeDelivery({ orderId, expectedTotalCents, amountCents, note })`
+  records cash and completes delivery together. The bag must be packed, the total
+  must still match, and a cash shortfall needs a note. Repeating an identical
+  successful completion does not duplicate events.
+- `driver.reportDeliveryIssue({ orderId, note })` records a failed delivery in
+  one transaction. Delivered orders with unpaid cash stay active until settled
+  with `orders.recordCash`.
+
+Existing per-order, batch shopping, allocation, and packing procedures remain
+available. The trip shopping list includes every assigned order for the market
+run, regardless of order-list pagination. MCP provides read-only order inspection alongside
 catalog and scheduling tools. Silverstreak's `/api/mcp` connection is bound to
 Silverstreak; the admin MCP requires explicit network IDs.
 
@@ -57,3 +89,9 @@ administrators through API/MCP tools. Silverstreak's `/mcp` setup page offers it
 network-only connection; consent and disconnection use
 `ADMIN_ORIGIN/oauth/networks/<id>/connect`. There is no network configuration
 screen in the dashboard or network picker in Silverstreak.
+
+Driver UI renders can be regenerated with
+`npx playwright test tests/e2e/driver-layout.spec.ts` after
+starting `npm run test:db`. Phone and desktop screenshots for no orders, one
+order, and three orders are saved under `artifacts/playwright/driver/` and attached
+to the Playwright HTML report.

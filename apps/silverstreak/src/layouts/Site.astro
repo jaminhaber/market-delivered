@@ -16,7 +16,11 @@ const {
 } = Astro.props;
 
 Astro.response.headers.set('Cache-Control', 'no-store');
-let profile: { name: string; admin: boolean } | null = null;
+let profile: {
+  name: string;
+  admin: boolean;
+  driver?: { status: string } | null;
+} | null = null;
 if (Astro.request.headers.has('cookie')) {
   try {
     profile = await marketApi(Astro).me.query();

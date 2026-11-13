@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 import * as s from '@market/db';
 import { z } from 'zod';
 import { createHash, randomBytes } from 'node:crypto';
@@ -1576,6 +1576,156 @@ export function operations(db: s.Database, actor: Actor) {
           item.id,
         );
         return { packedAt };
+      });
+    },
+    async packOrder(orderId: string) {
+      return db.transaction(async (tx) => {
+        const { order } = await lockOrder(tx, orderId);
+        await driverCheck(tx, actor);
+        ensure(
+          order.driverId === actor.id,
+          'This is not your order',
+          'FORBIDDEN',
+        );
+        ensure(
+          ['ready', 'out_for_delivery', 'delivery_failed'].includes(
+            order.status,
+          ),
+          'Finish shopping before packing this order',
+          'CONFLICT',
+        );
+        const packed = await tx
+          .update(s.orderItems)
+          .set({ packedAt: await clock(tx) })
+          .where(
+            s.networkWhere(
+              tx,
+              s.orderItems,
+              and(
+                eq(s.orderItems.orderId, orderId),
+                gt(s.orderItems.fulfilledQuantity, 0),
+                sql`${s.orderItems.packedAt} IS NULL`,
+              ),
+            ),
+          )
+          .returning({ id: s.orderItems.id });
+        if (packed.length) await audit(tx, actor, 'order.packed', orderId);
+        return { itemsPacked: packed.length };
+      });
+    },
+    async completeDelivery(input: {
+      orderId: string;
+      expectedTotalCents: number;
+      amountCents: number;
+      note: string;
+    }) {
+      return db.transaction(async (tx) => {
+        const { order } = await lockOrder(tx, input.orderId);
+        await driverCheck(tx, actor);
+        ensure(
+          order.driverId === actor.id,
+          'This is not your delivery',
+          'FORBIDDEN',
+        );
+        ensure(
+          order.actualTotalCents !== null &&
+            order.actualTotalCents === input.expectedTotalCents,
+          'The order total changed; refresh before recording cash',
+          'CONFLICT',
+        );
+        ensure(
+          input.amountCents <= order.actualTotalCents,
+          'Cash recorded cannot exceed the order total',
+        );
+        // A repeated successful request must not duplicate delivery/cash events.
+        if (order.status === 'delivered') {
+          ensure(
+            order.cashCollectedCents === input.amountCents,
+            'Delivery is already complete; update the cash record separately',
+            'CONFLICT',
+          );
+          return { success: true };
+        }
+        ensure(
+          ['ready', 'out_for_delivery', 'delivery_failed'].includes(
+            order.status,
+          ),
+          'Finish shopping before delivering this order',
+          'CONFLICT',
+        );
+        const unpacked = await tx
+          .select({ id: s.orderItems.id })
+          .from(s.orderItems)
+          .where(
+            s.networkWhere(
+              tx,
+              s.orderItems,
+              and(
+                eq(s.orderItems.orderId, order.id),
+                gt(s.orderItems.fulfilledQuantity, 0),
+                sql`${s.orderItems.packedAt} IS NULL`,
+              ),
+            ),
+          )
+          .limit(1);
+        ensure(
+          !unpacked.length,
+          'Pack the customer’s bag before completing delivery',
+          'CONFLICT',
+        );
+        ensure(
+          input.amountCents === order.actualTotalCents ||
+            input.note.trim().length > 0,
+          'Add a note when cash is not collected in full',
+        );
+        const ops = operations(tx as unknown as s.Database, actor);
+        if (order.status !== 'out_for_delivery')
+          await ops.deliver({
+            orderId: order.id,
+            status: 'out_for_delivery',
+            note: '',
+          });
+        await ops.recordCash({
+          orderId: order.id,
+          amountCents: input.amountCents,
+          note: input.note,
+        });
+        await ops.deliver({
+          orderId: order.id,
+          status: 'delivered',
+          note: input.note,
+        });
+        return { success: true };
+      });
+    },
+    async reportDeliveryIssue(input: { orderId: string; note: string }) {
+      return db.transaction(async (tx) => {
+        const { order } = await lockOrder(tx, input.orderId);
+        await driverCheck(tx, actor);
+        ensure(
+          order.driverId === actor.id,
+          'This is not your delivery',
+          'FORBIDDEN',
+        );
+        ensure(
+          ['ready', 'out_for_delivery', 'delivery_failed'].includes(
+            order.status,
+          ),
+          'This order is not awaiting delivery',
+          'CONFLICT',
+        );
+        const ops = operations(tx as unknown as s.Database, actor);
+        if (order.status !== 'out_for_delivery')
+          await ops.deliver({
+            orderId: order.id,
+            status: 'out_for_delivery',
+            note: '',
+          });
+        return ops.deliver({
+          orderId: order.id,
+          status: 'delivery_failed',
+          note: input.note,
+        });
       });
     },
     async startShopping(id: string) {

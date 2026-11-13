@@ -30,6 +30,7 @@ import {
   driverOrderDetail,
   driverOrderGroups,
   driverShoppingList,
+  driverWorkspace,
   driverOrders,
   myOrders,
   listOrders,
@@ -508,6 +509,32 @@ export const appRouter = t.router({
       .mutation(({ ctx, input }) => ctx.ops.cancelOrder(input.id)),
   }),
   driver: t.router({
+    workspace: authenticated
+      .input(z.object({ runId: z.uuid().optional() }).default({}))
+      .query(({ ctx, input }) =>
+        driverWorkspace(ctx.db, ctx.actor, input.runId),
+      ),
+    packOrder: authenticated
+      .input(z.object({ orderId: z.uuid() }))
+      .mutation(({ ctx, input }) => ctx.ops.packOrder(input.orderId)),
+    completeDelivery: authenticated
+      .input(
+        z.object({
+          orderId: z.uuid(),
+          expectedTotalCents: z.number().int().min(0).max(100_000_000),
+          amountCents: z.number().int().min(0).max(100_000_000),
+          note: z.string().trim().max(500).default(''),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.ops.completeDelivery(input)),
+    reportDeliveryIssue: authenticated
+      .input(
+        z.object({
+          orderId: z.uuid(),
+          note: z.string().trim().min(1).max(500),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.ops.reportDeliveryIssue(input)),
     shoppingList: authenticated
       .input(z.object({ runId: z.uuid() }))
       .query(({ ctx, input }) =>

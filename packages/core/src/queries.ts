@@ -497,6 +497,8 @@ export async function driverShoppingList(
         deliveryNotes: order.deliveryNotes,
         status: order.status,
         actualTotalCents: order.actualTotalCents,
+        cashCollectedCents: order.cashCollectedCents,
+        cashNote: order.cashNote,
         items: rows
           .filter((row) => row.item.orderId === order.id)
           .map((row) => ({ ...row.item, purchase: row.purchase })),
@@ -607,6 +609,137 @@ export async function driverShoppingList(
         shoppingOrderCount: orders.filter(
           (order) => order.status === 'shopping',
         ).length,
+      };
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
+}
+
+// A single read model for the driver's current trip. The optional run ID also
+// lets clients reopen a completed trip without mixing it into active work.
+export async function driverWorkspace(
+  db: s.Database,
+  actor: Actor,
+  runId?: string,
+) {
+  return db.transaction(
+    async (tx) => {
+      await requireDriver(tx, actor);
+      const trips = await tx
+        .select({
+          run: s.marketRuns,
+          market: s.markets,
+          orderCount: sql<number>`count(*)::int`,
+        })
+        .from(s.orders)
+        .innerJoin(
+          s.marketRuns,
+          s.networkWhere(tx, s.marketRuns, eq(s.marketRuns.id, s.orders.runId)),
+        )
+        .innerJoin(
+          s.markets,
+          s.networkWhere(
+            tx,
+            s.markets,
+            eq(s.markets.id, s.marketRuns.marketId),
+          ),
+        )
+        .where(
+          s.networkWhere(
+            tx,
+            s.orders,
+            and(
+              eq(s.orders.driverId, actor.id),
+              sql`(${s.orders.status} in ('claimed', 'shopping', 'ready', 'out_for_delivery', 'delivery_failed')
+          or (${s.orders.status} = 'delivered' and ${s.orders.cashCollectedCents} < ${s.orders.actualTotalCents}))`,
+            ),
+          ),
+        )
+        .groupBy(s.marketRuns.id, s.markets.id)
+        .orderBy(
+          sql`min(case when ${s.orders.status} = 'claimed' then 1 else 0 end)`,
+          asc(s.marketRuns.startsAt),
+          asc(s.marketRuns.id),
+        );
+      const selected = runId ?? trips[0]?.run.id;
+      if (!selected) return { trips, trip: null };
+      const trip = await driverShoppingList(
+        tx as unknown as s.Database,
+        actor,
+        selected,
+      );
+      const products = new Map<string, (typeof trip.orders)[number]['items']>();
+      for (const order of trip.orders)
+        for (const item of order.items) {
+          const lines = products.get(item.inventoryId) ?? [];
+          lines.push(item);
+          products.set(item.inventoryId, lines);
+        }
+      const shoppingItemsRecorded = [...products.values()].filter((lines) =>
+        lines.every(
+          (item) => item.fulfilledQuantity !== null || item.purchase !== null,
+        ),
+      ).length;
+      const deliveryOrders = trip.orders.filter((order) =>
+        ['ready', 'out_for_delivery', 'delivery_failed', 'delivered'].includes(
+          order.status,
+        ),
+      );
+      const packingItems = deliveryOrders.flatMap((order) =>
+        order.items.filter((item) => (item.fulfilledQuantity ?? 0) > 0),
+      );
+      const unpacked = deliveryOrders
+        .filter((order) => order.status !== 'delivered')
+        .some((order) =>
+          order.items.some(
+            (item) => (item.fulfilledQuantity ?? 0) > 0 && !item.packedAt,
+          ),
+        );
+      const cashOutstandingCents = deliveryOrders.reduce(
+        (sum, order) =>
+          sum +
+          Math.max(0, (order.actualTotalCents ?? 0) - order.cashCollectedCents),
+        0,
+      );
+      const step =
+        trip.claimedOrderCount || trip.shoppingOrderCount
+          ? ('shop' as const)
+          : unpacked
+            ? ('pack' as const)
+            : deliveryOrders.some((order) => order.status !== 'delivered') ||
+                cashOutstandingCents
+              ? ('deliver' as const)
+              : ('complete' as const);
+      const open =
+        trip.run.startsAt <= new Date() &&
+        trip.run.endsAt > new Date() &&
+        trip.run.status !== 'cancelled';
+      return {
+        trips,
+        trip: {
+          ...trip,
+          progress: {
+            step,
+            ordersTotal: trip.orders.length,
+            shoppingItemsTotal: products.size,
+            shoppingItemsRecorded,
+            packingItemsTotal: packingItems.length,
+            packingItemsPacked: packingItems.filter((item) => item.packedAt)
+              .length,
+            deliveriesTotal: deliveryOrders.length,
+            deliveriesCompleted: deliveryOrders.filter(
+              (order) => order.status === 'delivered',
+            ).length,
+            cashOutstandingCents,
+          },
+          actions: {
+            startShopping: trip.claimedOrderCount > 0 && open,
+            finishShopping:
+              trip.shoppingOrderCount > 0 &&
+              trip.claimedOrderCount === 0 &&
+              shoppingItemsRecorded === products.size,
+          },
+        },
       };
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },

@@ -191,16 +191,17 @@ main:focus {
   padding: 0.2em 0.25em;
   background: #fff;
   color: #078a12;
-  font-size: clamp(30px, 5.2vw, 80px);
+  font-size: clamp(24px, 4.2vw, 64px);
   line-height: 1.2;
 }
 .hero-order:hover {
-  background: #ffedce;
+  background: #078a12;
+  color: #fff;
 }
 .hero-nav {
   margin-top: clamp(24px, 7vh, 90px);
   justify-content: center;
-  font-size: clamp(22px, 4vw, 64px);
+  font-size: clamp(18px, 3.2vw, 52px);
   letter-spacing: 0.15em;
   color: #fff;
 }

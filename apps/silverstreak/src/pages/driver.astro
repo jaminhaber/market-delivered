@@ -1,0 +1,41 @@
+---
+import Site from '../layouts/Site.astro';
+import { marketApi, messageFor } from '../server/market';
+import '../styles/driver.css';
+
+Astro.response.headers.set('Cache-Control', 'no-store');
+Astro.response.headers.set('Referrer-Policy', 'same-origin');
+let approved = false;
+let error = '';
+try {
+  const me = await marketApi(Astro).me.query();
+  if (!me) return Astro.redirect('/account', 303);
+  approved = me.driver?.status === 'approved';
+  if (!approved) {
+    Astro.response.status = 403;
+    error =
+      'An approved driver profile is required. Contact your administrator for access.';
+  }
+} catch (problem) {
+  error = messageFor(problem);
+}
+---
+
+<Site title="Driver dashboard — Silverstreak">
+  <section class="shop-page driver-page">
+    {error && (
+      <p class="shop-notice" role="alert">
+        {error}
+      </p>
+    )}
+    {approved && (
+      <div id="driver-root">
+        <p role="status">Loading driver dashboard…</p>
+      </div>
+    )}
+  </section>
+</Site>
+
+<script>
+  import '../driver/main';
+</script>

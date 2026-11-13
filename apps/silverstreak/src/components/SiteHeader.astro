@@ -4,7 +4,11 @@ import SiteLogo from './SiteLogo.astro';
 
 interface Props {
   home?: boolean;
-  profile: { name: string; admin: boolean } | null;
+  profile: {
+    name: string;
+    admin: boolean;
+    driver?: { status: string } | null;
+  } | null;
 }
 
 const { home = false, profile } = Astro.props;
@@ -12,7 +16,13 @@ const { home = false, profile } = Astro.props;
 
 <header class:list={['masthead', { 'home-profile': home }]}>
   {home ? (
-    profile && <ProfileMenu name={profile.name} admin={profile.admin} />
+    profile && (
+      <ProfileMenu
+        name={profile.name}
+        admin={profile.admin}
+        driver={profile.driver}
+      />
+    )
   ) : (
     <>
       <a class="home-link" href="/" aria-label="Silverstreak home">
@@ -37,7 +47,13 @@ const { home = false, profile } = Astro.props;
         >
           Contact
         </a>
-        {profile && <ProfileMenu name={profile.name} admin={profile.admin} />}
+        {profile && (
+          <ProfileMenu
+            name={profile.name}
+            admin={profile.admin}
+            driver={profile.driver}
+          />
+        )}
       </nav>
     </>
   )}

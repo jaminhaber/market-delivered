@@ -31,6 +31,7 @@ import {
   orders,
   inventory,
   orderItems,
+  orderEvents,
   oauthAccessToken,
   marketSchedules,
   runMarketRunsJob,
@@ -2572,6 +2573,10 @@ test('combined shopping shows every assigned order across pages, allocates exact
   const trip = await driver.rpc.driver.shoppingList.query({ runId: run.id });
   expect(trip.market.id).toBe(market.id);
   expect(trip.orders).toHaveLength(26);
+  const workspace = await driver.rpc.driver.workspace.query({ runId: run.id });
+  expect(workspace.trip!.orders).toHaveLength(26);
+  expect(workspace.trips).toHaveLength(2);
+  expect(workspace.trip!.vendors[0]!.items[0]!.requestedQuantity).toBe(26);
   expect(trip.orders.map((order) => order.id)).not.toContain(placed[26]!.id);
   expect(trip.orders.map((order) => order.id)).not.toContain(elsewhere.id);
   const product = trip.vendors[0]!.items[0]!;
@@ -2652,6 +2657,174 @@ test('combined shopping shows every assigned order across pages, allocates exact
   ).toBe('claimed');
   for (const person of [customer, driver, rival])
     await person.request.dispose();
+});
+
+test('driver workspace resumes active trips and packs and completes deliveries atomically', async () => {
+  const { run, stock } = await setup(10);
+  const customer = await actor(),
+    driver = await actor('driver'),
+    rival = await actor('driver');
+  try {
+    expect(await driver.rpc.driver.workspace.query()).toEqual({
+      trips: [],
+      trip: null,
+    });
+    await rejectCode(customer.rpc.driver.workspace.query(), 'FORBIDDEN');
+    const placed = [];
+    for (let index = 0; index < 2; index++)
+      placed.push(
+        await customer.rpc.orders.place.mutate({
+          runId: run.id,
+          requestId: randomUUID(),
+          items: [{ inventoryId: stock.id, quantity: 1 }],
+        }),
+      );
+    await driver.rpc.driver.claimBatch.mutate({
+      runId: run.id,
+      orderIds: placed.map((order) => order.id),
+    });
+    await rejectCode(
+      rival.rpc.driver.workspace.query({ runId: run.id }),
+      'NOT_FOUND',
+    );
+    let workspace = await driver.rpc.driver.workspace.query();
+    expect(workspace.trip).toMatchObject({
+      run: { id: run.id },
+      progress: {
+        step: 'shop',
+        ordersTotal: 2,
+        shoppingItemsTotal: 1,
+        shoppingItemsRecorded: 0,
+      },
+      actions: { startShopping: false, finishShopping: false },
+    });
+    await closeCutoff(run.id);
+    await driver.rpc.driver.startShoppingBatch.mutate({ runId: run.id });
+    workspace = await driver.rpc.driver.workspace.query();
+    const product = workspace.trip!.vendors[0]!.items[0]!;
+    await driver.rpc.driver.combinedPurchase.mutate({
+      runId: run.id,
+      inventoryId: stock.id,
+      quantity: 2,
+      totalCostCents: 501,
+      allocations: product.allocations.map((line) => ({
+        orderItemId: line.orderItemId,
+        quantity: 1,
+        expectedPurchaseUpdatedAt: line.purchaseUpdatedAt,
+      })),
+    });
+    expect(
+      (await driver.rpc.driver.workspace.query()).trip!.actions.finishShopping,
+    ).toBe(true);
+    await driver.rpc.driver.finishShoppingBatch.mutate({ runId: run.id });
+    workspace = await driver.rpc.driver.workspace.query();
+    expect(workspace.trip!.progress).toMatchObject({
+      step: 'pack',
+      shoppingItemsRecorded: 1,
+      packingItemsTotal: 2,
+      packingItemsPacked: 0,
+    });
+    const first = placed[0]!,
+      second = placed[1]!;
+    const completion = {
+      orderId: first.id,
+      expectedTotalCents: 850,
+      amountCents: 850,
+      note: 'Collected in full',
+    };
+    await rejectCode(
+      driver.rpc.driver.completeDelivery.mutate(completion),
+      'CONFLICT',
+    );
+    expect(
+      (await driver.rpc.driver.detail.query({ id: first.id }))
+        .cashCollectedCents,
+    ).toBe(0);
+    await rejectCode(
+      rival.rpc.driver.packOrder.mutate({ orderId: first.id }),
+      'FORBIDDEN',
+    );
+    expect(
+      await driver.rpc.driver.packOrder.mutate({ orderId: first.id }),
+    ).toEqual({ itemsPacked: 1 });
+    expect(
+      await driver.rpc.driver.packOrder.mutate({ orderId: first.id }),
+    ).toEqual({ itemsPacked: 0 });
+    await driver.rpc.driver.packOrder.mutate({ orderId: second.id });
+    expect(
+      (await driver.rpc.driver.workspace.query()).trip!.progress.step,
+    ).toBe('deliver');
+    await rejectCode(
+      driver.rpc.driver.completeDelivery.mutate({
+        ...completion,
+        expectedTotalCents: 851,
+      }),
+      'CONFLICT',
+    );
+    expect(
+      (await driver.rpc.driver.detail.query({ id: first.id })).status,
+    ).toBe('ready');
+    await rejectCode(
+      rival.rpc.driver.completeDelivery.mutate(completion),
+      'FORBIDDEN',
+    );
+    await driver.rpc.driver.reportDeliveryIssue.mutate({
+      orderId: first.id,
+      note: 'Customer is not home yet',
+    });
+    expect(
+      (await driver.rpc.driver.detail.query({ id: first.id })).status,
+    ).toBe('delivery_failed');
+    await driver.rpc.driver.completeDelivery.mutate(completion);
+    const eventsBefore = await db
+      .select()
+      .from(orderEvents)
+      .where(eq(orderEvents.orderId, first.id));
+    await driver.rpc.driver.completeDelivery.mutate(completion);
+    expect(
+      await db
+        .select()
+        .from(orderEvents)
+        .where(eq(orderEvents.orderId, first.id)),
+    ).toHaveLength(eventsBefore.length);
+    await rejectCode(
+      driver.rpc.driver.completeDelivery.mutate({
+        ...completion,
+        orderId: second.id,
+        amountCents: 100,
+        note: '',
+      }),
+      'BAD_REQUEST',
+    );
+    await driver.rpc.driver.completeDelivery.mutate({
+      ...completion,
+      orderId: second.id,
+      amountCents: 100,
+      note: 'Customer will pay the remaining balance later',
+    });
+    workspace = await driver.rpc.driver.workspace.query();
+    expect(workspace.trip!.progress).toMatchObject({
+      step: 'deliver',
+      deliveriesCompleted: 2,
+      cashOutstandingCents: 750,
+    });
+    await driver.rpc.orders.recordCash.mutate({
+      orderId: second.id,
+      amountCents: 850,
+      note: 'Balance collected',
+    });
+    expect(await driver.rpc.driver.workspace.query()).toEqual({
+      trips: [],
+      trip: null,
+    });
+    expect(
+      (await driver.rpc.driver.workspace.query({ runId: run.id })).trip!
+        .progress.step,
+    ).toBe('complete');
+  } finally {
+    for (const person of [customer, driver, rival])
+      await person.request.dispose();
+  }
 });
 
 test('combined purchases validate ownership, current allocations and saved versions; incomplete finalization rolls back', async () => {

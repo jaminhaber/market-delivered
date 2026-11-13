@@ -71,7 +71,9 @@ The invitation points at Silverstreak’s `/account` page. Customers can join, s
 a delivery address, order from an open market, and view/cancel their orders.
 Orders use cash on delivery and the existing fulfillment model. Silverstreak
 administrators use the **Admin** profile-menu entry for business management tabs
-and MCP setup. Driver fulfillment remains available through the business API.
+and MCP setup. Approved drivers open **Driver** from the profile menu to claim
+orders and resume a single **Shop → Pack → Deliver** workspace, with combined
+shopping, customer bags, and delivery/cash confirmation.
 MCP supports order inspection, catalog management, and scheduling.
 
 ## Checks

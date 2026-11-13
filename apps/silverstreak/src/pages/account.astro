@@ -32,6 +32,13 @@ try {
     const form = await Astro.request.formData();
     const field = (name: string) => String(form.get(name) || '');
     const intent = field('intent');
+    if (intent === 'driver-profile') {
+      await api.profile.saveDriver.mutate({
+        phone: field('phone'),
+        vehicle: field('vehicle'),
+      });
+      return Astro.redirect('/account?saved=1', 303);
+    }
     if (intent === 'profile') {
       await api.profile.save.mutate({
         name: field('name'),
@@ -209,6 +216,36 @@ const profile = me?.customer;
           </label>
           <button class="button button-dark">Save delivery details</button>
         </form>
+        {me.driver && (
+          <section aria-labelledby="driver-profile-heading">
+            <h2 id="driver-profile-heading">Your driver profile</h2>
+            <p>Status: {me.driver.status}</p>
+            <form method="post" class="shop-form" aria-label="Driver profile">
+              <input type="hidden" name="intent" value="driver-profile" />
+              <label>
+                Driver phone
+                <input
+                  type="tel"
+                  name="phone"
+                  required
+                  minlength="7"
+                  value={me.driver.phone}
+                  autocomplete="tel"
+                />
+              </label>
+              <label>
+                Vehicle
+                <input
+                  name="vehicle"
+                  required
+                  minlength="2"
+                  value={me.driver.vehicle}
+                />
+              </label>
+              <button class="button button-dark">Save driver profile</button>
+            </form>
+          </section>
+        )}
         <form method="post">
           <input type="hidden" name="intent" value="signout" />
           <button class="quiet-button">Sign out</button>

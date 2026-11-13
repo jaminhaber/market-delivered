@@ -23,7 +23,7 @@ export default defineConfig({
     { name: 'chromium', use: { browserName: 'chromium' } },
     {
       name: 'webkit',
-      testMatch: 'silverstreak-layout.spec.ts',
+      testMatch: ['silverstreak-layout.spec.ts', 'driver-layout.spec.ts'],
       use: { browserName: 'webkit', isMobile: true, hasTouch: true },
     },
   ],

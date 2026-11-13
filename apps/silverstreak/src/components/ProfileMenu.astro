@@ -2,6 +2,7 @@
 interface Props {
   name: string;
   admin: boolean;
+  driver?: { status: string } | null;
 }
 const firstName = Astro.props.name.trim().split(/\s+/)[0];
 ---
@@ -24,6 +25,14 @@ const firstName = Astro.props.name.trim().split(/\s+/)[0];
     >
       See orders
     </a>
+    {Astro.props.driver?.status === 'approved' && (
+      <a
+        href="/driver"
+        aria-current={Astro.url.pathname === '/driver' ? 'page' : undefined}
+      >
+        Driver
+      </a>
+    )}
     {Astro.props.admin && (
       <a
         href="/admin"
