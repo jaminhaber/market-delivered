@@ -4,16 +4,17 @@ The platform runs recurring market generation and automatic closing. Networks
 own schedules, inventory defaults, generated market runs, and job history.
 Generation preserves existing runs/orders; closing expires unshopped orders while
 allowing already-started fulfillment to finish. Jobs acquire database locks to
-avoid overlapping work and record failures for retry.
+avoid overlapping work and record failures for retry. Successful job history is written only when market
+dates or orders change; empty and lock-skipped runs write no history.
 
 Each run stores `impactedEntities`: market dates created or closed, plus orders
 cancelled. Checking schedules, locking rows, and writing job/audit history do not
 count. The value is committed with the business changes; skipped, rolled-back,
-and otherwise empty runs remain zero.
+and legacy empty runs remain zero.
 
 The Jobs page, `admin.jobs`, and MCP `list_job_runs` hide zero-impact runs by
 default, filtering before the 20-row limit. Use the page's **Include empty runs**
-toggle or API/MCP `includeEmpty: true` to inspect empty, failed, skipped, or
+toggle or API/MCP `includeEmpty: true` to inspect failed jobs and legacy empty, skipped, or
 running jobs. The page toggle updates automatically.
 
 `npm run dev` runs a local worker: generation daily at 12:00 UTC, closing every

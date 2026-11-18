@@ -1341,7 +1341,13 @@ test('recurrence respects Pacific DST, Thanksgiving, cancellations, and paused s
 });
 
 test('cron job endpoint rejects unauthorized callers, records results, and skips overlapping jobs', async () => {
-  const { admin } = await setup();
+  const { admin, market } = await setup();
+  await admin.rpc.admin.saveSchedule.mutate({
+    marketId: market.id,
+    weekday: 0,
+    opensMinute: 540,
+    closesMinute: 780,
+  });
   const customer = await actor();
   const endpoint = 'http://127.0.0.1:5180/internal/jobs/market-runs';
   for (const headers of [
@@ -1379,7 +1385,13 @@ test('cron job endpoint rejects unauthorized callers, records results, and skips
       },
     });
     expect(overlap.status()).toBe(200);
-    expect((await overlap.json()).status).toBe('skipped');
+    expect(await overlap.json()).toMatchObject({ status: 'skipped', id: null });
+    expect(
+      await db
+        .select()
+        .from(backgroundJobRuns)
+        .where(eq(backgroundJobRuns.status, 'skipped')),
+    ).toEqual([]);
   });
 });
 
@@ -2139,10 +2151,13 @@ test('network migration and scoped operations work without role administration p
           'cron',
         ),
       ),
-    ).toMatchObject({ status: 'succeeded', ordersCancelled: 0, runsClosed: 0 });
-    expect(
-      (await fresh.db.select().from(backgroundJobRuns))[0]!.networkId,
-    ).toBe(other!.id);
+    ).toMatchObject({
+      id: null,
+      status: 'succeeded',
+      ordersCancelled: 0,
+      runsClosed: 0,
+    });
+    expect(await fresh.db.select().from(backgroundJobRuns)).toEqual([]);
   } finally {
     await fresh.pool.end();
     await pool.query(`DROP DATABASE IF EXISTS "${name}"`);
@@ -3078,10 +3093,19 @@ test('jobs count changed entities and filter empty history before the limit', as
       new Date('2031-01-01T12:00:00Z'),
     );
     expect(repeated).toMatchObject({
+      id: null,
       schedulesProcessed: 1,
       runsCreated: 0,
       impactedEntities: 0,
     });
+    expect(
+      (
+        await db
+          .select()
+          .from(backgroundJobRuns)
+          .where(eq(backgroundJobRuns.networkId, networkId))
+      ).map((job) => job.id),
+    ).toEqual([created.id]);
     const [record] = await db
       .select()
       .from(backgroundJobRuns)
@@ -3213,10 +3237,22 @@ test('jobs count changed entities and filter empty history before the limit', as
       new Date('2031-02-01T12:00:00Z'),
     );
     expect(closedAgain).toMatchObject({
+      id: null,
       runsClosed: 0,
       ordersCancelled: 0,
       impactedEntities: 0,
     });
+    expect(
+      await db
+        .select()
+        .from(backgroundJobRuns)
+        .where(
+          and(
+            eq(backgroundJobRuns.networkId, networkId),
+            eq(backgroundJobRuns.name, 'close-expired-markets'),
+          ),
+        ),
+    ).toHaveLength(1);
   } finally {
     await db
       .update(networks)

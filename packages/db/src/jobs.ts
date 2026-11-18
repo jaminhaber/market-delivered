@@ -1,12 +1,11 @@
 import {
-  networkWhere,
   networkValues,
   networkDatabase,
   databaseNetworkId,
 } from './network-scope.js';
 import { networks } from './network-schema.js';
 import { closeExpiredMarkets } from './close-markets.js';
-import { eq, sql, isNull } from 'drizzle-orm';
+import { sql, isNull } from 'drizzle-orm';
 import type { Database } from './index.js';
 import { backgroundJobRuns } from './market-schema.js';
 import { ensureUpcomingRuns } from './recurrence.js';
@@ -39,7 +38,7 @@ export async function runMarketRunsJob(
         ),
       );
     return {
-      id: results[0]?.id ?? null,
+      id: results.find((result) => result.id)?.id ?? null,
       status: results.some((result) => result.status === 'succeeded')
         ? 'succeeded'
         : 'skipped',
@@ -48,10 +47,7 @@ export async function runMarketRunsJob(
       impactedEntities: results.reduce((n, r) => n + r.impactedEntities, 0),
     };
   }
-  const [attempt] = await db
-    .insert(backgroundJobRuns)
-    .values(networkValues(db, { name: MARKET_RUNS_JOB, source }))
-    .returning();
+  const startedAt = new Date();
   try {
     return await db.transaction(async (tx) => {
       // Transaction-scoped lock works across API processes and serverless instances.
@@ -61,18 +57,8 @@ export async function runMarketRunsJob(
         sql`SELECT pg_try_advisory_xact_lock(hashtext(${MARKET_RUNS_JOB})) AS acquired`,
       );
       if (!lock!.acquired) {
-        await tx
-          .update(backgroundJobRuns)
-          .set({ status: 'skipped', finishedAt: new Date() })
-          .where(
-            networkWhere(
-              tx,
-              backgroundJobRuns,
-              eq(backgroundJobRuns.id, attempt!.id),
-            ),
-          );
         return {
-          id: attempt!.id,
+          id: null,
           status: 'skipped' as const,
           schedulesProcessed: 0,
           runsCreated: 0,
@@ -82,43 +68,41 @@ export async function runMarketRunsJob(
       const summary = await ensureUpcomingRuns(tx, asOf);
       // Count changed market dates and orders, not checks, locks, or log rows.
       const impactedEntities = summary.runsCreated;
-      await tx
-        .update(backgroundJobRuns)
-        .set({
-          status: 'succeeded',
-          finishedAt: new Date(),
-          ...summary,
-          impactedEntities,
-        })
-        .where(
-          networkWhere(
-            tx,
-            backgroundJobRuns,
-            eq(backgroundJobRuns.id, attempt!.id),
-          ),
-        );
+      const [attempt] =
+        impactedEntities > 0
+          ? await tx
+              .insert(backgroundJobRuns)
+              .values(
+                networkValues(tx, {
+                  name: MARKET_RUNS_JOB,
+                  source,
+                  status: 'succeeded',
+                  startedAt,
+                  finishedAt: new Date(),
+                  ...summary,
+                  impactedEntities,
+                }),
+              )
+              .returning({ id: backgroundJobRuns.id })
+          : [];
       return {
-        id: attempt!.id,
+        id: attempt?.id ?? null,
         status: 'succeeded' as const,
         ...summary,
         impactedEntities,
       };
     });
   } catch (error) {
-    await db
-      .update(backgroundJobRuns)
-      .set({
+    await db.insert(backgroundJobRuns).values(
+      networkValues(db, {
+        name: MARKET_RUNS_JOB,
+        source,
         status: 'failed',
+        startedAt,
         finishedAt: new Date(),
         error: 'Market run generation failed; see worker/API logs.',
-      })
-      .where(
-        networkWhere(
-          db,
-          backgroundJobRuns,
-          eq(backgroundJobRuns.id, attempt!.id),
-        ),
-      );
+      }),
+    );
     throw error;
   }
 }
@@ -151,7 +135,7 @@ export async function runCloseMarketsJob(
         ),
       );
     return {
-      id: results[0]?.id ?? null,
+      id: results.find((result) => result.id)?.id ?? null,
       status: results.some((result) => result.status === 'succeeded')
         ? 'succeeded'
         : 'skipped',
@@ -160,10 +144,7 @@ export async function runCloseMarketsJob(
       impactedEntities: results.reduce((n, r) => n + r.impactedEntities, 0),
     };
   }
-  const [attempt] = await db
-    .insert(backgroundJobRuns)
-    .values(networkValues(db, { name: CLOSE_MARKETS_JOB, source }))
-    .returning();
+  const startedAt = new Date();
   try {
     return await db.transaction(async (tx) => {
       const {
@@ -172,18 +153,8 @@ export async function runCloseMarketsJob(
         sql`SELECT pg_try_advisory_xact_lock(hashtext(${CLOSE_MARKETS_JOB})) AS acquired`,
       );
       if (!lock!.acquired) {
-        await tx
-          .update(backgroundJobRuns)
-          .set({ status: 'skipped', finishedAt: new Date() })
-          .where(
-            networkWhere(
-              tx,
-              backgroundJobRuns,
-              eq(backgroundJobRuns.id, attempt!.id),
-            ),
-          );
         return {
-          id: attempt!.id,
+          id: null,
           status: 'skipped' as const,
           ordersCancelled: 0,
           runsClosed: 0,
@@ -192,43 +163,41 @@ export async function runCloseMarketsJob(
       }
       const summary = await closeExpiredMarkets(tx, asOf);
       const impactedEntities = summary.runsClosed + summary.ordersCancelled;
-      await tx
-        .update(backgroundJobRuns)
-        .set({
-          status: 'succeeded',
-          finishedAt: new Date(),
-          ...summary,
-          impactedEntities,
-        })
-        .where(
-          networkWhere(
-            tx,
-            backgroundJobRuns,
-            eq(backgroundJobRuns.id, attempt!.id),
-          ),
-        );
+      const [attempt] =
+        impactedEntities > 0
+          ? await tx
+              .insert(backgroundJobRuns)
+              .values(
+                networkValues(tx, {
+                  name: CLOSE_MARKETS_JOB,
+                  source,
+                  status: 'succeeded',
+                  startedAt,
+                  finishedAt: new Date(),
+                  ...summary,
+                  impactedEntities,
+                }),
+              )
+              .returning({ id: backgroundJobRuns.id })
+          : [];
       return {
-        id: attempt!.id,
+        id: attempt?.id ?? null,
         status: 'succeeded' as const,
         ...summary,
         impactedEntities,
       };
     });
   } catch (error) {
-    await db
-      .update(backgroundJobRuns)
-      .set({
+    await db.insert(backgroundJobRuns).values(
+      networkValues(db, {
+        name: CLOSE_MARKETS_JOB,
+        source,
         status: 'failed',
+        startedAt,
         finishedAt: new Date(),
         error: 'Market closing failed; see worker/API logs.',
-      })
-      .where(
-        networkWhere(
-          db,
-          backgroundJobRuns,
-          eq(backgroundJobRuns.id, attempt!.id),
-        ),
-      );
+      }),
+    );
     throw error;
   }
 }
