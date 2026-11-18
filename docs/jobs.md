@@ -17,8 +17,8 @@ default, filtering before the 20-row limit. Use the page's **Include empty runs*
 toggle or API/MCP `includeEmpty: true` to inspect failed jobs and legacy empty, skipped, or
 running jobs. The page toggle updates automatically.
 
-`npm run dev` runs a local worker: generation daily at 12:00 UTC, closing every
-minute, and both once on startup. Run manually with:
+`npm run dev` runs a local worker: generation daily at 12:00 UTC, closing every five
+minutes, and both once on startup. Run manually with:
 
 ```sh
 npm run jobs:run

@@ -87,7 +87,7 @@ and staging deployments their own databases, credentials, and registered origins
 Rolling releases require compatible migrations.
 
 Only the backend project declares scheduled jobs. Supply `CRON_SECRET` and verify
-production cron manually. The committed every-minute market-closing job requires
+production cron manually. The committed five-minute market-closing job requires
 Vercel Pro/Enterprise, or an external scheduler if using a plan limited to daily
 cron. PostgreSQL and email delivery remain external managed services.
 

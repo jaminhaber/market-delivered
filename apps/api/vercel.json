@@ -44,7 +44,7 @@
     },
     {
       "path": "/internal/jobs/close-markets",
-      "schedule": "* * * * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }

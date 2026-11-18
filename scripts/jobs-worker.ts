@@ -20,7 +20,7 @@ if (process.env.JOBS_WORKER_DISABLED === '1') {
     },
     {
       name: 'close-expired-markets',
-      schedule: '* * * * *',
+      schedule: '*/5 * * * *',
       run: runCloseMarketsJob,
     },
   ].map((job) => {
@@ -45,7 +45,7 @@ if (process.env.JOBS_WORKER_DISABLED === '1') {
     return { task, execute, finish: () => active };
   });
   console.log(
-    'Job worker: market generation daily at 12:00 UTC; market closing every minute; both once on startup.',
+    'Job worker: market generation daily at 12:00 UTC; market closing every five minutes; both once on startup.',
   );
   for (const job of jobs) void job.execute();
   for (const signal of ['SIGINT', 'SIGTERM'] as const)
