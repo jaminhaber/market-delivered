@@ -1,0 +1,19 @@
+---
+import type { HTMLAttributes } from 'astro/types';
+
+type Props =
+  | (HTMLAttributes<'a'> & { href: string })
+  | (HTMLAttributes<'button'> & { href?: never });
+
+const props = Astro.props;
+---
+
+{props.href !== undefined ? (
+  <a {...props} class:list={['button', props.class]}>
+    <slot />
+  </a>
+) : (
+  <button {...props} class:list={['button', props.class]}>
+    <slot />
+  </button>
+)}

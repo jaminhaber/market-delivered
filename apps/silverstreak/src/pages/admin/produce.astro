@@ -1,4 +1,5 @@
 ---
+import Button from '../../components/Button.astro';
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
 import { messageFor } from '../../server/market';
@@ -58,7 +59,7 @@ try {
         ))}
       </select>
     </label>
-    <button class="button button-dark">Filter produce</button>
+    <Button>Filter produce</Button>
     {farmId && (
       <a class="quiet-link" href="/admin/produce">
         Clear filter

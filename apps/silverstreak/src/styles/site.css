@@ -202,13 +202,13 @@ main:focus {
 }
 .hero-order {
   padding: 0.2em 0.25em;
-  background: rgb(255 255 255 / 85%);
-  color: #078a12;
+  background: #078a12;
+  color: #fff;
   font-size: clamp(24px, 4.2vw, 64px);
   line-height: 1.2;
 }
 .hero-order:hover {
-  background: #078a12;
+  background: #076d10;
   color: #fff;
 }
 .hero-nav {
@@ -255,22 +255,13 @@ h1 em {
   text-transform: uppercase;
   white-space: normal;
   border: 1px solid transparent;
+  background: #078a12;
+  color: #fff;
   transition:
     background 0.18s,
     color 0.18s;
 }
-.button-cream {
-  background: var(--paper);
-  color: var(--ink);
-}
-.button-cream:hover {
-  background: #fffdf3;
-}
-.button-dark {
-  background: #078a12;
-  color: var(--paper);
-}
-.button-dark:hover {
+.button:hover {
   background: #076d10;
 }
 .text-link {

@@ -1,0 +1,40 @@
+---
+import Site from '../layouts/Site.astro';
+---
+
+<Site title="Contact — Silverstreak">
+  <section class="story" aria-labelledby="contact-title">
+    <div class="story-copy">
+      <h1 id="contact-title">Contact us</h1>
+      <p>
+        <a href="mailto:silverstreakproduce@gmail.com">
+          silverstreakproduce@gmail.com
+        </a>
+      </p>
+    </div>
+  </section>
+</Site>
+
+<style>
+  @font-face {
+    font-family: 'Biro Script';
+    src: url('/fonts/Biro_Script_reduced.otf') format('opentype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+  }
+
+  .story-copy h1 {
+    font-family: 'Biro Script', cursive;
+    font-size: clamp(40px, 5vw, 56px);
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
+  .story-copy a {
+    overflow-wrap: anywhere;
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+</style>

@@ -1,4 +1,5 @@
 ---
+import Button from '../../components/Button.astro';
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
 import { messageFor, money, dateLabel } from '../../server/market';
@@ -66,9 +67,7 @@ const inventoryEditable =
         ))}
       </select>
     </label>
-    <button class="button button-dark" disabled={!runs.length}>
-      View inventory
-    </button>
+    <Button disabled={!runs.length}>View inventory</Button>
   </form>
   {!runs.length && (
     <p>
@@ -143,7 +142,7 @@ const inventoryEditable =
             <input type="checkbox" name="repeat" />
             Use these defaults for future dates
           </label>
-          <button class="button button-dark">Add inventory</button>
+          <Button>Add inventory</Button>
         </form>
       </details>
     )}
@@ -205,9 +204,7 @@ const inventoryEditable =
           <input type="checkbox" name="repeat" />
           Use these defaults for future dates
         </label>
-        <button class="button button-dark" disabled={!inventoryEditable}>
-          Save inventory
-        </button>
+        <Button disabled={!inventoryEditable}>Save inventory</Button>
       </form>
     </details>
   ))}

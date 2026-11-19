@@ -1,4 +1,5 @@
 ---
+import Button from './Button.astro';
 interface Props {
   produceId: string;
   name: string;
@@ -40,9 +41,7 @@ const { produceId, name, image } = Astro.props;
     <input name="altText" maxlength="500" value={image?.altText || ''} />
   </label>
   <div class="shop-links">
-    <button type="submit" class="button button-dark">
-      Save image
-    </button>
+    <Button type="submit">Save image</Button>
     <button
       type="button"
       class="quiet-button"

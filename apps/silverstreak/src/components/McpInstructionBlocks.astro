@@ -1,4 +1,5 @@
 ---
+import Button from './Button.astro';
 import type { InstructionBlock } from '@market/mcp-instructions';
 interface Props {
   blocks: readonly InstructionBlock[];
@@ -25,14 +26,13 @@ const { blocks } = Astro.props;
           <input readonly value={block.value} />
         </label>
       )}
-      <button
+      <Button
         type="button"
-        class="button button-dark"
         data-copy-url={block.kind === 'address' ? block.value : undefined}
         data-copy-command={block.kind === 'command' ? true : undefined}
       >
         {block.copyLabel}
-      </button>
+      </Button>
       {block.kind === 'command' && <pre><code>{block.value}</code></pre>}
       <span aria-live="polite"></span>
     </div>

@@ -1,4 +1,5 @@
 ---
+import Button from './Button.astro';
 import AdminProduceImage from './AdminProduceImage.astro';
 import type { marketApi } from '../server/market';
 type Api = ReturnType<typeof marketApi>;
@@ -64,12 +65,9 @@ const { item, farms } = Astro.props;
       ))}
     </select>
   </label>
-  <button
-    class="button button-dark"
-    disabled={!farms.some((farm) => farm.active)}
-  >
+  <Button disabled={!farms.some((farm) => farm.active)}>
     {item ? 'Save produce' : 'Add produce'}
-  </button>
+  </Button>
 </form>
 
 {item ? (

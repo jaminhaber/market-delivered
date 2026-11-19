@@ -1,4 +1,5 @@
 ---
+import Button from '../../components/Button.astro';
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import { adminRequest, adminForm, type AdminApi } from '../../server/admin';
 import { messageFor, dateLabel } from '../../server/market';
@@ -37,7 +38,7 @@ try {
   </p>
   <form method="post">
     <input type="hidden" name="intent" value="run-jobs" />
-    <button class="button button-dark">Run scheduling job</button>
+    <Button>Run scheduling job</Button>
   </form>
   {!jobs.length ? (
     <p>

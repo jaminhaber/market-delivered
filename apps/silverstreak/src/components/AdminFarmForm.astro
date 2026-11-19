@@ -1,4 +1,5 @@
 ---
+import Button from './Button.astro';
 import type { marketApi } from '../server/market';
 type Farm = Awaited<
   ReturnType<ReturnType<typeof marketApi>['farms']['list']['query']>
@@ -52,5 +53,5 @@ const { farm } = Astro.props;
     <input type="checkbox" name="active" checked={farm?.active ?? true} />
     Active farm
   </label>
-  <button class="button button-dark">{farm ? 'Save farm' : 'Add farm'}</button>
+  <Button>{farm ? 'Save farm' : 'Add farm'}</Button>
 </form>
