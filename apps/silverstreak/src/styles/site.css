@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  --paper: #fff8e9;
+  --paper: #ffdca1;
   --ink: #292820;
   font-family: 'Helvetica Neue', Arial, sans-serif;
   color: var(--ink);
@@ -189,7 +189,7 @@ main:focus {
 }
 .hero-order {
   padding: 0.2em 0.25em;
-  background: #fff;
+  background: rgb(255 255 255 / 85%);
   color: #078a12;
   font-size: clamp(24px, 4.2vw, 64px);
   line-height: 1.2;

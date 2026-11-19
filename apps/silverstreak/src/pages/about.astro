@@ -6,22 +6,60 @@ import Site from '../layouts/Site.astro';
   <section class="story" aria-labelledby="story-title">
     <div class="story-copy">
       <h1 id="story-title">
-        From the market.
-        <br />
-        To your door.
+        Silverstreak Produce is a farmers market and local produce delivery
+        service.
       </h1>
       <p>
-        Silverstreak brings the farmers market to your door. The seasonal finds,
-        the everyday staples, the things that make a good meal.
+        Sometimes people don't have the time or energy to make it to the farmers
+        market, and there is little access to local produce any other days of
+        the week. We want you to have the chance to still get the fruits and
+        veggies you love.
       </p>
       <p>
-        You order ahead. We gather your groceries at the market and bring them
-        home to you. A little less running around. A little more time at the
-        table.
+        You customize your order. We go to the farmers market, handpick the
+        produce, sort it, and deliver it the same day.
       </p>
+      <p>
+        On top of providing the community with easier access to locally grown
+        foods, we want to give Ojai’s small scale and regenerative farms a
+        dependable and labor free channel for selling their goods.
+      </p>
+      <p>- Harrison and Parker</p>
       <a class="button button-dark" href="/order">
         Order now
       </a>
     </div>
   </section>
 </Site>
+
+<style>
+  @font-face {
+    font-family: 'Biro Script';
+    src: url('/fonts/Biro_Script_reduced.otf') format('opentype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+  }
+
+  .story-copy {
+    max-width: 900px;
+  }
+
+  .story-copy h1,
+  .story-copy > p {
+    font-family: 'Biro Script', cursive;
+  }
+
+  .story-copy h1 {
+    font-size: clamp(40px, 5vw, 56px);
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+
+  .story-copy > p {
+    max-width: 820px;
+    font-size: 28px;
+    line-height: 1.4;
+  }
+</style>
