@@ -208,24 +208,40 @@ const deliveryReady =
       </form>
     ) : (
       <>
-        <form method="get" class="market-picker">
-          <label>
-            Choose your market date
-            <select name="market">
-              {runs.map((run) => (
-                <option value={run.id} selected={run.id === selectedId}>
-                  {run.marketName} — {dateLabel(run.startsAt, run.timezone)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button class="button button-dark">View market</button>
-        </form>
+        <nav
+          class="market-tabs"
+          aria-label="Market dates"
+          style={`--market-count: ${Math.min(runs.length, 3)}`}
+        >
+          {runs.map((run, index) => (
+            <a
+              class="market-tab"
+              href={`/order?market=${encodeURIComponent(run.id)}`}
+              aria-current={run.id === selectedId ? 'page' : undefined}
+              aria-label={`${index === 0 ? 'Next market: ' : ''}${run.marketName} — ${dateLabel(run.startsAt, run.timezone)}`}
+            >
+              <span class="market-tab-label">
+                {index === 0 ? 'Next market' : 'Upcoming market'}
+              </span>
+              <time datetime={run.startsAt}>
+                {new Intl.DateTimeFormat('en-US', {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  timeZone: run.timezone,
+                }).format(new Date(run.startsAt))}
+              </time>
+            </a>
+          ))}
+        </nav>
         {selected && (
-          <p>
-            Delivery: {dateLabel(selected.deliveryStartAt, selected.timezone)}.
-            Delivery fee: {money(selected.deliveryFeeCents)}.
-          </p>
+          <header class="market-details">
+            <h1>{selected.marketName}</h1>
+            <p>
+              Delivery: {dateLabel(selected.deliveryStartAt, selected.timezone)}
+              . Delivery fee: {money(selected.deliveryFeeCents)}.
+            </p>
+          </header>
         )}
         {inventory.length ? (
           <form method="post" class="shop-form">
