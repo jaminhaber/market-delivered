@@ -46,6 +46,12 @@ const firstName = Astro.props.name.trim().split(/\s+/)[0];
         Admin
       </a>
     )}
+    <a
+      href="/contact"
+      aria-current={Astro.url.pathname === '/contact' ? 'page' : undefined}
+    >
+      Contact
+    </a>
   </div>
 </details>
 

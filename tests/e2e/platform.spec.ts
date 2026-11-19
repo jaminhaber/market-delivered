@@ -423,22 +423,103 @@ test('administrator dashboard has no retired network or business controls', asyn
   ).toBeVisible();
 });
 
-test('Silverstreak renders real routes and a supplied photo without network configuration', async ({
+test('Silverstreak publicly shows inventory and requires sign-in to order', async ({
   page,
 }) => {
+  const ops = operations(networkDatabase(db, silverId, owner.id), {
+    ...owner,
+    name: 'Owner',
+    admin: true,
+    globalAdmin: true,
+  });
+  const market = await ops.createMarket({
+    name: 'Public market',
+    address: '100 Market Street',
+    timezone: 'America/Los_Angeles',
+  });
+  const farm = await ops.createFarm({
+    name: 'Public grower',
+    location: 'Ojai',
+    contactPhone: '',
+    notes: '',
+    active: true,
+  });
+  const produce = await ops.createProduce({
+    name: 'Public market apples',
+    description: 'Fresh apples',
+    category: 'Fruit',
+    farmId: farm.id,
+    unit: 'lb',
+  });
+  const now = Date.now();
+  const run = await ops.scheduleRun({
+    marketId: market.id,
+    startsAt: new Date(now + 86400000).toISOString(),
+    endsAt: new Date(now + 90000000).toISOString(),
+    cutoffAt: new Date(now + 3600000).toISOString(),
+    deliveryStartAt: new Date(now + 86400000).toISOString(),
+    deliveryEndAt: new Date(now + 90000000).toISOString(),
+    deliveryFeeCents: 500,
+  });
+  const stock = await ops.saveInventory({
+    runId: run.id,
+    produceId: produce.id,
+    priceCents: 350,
+    quantity: 10,
+    active: true,
+    repeat: false,
+  });
   await page.goto(silverOrigin);
   await expect(
-    page.getByRole('heading', { name: 'Fresh produce. Delivered.' }),
+    page.getByRole('heading', { name: 'Silverstreak Produce' }),
   ).toBeVisible();
   await expect(page.locator('.hero-image')).toHaveAttribute(
     'src',
-    '/images/silverstreak-landscape.jpg',
+    '/images/silverstreak-oranges.png',
   );
-  await page
-    .locator('.hero-actions')
-    .getByRole('link', { name: 'Order now' })
-    .click();
+  await page.getByRole('link', { name: 'Order now' }).click();
   await expect(page).toHaveURL(silverOrigin + '/order');
+  await expect(
+    page.getByRole('heading', { name: produce.name, exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.catalog')).toContainText('$3.50 / lb');
+  await expect(page.getByLabel('Quantity for ' + produce.name)).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Review order', exact: true }),
+  ).toHaveCount(0);
+  const publicResponse = await page.request.get(
+    silverOrigin + '/api/inventory?network=' + partnerId,
+    { headers: { 'x-network-id': partnerId } },
+  );
+  expect(publicResponse.status()).toBe(200);
+  expect(publicResponse.headers()['cache-control']).toContain('s-maxage=60');
+  expect(publicResponse.headers()['set-cookie']).toBeUndefined();
+  expect((await publicResponse.json()).inventory).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: stock.id })]),
+  );
+  const denied = await page.request.post(silverOrigin + '/order', {
+    form: {
+      runId: run.id,
+      requestId: randomUUID(),
+      intent: 'place',
+      ['quantity:' + stock.id]: '1',
+    },
+    maxRedirects: 0,
+  });
+  expect(denied.status()).toBe(303);
+  expect(denied.headers().location).toBe('/account');
+  const direct = await page.request.post(silverOrigin + '/trpc/orders.place', {
+    headers: { Origin: silverOrigin },
+    data: {
+      runId: run.id,
+      requestId: randomUUID(),
+      items: [{ inventoryId: stock.id, quantity: 1 }],
+    },
+  });
+  expect(direct.status()).toBe(401);
+  expect(
+    await db.select().from(orders).where(eq(orders.runId, run.id)),
+  ).toHaveLength(0);
   await page.getByRole('link', { name: 'Sign in', exact: true }).click();
   await expect(page).toHaveURL(silverOrigin + '/account');
   await expect(
@@ -447,7 +528,9 @@ test('Silverstreak renders real routes and a supplied photo without network conf
   await expect(page.getByLabel(/network/i)).toHaveCount(0);
   await page.goto(silverOrigin + '/about');
   await expect(
-    page.getByRole('heading', { name: 'From the market. To your door.' }),
+    page.getByRole('heading', {
+      name: 'Silverstreak Produce is a farmers market and local produce delivery service.',
+    }),
   ).toBeVisible();
   expect((await page.goto(silverOrigin + '/missing-page'))?.status()).toBe(404);
 });

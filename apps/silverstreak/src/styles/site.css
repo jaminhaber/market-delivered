@@ -198,6 +198,9 @@ main:focus {
   background: #078a12;
   color: #fff;
 }
+.is-signed-in .hero-nav a[href='/contact'] {
+  display: none;
+}
 .hero-nav {
   margin-top: clamp(24px, 7vh, 90px);
   justify-content: center;
@@ -626,6 +629,31 @@ h1 em {
   max-width: 1120px;
   margin-inline: auto;
 }
+.shop-page.market-page {
+  padding-top: 40px;
+}
+.market-intro {
+  display: grid;
+  gap: 20px;
+  margin-bottom: 32px;
+  text-align: center;
+}
+.market-intro h1 {
+  font-size: clamp(28px, 3vw, 40px);
+}
+.market-sign-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.market-sign-in p {
+  margin: 0;
+}
+.market-sign-in .button {
+  font-size: 16px;
+}
 .catalog-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 96px;
@@ -637,6 +665,12 @@ h1 em {
 
 .catalog-item.has-image {
   grid-template-columns: 192px minmax(0, 1fr) 96px;
+}
+.catalog-item.browse-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+.catalog-item.browse-only.has-image {
+  grid-template-columns: 192px minmax(0, 1fr);
 }
 
 .produce-description {
@@ -663,6 +697,12 @@ h1 em {
   margin-top: 12px;
   font-size: 18px;
   color: var(--ink);
+}
+.produce-description .stock-note {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #66645b;
 }
 .produce-quantity > span {
   font-family: 'Courier New', monospace;
@@ -753,7 +793,8 @@ h1 em {
     grid-template-columns: 1fr;
     gap: 15px;
   }
-  .catalog-item.has-image {
+  .catalog-item.has-image,
+  .catalog-item.browse-only.has-image {
     grid-template-columns: 112px minmax(0, 1fr);
     align-items: start;
   }

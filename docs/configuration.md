@@ -17,6 +17,20 @@ without a provider prints account links to local API logs. `CRON_SECRET` protect
 scheduled endpoints. `GOOGLE_MAPS_API_KEY` enables address lookup; manual address
 entry and the rest of the API do not require it.
 
+Direct Vercel requests use its ingress-provided address; other direct deployments
+use the socket address and ignore caller-supplied forwarding headers.
+Storefront proxies do not forward visitor IP addresses, so proxied requests share
+the frontend server's address for request and authentication limits.
+
+Before DB-backed hooks, each API process allows 300 request units per client per
+minute and 6,000 units total. Inventory, readiness, and invitation requests cost
+five units; RPC batches count every operation and allow at most ten. Limits return
+`429` with `Retry-After`. `/health` is exempt. Process-local limits supplement
+deployment-level traffic protection; authentication retains its persistent limits.
+CORS origins are cached for 30 seconds, readiness for one second (including
+failures), and missing inventory networks for five seconds. Transient inventory
+errors are retried. Request logs redact password-reset credentials in URL paths.
+
 ## Registered business frontend
 
 A network's `frontendOrigin` is an HTTP loopback origin in development or an HTTPS

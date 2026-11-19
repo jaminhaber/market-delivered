@@ -1,0 +1,1152 @@
+{
+  "auditDate": "2026-11-19",
+  "scope": "Current local checkout including uncommitted changes; owned HTTP, RPC, OAuth, MCP, proxy and SSR surfaces",
+  "counts": {
+    "businessRpc": 68,
+    "adminRpc": 8,
+    "mcpToolDefinitions": 41,
+    "coreAuthHttpPaths": 30
+  },
+  "http": [
+    {
+      "surface": "backend",
+      "methods": ["GET", "HEAD"],
+      "path": "/health",
+      "access": "Anonymous; fixed status"
+    },
+    {
+      "surface": "backend",
+      "methods": ["GET", "HEAD"],
+      "path": "/ready",
+      "access": "Anonymous; database readiness query"
+    },
+    {
+      "surface": "backend",
+      "methods": ["GET", "HEAD"],
+      "path": "/api/public/networks/:networkId/inventory",
+      "access": "Anonymous public catalog; network UUID; 60-second process cache"
+    },
+    {
+      "surface": "backend",
+      "methods": ["GET", "POST"],
+      "path": "/trpc/:procedure",
+      "access": "Per-procedure; all business RPCs directly reachable; supports batches"
+    },
+    {
+      "surface": "backend and storefront",
+      "methods": ["GET", "POST"],
+      "path": "/api/auth/*",
+      "access": "Better Auth browser auth; business context required; signup invitation gated"
+    },
+    {
+      "surface": "backend and admin proxy",
+      "methods": ["GET", "POST"],
+      "path": "/admin/trpc/:procedure",
+      "access": "Per-procedure global administrator router"
+    },
+    {
+      "surface": "backend and admin proxy",
+      "methods": ["GET", "POST"],
+      "path": "/admin/auth/*",
+      "access": "Administrator login and account management; signup disabled"
+    },
+    {
+      "surface": "backend and admin proxy",
+      "methods": ["GET", "POST"],
+      "path": "/oauth/auth/*",
+      "access": "OAuth protocol and account login; endpoint allowlist; signup disabled"
+    },
+    {
+      "surface": "backend and admin proxy",
+      "methods": ["GET", "POST"],
+      "path": "/networks/:networkId/oauth/auth/*",
+      "access": "Network OAuth and network-admin login; endpoint allowlist; signup disabled"
+    },
+    {
+      "surface": "backend and admin proxy",
+      "methods": ["GET", "POST", "DELETE"],
+      "path": "/mcp",
+      "access": "Valid account-wide OAuth bearer token; only POST operates"
+    },
+    {
+      "surface": "backend",
+      "methods": ["GET", "POST", "DELETE"],
+      "path": "/networks/:networkId/mcp",
+      "access": "Valid network-bound OAuth bearer token and current network admin permissions; only POST operates"
+    },
+    {
+      "surface": "backend and admin proxy",
+      "methods": ["GET", "HEAD"],
+      "path": "/.well-known/oauth-protected-resource/mcp",
+      "access": "Anonymous metadata"
+    },
+    {
+      "surface": "backend and admin proxy",
+      "methods": ["GET", "HEAD"],
+      "path": "/.well-known/oauth-authorization-server/oauth/auth",
+      "access": "Anonymous metadata"
+    },
+    {
+      "surface": "backend and admin proxy",
+      "methods": ["GET", "HEAD"],
+      "path": "/.well-known/oauth-authorization-server/networks/:networkId/oauth/auth",
+      "access": "Anonymous metadata; network resolution"
+    },
+    {
+      "surface": "backend",
+      "methods": ["GET", "HEAD"],
+      "path": "/networks/:networkId/.well-known/oauth-protected-resource/api/mcp",
+      "access": "Anonymous metadata; network resolution"
+    },
+    {
+      "surface": "backend",
+      "methods": ["GET", "HEAD"],
+      "path": "/internal/jobs/market-runs",
+      "access": "CRON_SECRET bearer required"
+    },
+    {
+      "surface": "backend",
+      "methods": ["GET", "HEAD"],
+      "path": "/internal/jobs/close-markets",
+      "access": "CRON_SECRET bearer required"
+    },
+    {
+      "surface": "storefront",
+      "methods": ["GET"],
+      "path": "/api/inventory",
+      "access": "Anonymous fixed-network public inventory proxy"
+    },
+    {
+      "surface": "storefront",
+      "methods": ["GET", "POST"],
+      "path": "/trpc/:procedure",
+      "access": "Storefront allowlist, fixed network, original Origin check, backend authorization"
+    },
+    {
+      "surface": "storefront",
+      "methods": ["ALL"],
+      "path": "/api/mcp",
+      "access": "Fixed-network MCP proxy; bearer credentials only"
+    },
+    {
+      "surface": "storefront",
+      "methods": ["ALL"],
+      "path": "/.well-known/oauth-protected-resource/api/mcp",
+      "access": "Fixed-network metadata proxy"
+    },
+    {
+      "surface": "storefront SSR",
+      "methods": ["GET", "POST"],
+      "path": "/account",
+      "access": "Sign-in/signup/reset public; profile changes require session; invitation acceptance requires account and token"
+    },
+    {
+      "surface": "storefront SSR",
+      "methods": ["GET", "POST"],
+      "path": "/order",
+      "access": "Public browsing; review and ordering require session and live stock validation"
+    },
+    {
+      "surface": "storefront SSR",
+      "methods": ["GET", "POST"],
+      "path": "/orders",
+      "access": "Signed-in account; own orders only"
+    },
+    {
+      "surface": "storefront SSR",
+      "methods": ["GET", "POST"],
+      "path": "/admin/{produce,farms,markets,inventory,users,drivers,orders,jobs}",
+      "access": "Network or global administrator; explicit POST origin check"
+    },
+    {
+      "surface": "storefront SSR",
+      "methods": ["GET"],
+      "path": "/driver",
+      "access": "Approved driver page; data and mutations use guarded RPCs"
+    },
+    {
+      "surface": "storefront SSR",
+      "methods": ["GET"],
+      "path": "/mcp",
+      "access": "Administrator assistant setup page"
+    }
+  ],
+  "rpc": [
+    {
+      "surface": "business",
+      "name": "assistantConnection",
+      "method": "GET",
+      "access": "Anonymous connection metadata"
+    },
+    {
+      "surface": "business",
+      "name": "me",
+      "method": "GET",
+      "access": "Current session identity or null"
+    },
+    {
+      "surface": "business",
+      "name": "invitation",
+      "method": "GET",
+      "access": "Anonymous with valid invitation token"
+    },
+    {
+      "surface": "business",
+      "name": "acceptInvitation",
+      "method": "POST",
+      "access": "Signed-in account and matching invitation"
+    },
+    {
+      "surface": "business",
+      "name": "addresses.suggest",
+      "method": "POST",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "addresses.resolve",
+      "method": "POST",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "profile.save",
+      "method": "POST",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "profile.locateAddress",
+      "method": "POST",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "profile.saveDriver",
+      "method": "POST",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "produce.categories",
+      "method": "GET",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "produce.list",
+      "method": "GET",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "markets.list",
+      "method": "GET",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "markets.runs",
+      "method": "GET",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "markets.inventory",
+      "method": "GET",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "orders.list",
+      "method": "GET",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "orders.recordCash",
+      "method": "POST",
+      "access": "Administrator or approved assigned driver"
+    },
+    {
+      "surface": "business",
+      "name": "orders.mine",
+      "method": "GET",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "orders.place",
+      "method": "POST",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "orders.cancel",
+      "method": "POST",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "driver.workspace",
+      "method": "GET",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.packOrder",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.completeDelivery",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.reportDeliveryIssue",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.shoppingList",
+      "method": "GET",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.startShoppingBatch",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.combinedPurchase",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.finishShoppingBatch",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.setPacked",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.orderGroups",
+      "method": "GET",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.orders",
+      "method": "GET",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.claimBatch",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.detail",
+      "method": "GET",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.claim",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.release",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.start",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.purchase",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.finish",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "driver.deliver",
+      "method": "POST",
+      "access": "Network member with driver or ownership checks in handler"
+    },
+    {
+      "surface": "business",
+      "name": "assets.createUpload",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "assets.register",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "assets.list",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "assets.update",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "assets.delete",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "farms.list",
+      "method": "GET",
+      "access": "Network member or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.users",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.createFarm",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.updateFarm",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.updateProduce",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.orders",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.inventory",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.jobs",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.runSchedulingJob",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.schedules",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.saveSchedule",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.saveScheduleInventory",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.invitations",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.invite",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.revokeInvite",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.createMarket",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.scheduleRun",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.saveInventory",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.createProduce",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.cancelRun",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.runs",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.detail",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.drivers",
+      "method": "GET",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.reviewDriver",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "business",
+      "name": "admin.assignDriver",
+      "method": "POST",
+      "access": "Network or global administrator"
+    },
+    {
+      "surface": "admin",
+      "name": "me",
+      "method": "GET",
+      "access": "Current session identity or null"
+    },
+    {
+      "surface": "admin",
+      "name": "networks.statistics",
+      "method": "GET",
+      "access": "Global administrator"
+    },
+    {
+      "surface": "admin",
+      "name": "networks.list",
+      "method": "GET",
+      "access": "Global administrator"
+    },
+    {
+      "surface": "admin",
+      "name": "networks.create",
+      "method": "POST",
+      "access": "Global administrator"
+    },
+    {
+      "surface": "admin",
+      "name": "networks.get",
+      "method": "GET",
+      "access": "Global administrator"
+    },
+    {
+      "surface": "admin",
+      "name": "networks.update",
+      "method": "POST",
+      "access": "Global administrator"
+    },
+    {
+      "surface": "admin",
+      "name": "networks.members",
+      "method": "GET",
+      "access": "Global administrator"
+    },
+    {
+      "surface": "admin",
+      "name": "networks.setMember",
+      "method": "POST",
+      "access": "Global administrator"
+    }
+  ],
+  "mcpTools": [
+    {
+      "name": "create_image_upload",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "register_asset",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_assets",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "update_asset",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "delete_asset",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "who_am_i",
+      "access": "Valid OAuth token; network-bound connection additionally requires current network admin access"
+    },
+    {
+      "name": "list_networks",
+      "access": "Valid OAuth token; network-bound connection additionally requires current network admin access"
+    },
+    {
+      "name": "create_network",
+      "access": "Global administrator; absent on network-bound connections"
+    },
+    {
+      "name": "get_network",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "update_network",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_network_members",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "set_network_member",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "invite_user",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_farms",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "get_farm",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "create_farm",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "update_farm",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_orders",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "get_order",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_markets",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "get_market",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_runs",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "get_run",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_produce",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "get_produce",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "catalog_options",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_inventory",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_schedule_inventory",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "update_market",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "update_produce",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "update_run",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "create_market",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "schedule_run",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "save_inventory",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "create_produce",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "cancel_run",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_schedules",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "save_schedule",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "save_schedule_inventory",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "run_scheduling_job",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    },
+    {
+      "name": "list_job_runs",
+      "access": "Current administrator of the selected network; connection binding enforced"
+    }
+  ],
+  "coreAuthHttpPaths": [
+    {
+      "name": "signInSocial",
+      "path": "/sign-in/social",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "callbackOAuth",
+      "path": "/callback/:id",
+      "methods": ["GET", "POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "getSession",
+      "path": "/get-session",
+      "methods": ["GET", "POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "signOut",
+      "path": "/sign-out",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "signUpEmail",
+      "path": "/sign-up/email",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "signInEmail",
+      "path": "/sign-in/email",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "resetPassword",
+      "path": "/reset-password",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "verifyPassword",
+      "path": "/verify-password",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "verifyEmail",
+      "path": "/verify-email",
+      "methods": ["GET"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "sendVerificationEmail",
+      "path": "/send-verification-email",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "changeEmail",
+      "path": "/change-email",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "changePassword",
+      "path": "/change-password",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "updateSession",
+      "path": "/update-session",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "updateUser",
+      "path": "/update-user",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "deleteUser",
+      "path": "/delete-user",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "requestPasswordReset",
+      "path": "/request-password-reset",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "requestPasswordResetCallback",
+      "path": "/reset-password/:token",
+      "methods": ["GET"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "listSessions",
+      "path": "/list-sessions",
+      "methods": ["GET"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "revokeSession",
+      "path": "/revoke-session",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "revokeSessions",
+      "path": "/revoke-sessions",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "revokeOtherSessions",
+      "path": "/revoke-other-sessions",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "linkSocialAccount",
+      "path": "/link-social",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "listUserAccounts",
+      "path": "/list-accounts",
+      "methods": ["GET"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "deleteUserCallback",
+      "path": "/delete-user/callback",
+      "methods": ["GET"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "unlinkAccount",
+      "path": "/unlink-account",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "refreshToken",
+      "path": "/refresh-token",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "getAccessToken",
+      "path": "/get-access-token",
+      "methods": ["POST"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "accountInfo",
+      "path": "/account-info",
+      "methods": ["GET"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "ok",
+      "path": "/ok",
+      "methods": ["GET"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    },
+    {
+      "name": "error",
+      "path": "/error",
+      "methods": ["GET"],
+      "access": "Better Auth endpoint validation; feature and session dependent"
+    }
+  ],
+  "authMounts": [
+    "/api/auth",
+    "/admin/auth",
+    "/oauth/auth",
+    "/networks/:networkId/oauth/auth"
+  ],
+  "oauthProviderAllowedSuffixes": [
+    "oauth2/authorize",
+    "oauth2/token",
+    "oauth2/register",
+    "oauth2/revoke",
+    "oauth2/introspect",
+    "oauth2/consent",
+    "oauth2/public-client"
+  ],
+  "oauthCustomSuffixes": [
+    {
+      "path": "identity",
+      "methods": ["GET"],
+      "access": "Current OAuth session identity"
+    },
+    {
+      "path": "connections",
+      "methods": ["GET", "POST"],
+      "access": "Current OAuth session; ownership and resource/network scoping; POST exact Origin"
+    }
+  ],
+  "oauthDiscoveryAliases": [
+    "/oauth/auth/.well-known/oauth-authorization-server",
+    "/oauth/auth/.well-known/openid-configuration",
+    "/networks/:networkId/oauth/auth/.well-known/oauth-authorization-server",
+    "/networks/:networkId/oauth/auth/.well-known/openid-configuration"
+  ],
+  "featureConfiguration": {
+    "browserSignup": "Invitation only",
+    "adminAndOAuthSignup": "Disabled",
+    "socialProviders": "None configured",
+    "changeEmail": "Not enabled",
+    "deleteUser": "Not enabled"
+  },
+  "delegatedServices": {
+    "images": "Public delivery URLs and temporary bearer upload URLs; creation/registration guarded by administrator and ownership checks",
+    "addresses": "Google requests via authenticated, per-user rate-limited procedures"
+  },
+  "validation": {
+    "businessApiSuite": {
+      "passed": 28,
+      "total": 28
+    },
+    "isolatedPlatformSuite": {
+      "passed": 19,
+      "total": 20,
+      "remainingFailure": "Admin jobs UI include-empty-history assertion"
+    },
+    "probes": "Rollback-only HTTP injection checks against *_e2e database",
+    "productionDeployment": "Not exercised",
+    "probeLog": "/tmp/market-api-audit-probes.log",
+    "businessAndPlatformInitialLog": "/tmp/market-api-audit-tests.log",
+    "isolatedPlatformLog": "/tmp/market-api-audit-isolated-tests.log",
+    "fixes": {
+      "focusedSecurityAndProxyTests": {
+        "passed": 10,
+        "total": 10,
+        "note": "Historical run before the requested removal of signing; signing-specific tests have been removed."
+      },
+      "broaderApiAndPlatformSuite": {
+        "passed": 52,
+        "total": 53,
+        "remainingFailure": "Existing admin job-history include-empty-runs UI assertion; also reproduced before fixes"
+      },
+      "typechecks": ["core", "api", "mcp", "silverstreak", "e2e"],
+      "builds": ["api", "silverstreak"],
+      "logs": [
+        "/tmp/market-api-fixes-focused-tests.log",
+        "/tmp/market-api-fixes-tests.log"
+      ],
+      "productionDeployment": "Not performed; no proxy signing secret is required."
+    },
+    "proxySigningRemoval": {
+      "focusedTests": {
+        "passed": 9,
+        "total": 9
+      },
+      "typechecks": ["core", "silverstreak", "mcp", "e2e"],
+      "builds": ["api", "silverstreak"],
+      "log": "/tmp/market-api-removal-tests.log",
+      "configuration": "No proxy signing secret is required.",
+      "limitation": "Proxied visitors share the frontend server address for rate limits."
+    }
+  },
+  "findings": [
+    {
+      "id": "API-01",
+      "priority": "P2",
+      "status": "fixed-in-working-tree",
+      "title": "Password reset tokens are written to request logs",
+      "source": "packages/core/src/http.ts:15",
+      "evidence": "A request to /api/auth/reset-password/AUDIT_RESET_TOKEN_NOT_SECRET returned 302 and emitted the complete token-bearing pathname in the incoming-request log. Better Auth generates real reset links using this path and leaves the token usable until reset or expiry.",
+      "impact": "A reader of application logs can obtain a live password reset credential, including for administrator accounts.",
+      "remediation": "Redact token-bearing path segments using route-aware logging for all auth surfaces. Apply equivalent rules to platform access logs where configurable.",
+      "resolution": "Request logging redacts reset-token path segments, including encoded routes, slashes and newlines; query strings remain omitted."
+    },
+    {
+      "id": "API-02",
+      "priority": "P2",
+      "status": "confirmed",
+      "title": "Ordinary members can read complete farm contact and notes records",
+      "source": "packages/core/src/router.ts:578",
+      "evidence": "A freshly invited customer received HTTP 200 from farms.list, including the fixture contactPhone and notes. The query selects every farm column and requires membership rather than administrator access.",
+      "impact": "All network members can retrieve farm operational notes and phone numbers through the direct backend even though the storefront browser proxy omits this procedure.",
+      "remediation": "Separate the minimal farm-selector projection from administrator farm records, or require administrator access for the complete list."
+    },
+    {
+      "id": "API-03",
+      "priority": "P2",
+      "status": "fixed-in-working-tree",
+      "title": "Anonymous API requests can repeatedly cause unbudgeted database work",
+      "sources": [
+        "packages/core/src/public-inventory.ts:61",
+        "packages/core/src/server.ts:68",
+        "packages/core/src/server.ts:108",
+        "packages/core/src/http.ts:72"
+      ],
+      "evidence": {
+        "randomInventoryMisses": {
+          "requests": 12,
+          "selectCalls": 12,
+          "status": 404
+        },
+        "invitationBatch": {
+          "operations": 8,
+          "selectCalls": 10,
+          "authenticated": false
+        },
+        "anonymousMe": {
+          "requests": 3,
+          "selectCalls": 6
+        },
+        "untrustedOriginPreflight": {
+          "requests": 1,
+          "selectCalls": 1,
+          "status": 415
+        },
+        "readiness": {
+          "requests": 6,
+          "executeCalls": 6
+        }
+      },
+      "impact": "Successful inventory caching does not protect missing-network probes, invitation reads, readiness queries, or DB-backed CORS and network resolution. This provides avoidable DB load amplification; an outage was not load-tested.",
+      "remediation": "Apply a cheap request budget before DB access, cache network/CORS configuration, consider bounded negative caching, and restrict or briefly cache DB readiness checks. Add an explicit RPC batch-size limit.",
+      "resolution": "Before DB hooks, bounded per-client and per-process request budgets reject excess traffic with 429 and Retry-After. RPC batches are capped at ten operations. Concurrent CORS reads share a 30-second cache, readiness results a one-second cache, and missing inventory networks a five-second negative cache."
+    },
+    {
+      "id": "API-04",
+      "priority": "P2",
+      "status": "deferred-by-user",
+      "title": "Storefront auth loses client IP identity and can share rate-limit buckets",
+      "sources": [
+        "apps/silverstreak/src/server/market-proxy.ts:85",
+        "apps/silverstreak/src/server/market.ts:53",
+        "packages/core/src/auth.ts:49"
+      ],
+      "evidence": "Both storefront forwarding paths omit verified client-IP metadata. A production-mode local probe with no IP header placed reset requests in no-trusted-ip|/request-password-reset; five requests succeeded and the sixth returned 429.",
+      "impact": "Depending on the deployed proxy chain, users may share a fallback or frontend-egress-IP budget, allowing one user to exhaust authentication limits for others. Vercel overwrites forwarded IP headers, so the exact production bucket requires deployment verification.",
+      "remediation": "Carry authenticated, trusted client identity across proxy hops and configure Better Auth to use it. Never trust a raw client-supplied forwarding header.",
+      "currentState": "Proxy signing was removed at the user\u2019s request. The API uses trusted platform or socket addresses; proxied visitors share the frontend server address for rate limits."
+    }
+  ],
+  "sources": {
+    "betterAuthRateLimits": "https://better-auth.com/docs/concepts/rate-limit",
+    "vercelRequestHeaders": "https://vercel.com/docs/headers/request-headers"
+  }
+}

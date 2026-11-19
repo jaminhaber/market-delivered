@@ -3,11 +3,12 @@ import ArrowUpRight from '../components/ArrowUpRight.astro';
 import { randomUUID } from 'node:crypto';
 import Site from '../layouts/Site.astro';
 import { marketApi, messageFor, money, dateLabel } from '../server/market';
+import { publicInventory } from '../server/inventory';
 Astro.response.headers.set('Cache-Control', 'no-store');
 type Api = ReturnType<typeof marketApi>;
 let me: Awaited<ReturnType<Api['me']['query']>> = null;
 let runs: Awaited<ReturnType<Api['markets']['runs']['query']>> = [];
-let inventory: Awaited<ReturnType<Api['markets']['inventory']['query']>> = [];
+let inventory: Awaited<ReturnType<typeof publicInventory>>['inventory'] = [];
 let error = '';
 let selectedId = Astro.url.searchParams.get('market') || '';
 let requestId: string = randomUUID();
@@ -15,7 +16,9 @@ let reviewing = false;
 const quantities = new Map<string, number>();
 try {
   const api = marketApi(Astro);
-  me = await api.me.query();
+  if (Astro.request.headers.has('cookie')) me = await api.me.query();
+  if (!me && Astro.request.method === 'POST')
+    return Astro.redirect('/account', 303);
   if (me) {
     const form =
       Astro.request.method === 'POST' ? await Astro.request.formData() : null;
@@ -60,6 +63,11 @@ try {
       }
       reviewing = true;
     }
+  } else {
+    const catalog = await publicInventory();
+    runs = catalog.runs;
+    selectedId ||= runs[0]?.id || '';
+    inventory = catalog.inventory.filter((item) => item.runId === selectedId);
   }
 } catch (problem) {
   error = messageFor(problem);
@@ -83,49 +91,33 @@ const deliveryReady =
 ---
 
 <Site title="Order — Silverstreak">
-  <section class:list={['shop-page', 'market-page', { 'shop-intro': !me }]}>
-    <h1>
-      {reviewing ? (
-        <>
-          Review your <em>order.</em>
-        </>
-      ) : !me ? (
-        <>
-          Let’s get
-          <br />
-          you fed.
-        </>
-      ) : (
-        <>
-          Good things
-          <br />
-          <em>for your table.</em>
-        </>
+  <section class="shop-page market-page">
+    <header class="market-intro">
+      <h1>{reviewing ? 'Review your order.' : 'Shop the market.'}</h1>
+      {!me && (
+        <div class="market-sign-in">
+          <p>Sign in to choose items and place an order.</p>
+          <a class="button button-dark" href="/account">
+            Sign in
+          </a>
+        </div>
       )}
-    </h1>
+    </header>
     {error && (
       <p class="shop-notice" role="alert">
         {error}
       </p>
     )}
-    {!me ? (
-      <div class="shop-empty">
-        <p>
-          Sign in to shop the market. New to Silverstreak? Use your invitation
-          to join.
-        </p>
-        <a class="button button-dark" href="/account">
-          Sign in
-        </a>
-      </div>
-    ) : !runs.length ? (
+    {!runs.length ? (
       <div class="shop-empty">
         <p>No market dates are open for orders right now. Check back soon.</p>
-        <a href="/orders" class="quiet-link">
-          View your orders
-        </a>
+        {me && (
+          <a href="/orders" class="quiet-link">
+            View your orders
+          </a>
+        )}
       </div>
-    ) : reviewing && selected ? (
+    ) : reviewing && selected && me ? (
       <form method="post" class="shop-form order-review">
         <input type="hidden" name="runId" value={selectedId} />
         <input type="hidden" name="requestId" value={requestId} />
@@ -240,7 +232,10 @@ const deliveryReady =
             <div class="catalog">
               {inventory.map((item) => (
                 <article
-                  class:list={['catalog-item', { 'has-image': item.image }]}
+                  class:list={[
+                    'catalog-item',
+                    { 'has-image': item.image, 'browse-only': !me },
+                  ]}
                 >
                   {item.image && (
                     <img
@@ -260,34 +255,43 @@ const deliveryReady =
                     <p class="produce-price">
                       {money(item.priceCents)} / {item.unit}
                     </p>
-                  </div>
-                  <label class="produce-quantity">
-                    <span>Quantity</span>
-                    <input
-                      type="number"
-                      aria-label={`Quantity for ${item.name}`}
-                      name={'quantity:' + item.id}
-                      min="0"
-                      max={Math.min(1000, item.availableQuantity)}
-                      value={quantities.get(item.id) || 0}
-                      disabled={item.availableQuantity <= 0}
-                    />
-                    {item.availableQuantity <= 0 && (
+                    {!me && item.availableQuantity <= 0 && (
                       <span class="stock-note">Sold out</span>
                     )}
-                  </label>
+                  </div>
+                  {me && (
+                    <label class="produce-quantity">
+                      <span>Quantity</span>
+                      <input
+                        type="number"
+                        aria-label={`Quantity for ${item.name}`}
+                        name={'quantity:' + item.id}
+                        min="0"
+                        max={Math.min(1000, item.availableQuantity)}
+                        value={quantities.get(item.id) || 0}
+                        disabled={item.availableQuantity <= 0}
+                      />
+                      {item.availableQuantity <= 0 && (
+                        <span class="stock-note">Sold out</span>
+                      )}
+                    </label>
+                  )}
                 </article>
               ))}
             </div>
-            <p>
-              Pay cash on delivery. Your final total reflects the items
-              available at the market.{' '}
-              <a href="/account">Save your delivery address</a> before placing
-              your order.
-            </p>
-            <button class="button button-dark" name="intent" value="review">
-              Review order <ArrowUpRight />
-            </button>
+            {me && (
+              <>
+                <p>
+                  Pay cash on delivery. Your final total reflects the items
+                  available at the market.{' '}
+                  <a href="/account">Save your delivery address</a> before
+                  placing your order.
+                </p>
+                <button class="button button-dark" name="intent" value="review">
+                  Review order <ArrowUpRight />
+                </button>
+              </>
+            )}
           </form>
         ) : (
           <p class="shop-empty">

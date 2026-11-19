@@ -41,12 +41,16 @@ const { home = false, profile } = Astro.props;
         >
           About
         </a>
-        <a
-          href="/contact"
-          aria-current={Astro.url.pathname === '/contact' ? 'page' : undefined}
-        >
-          Contact
-        </a>
+        {!profile && (
+          <a
+            href="/contact"
+            aria-current={
+              Astro.url.pathname === '/contact' ? 'page' : undefined
+            }
+          >
+            Contact
+          </a>
+        )}
         {profile && (
           <ProfileMenu
             name={profile.name}

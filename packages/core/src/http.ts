@@ -4,15 +4,41 @@ import { TRPCError } from '@trpc/server';
 import { sql, type SQL } from 'drizzle-orm';
 import type { Database } from '@market/db';
 import type { Auth } from './auth.js';
+import { CLIENT_IP_HEADER, requestClientIp } from './client-ip.js';
+import { createRequestBudget } from './rate-limit.js';
+import { cachedRead } from './read-cache.js';
+
+export const RPC_BATCH_LIMIT = 10;
+
+export function logRequestPath(url = '') {
+  try {
+    return decodeURIComponent(url.split('?')[0]!).replace(
+      /(\/reset-password\/).*$/is,
+      '$1[REDACTED]',
+    );
+  } catch {
+    return '/[UNPARSEABLE_PATH]';
+  }
+}
 
 export function createHttpServer(db: Database) {
+  const budget = createRequestBudget();
+  const enforceBudget = process.env.NODE_ENV !== 'test';
+  const ready = cachedRead(async () => {
+    try {
+      await db.execute(sql`select 1` as SQL);
+      return true;
+    } catch {
+      return false;
+    }
+  }, 1000);
   const server = Fastify({
     logger: {
       serializers: {
         req(request) {
           return {
             method: request.method,
-            url: request.url?.split('?')[0],
+            url: logRequestPath(request.url),
             host: request.hostname,
             remoteAddress: request.ip,
           };
@@ -67,15 +93,44 @@ export function createHttpServer(db: Database) {
       request.url.startsWith('/admin/')
     )
       reply.header('Cache-Control', 'no-store');
+    const ip = requestClientIp(request);
+    request.headers[CLIENT_IP_HEADER] = ip;
+    const path = request.url.split('?')[0]!;
+    if (path === '/health') return;
+    const rpc = /^\/(?:admin\/)?trpc\/(.+)$/.exec(path);
+    let procedures: string[] = [];
+    try {
+      procedures = rpc ? decodeURIComponent(rpc[1]!).split(',') : [];
+    } catch {
+      return reply.code(400).send({ error: 'Invalid RPC path' });
+    }
+    const count = procedures.length || 1;
+    if (count > RPC_BATCH_LIMIT)
+      return reply
+        .header('Cache-Control', 'no-store')
+        .code(400)
+        .send({ error: 'RPC batch exceeds maximum size' });
+    const cost =
+      count *
+      (path === '/ready' ||
+      path.startsWith('/api/public/') ||
+      procedures.includes('invitation')
+        ? 5
+        : 1);
+    const retryAfter = enforceBudget ? budget(ip, cost) : 0;
+    if (retryAfter)
+      return reply
+        .header('Cache-Control', 'no-store')
+        .header('Retry-After', retryAfter)
+        .code(429)
+        .send({ error: 'Too many requests. Please try again shortly.' });
   });
   server.get('/health', async () => ({ status: 'ok' }));
   server.get('/ready', async (_request, reply) => {
-    try {
-      await db.execute(sql`select 1` as SQL);
-      return { status: 'ok' };
-    } catch {
-      return reply.code(503).send({ status: 'unavailable' });
-    }
+    reply.header('Cache-Control', 'no-store');
+    return (await ready())
+      ? { status: 'ok' }
+      : reply.code(503).send({ status: 'unavailable' });
   });
   return server;
 }

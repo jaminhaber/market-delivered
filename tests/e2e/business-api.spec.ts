@@ -1103,6 +1103,129 @@ test('market and catalog endpoints require a session independently of the UI', a
   }
 });
 
+test('public inventory scopes data and shares cached DB reads until expiry', async () => {
+  const { createServer } = await import('../../packages/core/src/server.js');
+  const { run, stock, admin } = await setup(10);
+  let reads = 0;
+  const observed = new Proxy(db, {
+    get(target, property) {
+      if (property === 'select') reads++;
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const server = await createServer(
+    observed,
+    {
+      secret: 'public-inventory-test-secret-at-least-32-characters',
+      adminSecret: 'public-inventory-admin-secret-at-least-32-characters',
+      adminOrigin: 'http://localhost:5190',
+    },
+    registerMcp,
+  );
+  const url = `/api/public/networks/${TEST_NETWORK_ID}/inventory`;
+  const realNow = Date.now;
+  try {
+    await server.ready();
+    reads = 0;
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => server.inject({ method: 'GET', url })),
+    );
+    expect(reads).toBe(3); // Network, open dates, and all their stock.
+    for (const response of responses) {
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['cache-control']).toBe(
+        'public, max-age=0, s-maxage=60, stale-while-revalidate=60',
+      );
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
+    const first = responses[0]!.json();
+    expect(first.runs.some((row: { id: string }) => row.id === run.id)).toBe(
+      true,
+    );
+    const item = first.inventory.find(
+      (row: { id: string }) => row.id === stock.id,
+    );
+    expect(item).toMatchObject({
+      runId: run.id,
+      availableQuantity: 10,
+      priceCents: 350,
+    });
+    expect(item).not.toHaveProperty('quantity');
+    expect(item).not.toHaveProperty('reservedQuantity');
+    expect(item).not.toHaveProperty('contactPhone');
+
+    await db
+      .update(inventory)
+      .set({ quantity: 3 })
+      .where(eq(inventory.id, stock.id));
+    const cached = await server.inject({
+      method: 'GET',
+      url: url + '?network=another&cachebust=1',
+      headers: {
+        cookie: 'irrelevant=value',
+        origin: 'https://external.example',
+      },
+    });
+    expect(cached.json()).toEqual(first);
+    expect(cached.headers['access-control-allow-origin']).toBe('*');
+    expect(reads).toBe(3);
+
+    Date.now = () => realNow() + 61_000;
+    const refreshed = await server.inject({ method: 'GET', url });
+    expect(
+      refreshed
+        .json()
+        .inventory.find((row: { id: string }) => row.id === stock.id)
+        .availableQuantity,
+    ).toBe(3);
+    expect(reads).toBe(6);
+    Date.now = realNow;
+
+    const other = await server.inject({
+      method: 'GET',
+      url: '/api/public/networks/00000000-0000-4000-8000-000000000003/inventory',
+    });
+    expect(other.json().inventory).toEqual([]);
+    const invalid = await server.inject({
+      method: 'GET',
+      url: '/api/public/networks/invalid/inventory',
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.headers['cache-control']).toBe('no-store');
+    const missingUrl = `/api/public/networks/${randomUUID()}/inventory`;
+    const beforeMissing = reads;
+    const missing = await server.inject({
+      method: 'GET',
+      url: missingUrl,
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.headers['cache-control']).toBe('no-store');
+    await server.inject({ method: 'GET', url: missingUrl });
+    expect(reads - beforeMissing).toBe(1);
+    Date.now = () => realNow() + 6000;
+    await server.inject({ method: 'GET', url: missingUrl });
+    expect(reads - beforeMissing).toBe(2);
+    Date.now = realNow;
+
+    const beforeCors = reads;
+    for (let i = 0; i < 3; i++)
+      await server.inject({
+        method: 'OPTIONS',
+        url: '/trpc/me',
+        headers: {
+          origin: 'https://untrusted.example',
+          'access-control-request-method': 'POST',
+        },
+      });
+    expect(reads - beforeCors).toBe(1);
+  } finally {
+    Date.now = realNow;
+    await server.close();
+    await admin.request.dispose();
+  }
+});
+
 test('browser-origin protection and database constraints hold independently of the UI', async () => {
   const customer = await actor();
   const denied = await customer.request.post('/trpc/profile.save', {

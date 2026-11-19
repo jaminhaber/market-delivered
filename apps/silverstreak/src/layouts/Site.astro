@@ -40,7 +40,7 @@ if (Astro.request.headers.has('cookie')) {
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title}</title>
   </head>
-  <body class:list={[{ 'is-home': home }]}>
+  <body class:list={[{ 'is-home': home, 'is-signed-in': !!profile }]}>
     <a class="skip-link" href="#main">
       Skip to content
     </a>

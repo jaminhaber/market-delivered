@@ -22,7 +22,10 @@ These values belong in this application's `.env` and are server-only. Register
 - `/`: full-screen homepage, supplied landscape photo, Order now and About us.
 - `/about`: the Silverstreak introduction.
 - `/account`: invitation signup, sign-in/reset, delivery details, and sign-out.
-- `/order`: server-rendered open markets, available items, and order placement.
+- `/order`: public browsing of open markets and available items; sign-in is
+  required to select quantities, review, or place an order.
+- `/api/inventory`: public JSON with `runs` and `inventory` for Silverstreak's
+  open market dates, including prices, images, and available quantities.
 - `/orders`: customer order history and eligible cancellation.
 - `/admin` and `/admin/[section]`: business administration pages.
 - `/mcp`: assistant setup instructions for Silverstreak.
@@ -40,6 +43,13 @@ The proxy/client always supplies the configured network ID. Incoming headers,
 forms, and query strings cannot select another business. Session cookies stay on
 Silverstreak's domain; the API validates the actual browser origin against the
 network record. Auth and customer responses are never cached.
+
+The public inventory proxy sends no credentials and always uses the configured
+network. Its backend endpoint is `/api/public/networks/<network UUID>/inventory`.
+Inventory is cached for 60 seconds per network in each API process, with concurrent
+refreshes combined, and shared CDN caching for 60 seconds plus 60 seconds of stale
+revalidation. Cached browsing may briefly lag stock changes; signed-in order
+review and placement still check current stock, membership, and market cutoffs.
 
 ## Vercel
 

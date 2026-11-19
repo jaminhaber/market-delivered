@@ -7,7 +7,7 @@ import { adminRouter } from './admin-router.js';
 import { createAuth, type AuthConfig } from './auth.js';
 import { permissions } from './networks.js';
 import { webOrigins } from './origins.js';
-import { forwardAuth } from './http.js';
+import { forwardAuth, RPC_BATCH_LIMIT } from './http.js';
 
 export async function registerAdminRoutes(
   server: FastifyInstance,
@@ -41,6 +41,7 @@ export async function registerAdminRoutes(
     prefix: '/trpc',
     trpcOptions: {
       router: adminRouter,
+      maxBatchSize: RPC_BATCH_LIMIT,
       createContext: async ({ req }: { req: FastifyRequest }) => {
         const current = await auth.api.getSession({
           headers: fromNodeHeaders(req.headers),

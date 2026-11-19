@@ -13,6 +13,7 @@ import {
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter';
 import { webOrigins } from './origins.js';
+import { CLIENT_IP_HEADER } from './client-ip.js';
 import * as oauthSchema from '@market/db';
 import { oauthPlugins, checkOAuthRequest, type McpOAuth } from './oauth.js';
 import {
@@ -49,6 +50,9 @@ export function createAuth(db: Database, config: AuthConfig) {
     advanced: {
       cookiePrefix: config.cookiePrefix || 'md-business',
       useSecureCookies: !!config.production,
+      // The HTTP boundary overwrites this header with the socket/platform
+      // address before Better Auth can read it.
+      ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
     },
     baseURL: config.baseURL,
     basePath: config.basePath,

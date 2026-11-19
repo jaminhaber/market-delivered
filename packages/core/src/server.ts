@@ -11,8 +11,10 @@ import { createAuth } from './auth.js';
 import { permissions, resolveNetwork, networkEmailConfig } from './networks.js';
 import { registerJobs } from './jobs.js';
 import { webOrigins } from './origins.js';
-import { createHttpServer, forwardAuth } from './http.js';
+import { createHttpServer, forwardAuth, RPC_BATCH_LIMIT } from './http.js';
+import { cachedRead } from './read-cache.js';
 import { registerAdminRoutes } from './admin-routes.js';
+import { registerPublicInventory } from './public-inventory.js';
 import {
   createOAuth,
   registerOAuthRoutes,
@@ -45,6 +47,16 @@ export async function createServer(
   registerAssistantRoutes: AssistantRouteRegistrar,
 ) {
   const server = createHttpServer(db);
+  const frontendOrigins = cachedRead(
+    async () =>
+      db
+        .select({ origin: networks.frontendOrigin })
+        .from(networks)
+        .where(isNull(networks.deletedAt)),
+    30_000,
+  );
+  // Public catalog reads bypass session resolution and the DB-backed CORS hook.
+  registerPublicInventory(server, db, config.images);
   const oauth = createOAuth(db, config);
   await server.register(async (server) => {
     await server.register(cors, () => async (request: FastifyRequest) => {
@@ -62,12 +74,7 @@ export async function createServer(
           exposedHeaders: ['WWW-Authenticate'],
         };
       const origin = request.headers.origin;
-      const rows = origin
-        ? await db
-            .select({ origin: networks.frontendOrigin })
-            .from(networks)
-            .where(isNull(networks.deletedAt))
-        : [];
+      const rows = origin ? await frontendOrigins() : [];
       return {
         credentials: true,
         exposedHeaders: ['WWW-Authenticate'],
@@ -155,6 +162,7 @@ export async function createServer(
       prefix: '/trpc',
       trpcOptions: {
         router: appRouter,
+        maxBatchSize: RPC_BATCH_LIMIT,
         createContext: async ({ req }: { req: FastifyRequest }) => {
           const { network, auth } = await requestAuth(req.headers);
           const current = await auth.api.getSession({

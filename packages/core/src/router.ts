@@ -38,6 +38,7 @@ import {
   runDetail,
 } from './queries.js';
 import { checkRateLimit } from './rate-limit.js';
+import { availableMarketRuns, marketInventory } from './catalog.js';
 import {
   assetOperations,
   assetImageSelect,
@@ -368,85 +369,12 @@ export const appRouter = t.router({
         .where(s.networkWhere(ctx.db, s.markets))
         .orderBy(asc(s.markets.name)),
     ),
-    runs: authenticated.query(async ({ ctx }) => {
-      return ctx.db
-        .select({
-          id: s.marketRuns.id,
-          marketId: s.marketRuns.marketId,
-          marketName: s.markets.name,
-          marketAddress: s.markets.address,
-          timezone: s.markets.timezone,
-          startsAt: s.marketRuns.startsAt,
-          endsAt: s.marketRuns.endsAt,
-          cutoffAt: s.marketRuns.cutoffAt,
-          deliveryStartAt: s.marketRuns.deliveryStartAt,
-          deliveryEndAt: s.marketRuns.deliveryEndAt,
-          deliveryFeeCents: s.marketRuns.deliveryFeeCents,
-          status: s.marketRuns.status,
-        })
-        .from(s.marketRuns)
-        .innerJoin(
-          s.markets,
-          s.networkWhere(
-            ctx.db,
-            s.markets,
-            eq(s.marketRuns.marketId, s.markets.id),
-          ),
-        )
-        .where(
-          s.networkWhere(
-            ctx.db,
-            s.marketRuns,
-            sql`${s.marketRuns.cutoffAt} > now() AND ${s.marketRuns.startsAt} <= now() + interval '14 days' AND ${s.marketRuns.status} = 'scheduled'`,
-          ),
-        )
-        .orderBy(asc(s.marketRuns.startsAt))
-        .limit(100);
-    }),
-    inventory: authenticated.input(id).query(({ ctx, input }) =>
-      ctx.db
-        .select({
-          id: s.inventory.id,
-          produceId: s.produce.id,
-          image: assetImageSelect(ctx.images),
-          name: s.produce.name,
-          description: s.produce.description,
-          category: s.produce.category,
-          unit: s.produce.unit,
-          priceCents: s.inventory.priceCents,
-          quantity: s.inventory.quantity,
-          reservedQuantity: s.inventory.reservedQuantity,
-          availableQuantity: sql<number>`${s.inventory.quantity} - ${s.inventory.reservedQuantity}`,
-          active: s.inventory.active,
-          source: s.farms.name,
-        })
-        .from(s.inventory)
-        .innerJoin(
-          s.produce,
-          s.networkWhere(
-            ctx.db,
-            s.produce,
-            eq(s.produce.id, s.inventory.produceId),
-          ),
-        )
-        .innerJoin(
-          s.farms,
-          s.networkWhere(ctx.db, s.farms, eq(s.farms.id, s.produce.farmId)),
-        )
-        .leftJoin(s.assets, produceAssetJoin(ctx.db))
-        .where(
-          s.networkWhere(
-            ctx.db,
-            s.inventory,
-            and(
-              eq(s.inventory.runId, input.id),
-              eq(s.inventory.active, true),
-              eq(s.farms.active, true),
-            ),
-          ),
-        )
-        .orderBy(asc(s.produce.name)),
-    ),
+    runs: authenticated.query(({ ctx }) => availableMarketRuns(ctx.db)),
+    inventory: authenticated
+      .input(id)
+      .query(({ ctx, input }) =>
+        marketInventory(ctx.db, [input.id], ctx.images),
+      ),
   }),
   orders: t.router({
     list: authenticated
