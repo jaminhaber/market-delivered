@@ -92,17 +92,19 @@ const deliveryReady =
 
 <Site title="Order — Silverstreak">
   <section class="shop-page market-page">
-    <header class="market-intro">
-      <h1>{reviewing ? 'Review your order.' : 'Shop the market.'}</h1>
-      {!me && (
-        <div class="market-sign-in">
-          <p>Sign in to choose items and place an order.</p>
-          <a class="button button-dark" href="/account">
-            Sign in
-          </a>
-        </div>
-      )}
-    </header>
+    {(reviewing || !me) && (
+      <header class="market-intro">
+        {reviewing && <h1>Review your order.</h1>}
+        {!me && (
+          <div class="market-sign-in">
+            <p>Sign in to choose items and place an order.</p>
+            <a class="button button-dark" href="/account">
+              Sign in
+            </a>
+          </div>
+        )}
+      </header>
+    )}
     {error && (
       <p class="shop-notice" role="alert">
         {error}
